@@ -10,8 +10,24 @@ reviewed export proposals, and a real two-VM synthetic inference feasibility tes
 The test uses a deterministic local endpoint, not a model or a paid provider.
 
 Marketplace APIs, authentication, production WSS relay, provider admission,
-credential storage, TUI, ledger, evaluation and devnet escrow remain to implement.
+credential-broker integration, TUI, ledger, evaluation and devnet escrow remain to implement.
 Existing AdRouter clients and hosted routes are unaffected.
+
+## Enter a DeepSeek provider key
+
+Run this yourself in an interactive terminal from the repository:
+
+```sh
+node bin/adrouter-new.mjs provider configure deepseek
+```
+
+Paste the key at the hidden prompt and press Enter. Ctrl+C cancels. The command
+stores it at `~/.adrouter-new/providers/deepseek/api-key`, with file mode 0600
+and directory mode 0700. This is a permission-protected local file, not encrypted
+Keychain storage. It stays outside Git and both sandboxes. The command makes no
+API call and never prints the key; do not put it in command arguments or chat.
+Running the command again replaces this provider key atomically. The key is not
+yet connected to a live broker or admitted marketplace listing.
 
 ## Develop
 
