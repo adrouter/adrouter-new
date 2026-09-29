@@ -12,7 +12,7 @@ export function readHiddenKey(input = process.stdin, output = process.stdout) {
   if (!input.isTTY || !output.isTTY || typeof input.setRawMode !== 'function') {
     throw new ProviderSetupError('interactive_terminal_required');
   }
-  output.write('DeepSeek API key (hidden; Ctrl+C cancels): ');
+  output.write('Provider API key (hidden; memory only; Ctrl+C cancels): ');
   return new Promise((resolve, reject) => {
     let value = '';
     const previousRaw = Boolean(input.isRaw);

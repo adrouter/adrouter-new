@@ -1,8 +1,8 @@
 {
-  "name": "@adrouter/new",
+  "name": "@adrouter/adr-cli",
   "version": "0.1.0-alpha.1",
   "private": true,
-  "description": "AdRouter devnet inference marketplace client and provider connector",
+  "description": "adr-v2 test-credit compute marketplace terminal",
   "type": "module",
   "engines": {
     "node": ">=22.14.0"
@@ -13,7 +13,8 @@
     "url": "https://github.com/adrouter/adrouter-new.git"
   },
   "bin": {
-    "adrouter-new": "bin/adrouter-new.mjs"
+    "adrouter-new": "bin/adrouter-new.mjs",
+    "adr-cli": "bin/adr-cli.mjs"
   },
   "files": [
     "bin/",
@@ -25,7 +26,7 @@
   ],
   "scripts": {
     "test": "node --test test/*.test.mjs",
-    "check": "node --check bin/adrouter-new.mjs && node --check src/runtime.mjs && node --check src/workspace.mjs && node scripts/verify-provenance.mjs && npm test",
+    "check": "node --check bin/adr-cli.mjs && node --check src/cli.mjs && node --check src/network.mjs && node --check src/provider.mjs && node --check src/provider-broker.mjs && node --check src/terminal.mjs && node --check src/runtime.mjs && node --check src/workspace.mjs && node scripts/verify-provenance.mjs && npm test",
     "test:runtime": "node scripts/verify-runtime.mjs"
   },
   "publishConfig": {
