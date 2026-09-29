@@ -90,3 +90,12 @@ test('TUI stop releases fresh non-flowing stdin so an idle CLI can exit', () => 
   const ui = new TerminalUI({ input, output, color: false }); ui.start(); ui.stop();
   assert.equal(input.readableFlowing, false); assert.equal(input.isRaw, false);
 });
+
+test('termination during guest-console suspension does not reenter raw terminal mode', async () => {
+  const input = new PassThrough(), output = new PassThrough();
+  input.isTTY = output.isTTY = true; input.isRaw = false; input.setRawMode = value => { input.isRaw = value; };
+  const ui = new TerminalUI({ input, output, color: false }); ui.start();
+  await ui.suspend(async () => ui.terminate());
+  assert.equal(input.isRaw, false); assert.equal(ui.started, false);
+  await assert.rejects(ui.menu('No more input', ['Exit']), /cancelled/);
+});

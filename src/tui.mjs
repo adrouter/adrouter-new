@@ -296,7 +296,7 @@ export async function runTui(options = {}, dependencies = {}) {
     ui.context = `${store.profile} · ${network.local ? 'LOCAL · test credits' : network.origin}`;
   }
   let terminating = false;
-  const terminate = () => { terminating = true; ui.pending?.resolve(null); ui.stop(); };
+  const terminate = () => { terminating = true; ui.pending?.resolve(null); ui.terminate(); };
   process.once('SIGTERM', terminate); process.once('SIGINT', terminate);
   ui.start();
   try {

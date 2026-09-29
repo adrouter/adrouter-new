@@ -52,6 +52,7 @@ export class TerminalUI {
     };
   }
   start() {
+    if (this.terminated) throw new ClientError('cancelled');
     if (!this.input.isTTY || !this.output.isTTY) throw new ClientError('interactive_terminal_required');
     this.wasRaw = !!this.input.isRaw; this.wasPaused = this.input.isPaused(); this.wasFlowing = this.input.readableFlowing;
     readline.emitKeypressEvents(this.input); this.input.setRawMode(true); this.input.resume();
@@ -68,11 +69,13 @@ export class TerminalUI {
     if (this.wasPaused || this.wasFlowing !== true) this.input.pause();
     this.output.write('\x1b[0m\x1b[?25h\x1b[?1049l'); this.started = false;
   }
+  terminate() { this.terminated = true; this.stop(); }
   draw(screen) {
     if (screen) this.screen = screen;
     if (this.started && this.screen) this.output.write('\x1b[H\x1b[2J' + renderScreen({ ...this.screen, context: this.context }, this.output.columns ?? 80, this.output.rows ?? 24, this.color));
   }
   interact(key, draw) {
+    if (this.terminated) return Promise.reject(new ClientError('cancelled'));
     if (this.pending) throw new ClientError('terminal_operation_busy');
     return new Promise(resolve => {
       const finish = value => { this.pending = null; resolve(value); };
@@ -151,6 +154,7 @@ export class TerminalUI {
     }, draw);
   }
   async task(title, work, { lines = [], cancel = false, onKey } = {}) {
+    if (this.terminated) throw new ClientError('cancelled');
     const abort = new AbortController();
     this.draw({ title, lines, footer: cancel ? 'Esc / Ctrl+C Cancel' : 'Working…' });
     const pending = { resolve: () => { if (cancel) abort.abort(); }, key: (text, key) => { if (key.name === 'escape' && cancel) abort.abort(); else onKey?.(text, key); } };
@@ -161,6 +165,6 @@ export class TerminalUI {
   }
   async suspend(work) {
     this.stop();
-    try { return await work(); } finally { this.start(); }
+    try { return await work(); } finally { if (!this.terminated) this.start(); }
   }
 }
