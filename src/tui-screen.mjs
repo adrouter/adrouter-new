@@ -53,7 +53,7 @@ export class TerminalUI {
   }
   start() {
     if (!this.input.isTTY || !this.output.isTTY) throw new ClientError('interactive_terminal_required');
-    this.wasRaw = !!this.input.isRaw; this.wasPaused = this.input.isPaused();
+    this.wasRaw = !!this.input.isRaw; this.wasPaused = this.input.isPaused(); this.wasFlowing = this.input.readableFlowing;
     readline.emitKeypressEvents(this.input); this.input.setRawMode(true); this.input.resume();
     this.input.on('keypress', this.onKey); this.output.on('resize', this.resize);
     this.output.write('\x1b[?1049h\x1b[?25l'); this.started = true;
@@ -62,7 +62,10 @@ export class TerminalUI {
     if (!this.started) return;
     this.pending?.resolve(null);
     this.input.removeListener('keypress', this.onKey); this.output.removeListener('resize', this.resize);
-    this.input.setRawMode(this.wasRaw); if (this.wasPaused) this.input.pause();
+    this.input.setRawMode(this.wasRaw);
+    // Fresh stdin has readableFlowing=null, not isPaused=true. Leaving it
+    // resumed after removing the UI listener keeps an otherwise finished CLI alive.
+    if (this.wasPaused || this.wasFlowing !== true) this.input.pause();
     this.output.write('\x1b[0m\x1b[?25h\x1b[?1049l'); this.started = false;
   }
   draw(screen) {

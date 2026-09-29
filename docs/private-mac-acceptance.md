@@ -32,6 +32,9 @@ runtime paths. It exercises actual hot/cold provider, buyer and offline guests
 with synthetic inference and records provisional results. Client
 `scripts/verify-provider-console.py` verifies hidden synthetic guest key entry,
 Ctrl+D and teardown. Its real-key counterpart is always an operator action.
+`scripts/verify-tui-pty.py` with the same `ADR_ACCEPTANCE_CLIENT_ROOT` checks the
+actual terminal profile selector, Back/Cancel, clean process exit and terminal modes
+using isolated synthetic profile state.
 
 ## Hosted sequence
 

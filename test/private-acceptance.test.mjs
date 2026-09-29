@@ -82,3 +82,11 @@ test('TUI Back, task cancellation and stop restore terminal state and listeners'
   ui.stop(); assert.equal(input.isRaw, false); assert.equal(input.isPaused(), true); assert.equal(input.listenerCount('keypress'), 0); assert.equal(output.listenerCount('resize'), 0);
   assert.ok(rendered.endsWith('\x1b[0m\x1b[?25h\x1b[?1049l'));
 });
+
+test('TUI stop releases fresh non-flowing stdin so an idle CLI can exit', () => {
+  const input = new PassThrough(), output = new PassThrough();
+  input.isTTY = output.isTTY = true; input.isRaw = false; input.setRawMode = value => { input.isRaw = value; };
+  assert.equal(input.readableFlowing, null);
+  const ui = new TerminalUI({ input, output, color: false }); ui.start(); ui.stop();
+  assert.equal(input.readableFlowing, false); assert.equal(input.isRaw, false);
+});
