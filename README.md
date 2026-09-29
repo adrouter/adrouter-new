@@ -1,142 +1,131 @@
-# adr-cli · adr-v2
+# adr-cli · AdRouter test-credit marketplace
 
-Runnable terminal surface for listing permitted inference capacity and browsing
-listings. Uses test credits with no cash value. This package is private and has
-not been published. Existing clients and credential directories are not imported.
+Private Mac owner-evaluation implementation for the test-credit marketplace. Test credits have no
+cash value and are independent of legacy AdRouter balances. The package remains
+private; no candidate or alpha has been published from this work.
 
-## Run locally
+## Terminal application
 
-Use Node 22.14 or newer. Start the explicit development backend from the Router
-feature checkout:
+Use Node 22.14 or newer. Run `node bin/adr-cli.mjs` for the branded TUI. Native
+Safari opens only after the explicit sign-in action on macOS. Marketplace device
+approval is separate from other AdRouter clients. Operator sign-in requests only
+`marketplace:operator` and also requires a current owner/operator account role.
+JSON command compatibility remains available with `--json`; see `--help`.
 
-```sh
-cd /Users/ahmadzuhri/antigravity/3days/.worktrees/router-v2-mvp1/backend
-npm run marketplace:local
-```
+The TUI covers listing creation and source review, hot/cold provider control,
+provider cumulative budgets, marketplace account/session/receipt views, buyer
+execution, runtime installation/verification, and operator evaluation/tariff and
+uncertain-outcome reconciliation. Runtime paths selected or installed through the
+TUI are saved as non-secret paths and reverified before reuse. Workspace import requires Python 3 for
+anchored directory-descriptor reads on macOS and Linux.
 
-It binds `127.0.0.1:8790` and begins with empty, ephemeral inventory. This local
-entrypoint is separate from the hosted service; it has explicit development actors
-and never loads a database or seeds real usage.
+For explicit ephemeral development only, start `npm run marketplace:local` in the
+Router feature checkout's backend, then `node bin/adr-cli.mjs --local`. Development
+identities are labeled; local approvals and grants establish no hosted authority.
 
-In another terminal:
+## Separate profiles
 
-```sh
-cd /Users/ahmadzuhri/antigravity/3days/adrouter_release/adrouter-new
-node bin/adr-cli.mjs --local --actor provider
-```
-
-The arrow-key menu offers **Choose compute** and **List compute**. Enter only
-public listing metadata. A draft needs source review before publication. Local
-review can be exercised in a separate terminal:
+Use two terminals under the same backend owner account:
 
 ```sh
-node bin/adr-cli.mjs --local --actor admin admin pending
-node bin/adr-cli.mjs --local --actor admin admin approve NODE_ID --review local-test-only
-node bin/adr-cli.mjs --local --actor provider provider publish NODE_ID
-node bin/adr-cli.mjs --local market
-node bin/adr-cli.mjs --local market inspect LISTING_ID
+adr-cli --profile provider --network https://api-staging.adrouter.co
+adr-cli --profile operator --network https://api-staging.adrouter.co
 ```
 
-Replace the IDs with returned identifiers. Local approval is synthetic development
-state and does not establish permission to resell any upstream service.
+Choose Profile in the TUI to select default/provider/operator or a named profile.
+Each named profile starts without credentials and requires its own Safari approval.
+Private keys, refresh state and locks are isolated; credentials are never copied.
+The default retains its original `~/.adr-v2/installation.json` location. Named
+profiles use `~/.adr-v2/profiles/NAME/`; sign-out affects only the selected profile.
+Keep provider operation open while using the operator terminal. Menus follow the
+installation's granted scopes. `--profile operator login` requests operator scope;
+`--profile provider login` requests provider scope only.
 
-Noninteractive creation and browsing:
+## Provider operation
 
-```sh
-node bin/adr-cli.mjs --local --actor provider --json provider create \
-  --name 'My permitted compute' --model MODEL_ID \
-  --endpoint https://PROVIDER_HOST/v1/chat/completions \
-  --supply authorized_api --rights AGREEMENT_REFERENCE \
-  --input-rate 1000 --output-rate 2000
-node bin/adr-cli.mjs --local --json market --model MODEL_ID
-```
+Choose a preset, edit public metadata, and supply a non-secret authorization
+reference. The DeepSeek preset retains `deepseek-v4-flash`; the upstream currently
+serves this alias with V4.1 Flash. The official DeepSeek connector disables
+thinking explicitly because the marketplace wire contract carries text/tools,
+not reasoning history (see [DeepSeek thinking mode](https://api-docs.deepseek.com/guides/thinking_mode)). Test-credit prices are separate from USD upstream
+cost. Source approval and a qualified, versioned upstream tariff are required.
 
-Only `authorized_api` and `self_hosted` are accepted. Rates are integer test-credit
-units per million tokens. Published revisions are immutable; pausing removes a
-listing from discovery. Public listings exclude endpoints, owner identity and
-credentials. Unknown metadata fields are rejected.
+Set a cumulative spending cap explicitly. It covers all your nodes, installations
+and restarts. Consumed spending and uncertain liabilities are never reset by a
+restart or timeout. Increases require confirmation and a matching revision.
+The independent USD 10 ceiling is only for live acceptance testing.
 
-## Hosted sign-in and lifecycle
+Hot setup warms a pinned VM before publication or readiness. The terminal attaches
+directly to hidden input inside that VM. After key entry, press Ctrl+D when the
+guest says it is ready to return to the dashboard. The host JavaScript application
+never reads the upstream key. Credentialed HTTP and TLS run in the guest; the host
+forwards encrypted bytes to the one approved destination. There is no general
+CONNECT proxy. Keys are never placed in files, argv, environment or snapshots.
 
-After the Router migration and deployment have been approved and completed:
+Cold operation keeps control online. A reservation raises an activation choice in
+the provider dashboard with a 120-second deadline. Launch the guest and enter the
+key before that deadline. Expiry releases credits without an inference charge.
+Keep the foreground TUI open. Back returns to its menu while serving continues;
+Stop or Exit tears down owned guests. A later start requires key entry again.
 
-```sh
-node bin/adr-cli.mjs --network https://api-staging.adrouter.co login
-node bin/adr-cli.mjs whoami
-node bin/adr-cli.mjs market
-node bin/adr-cli.mjs logout
-```
+## Buyer execution and export
 
-The CLI prints a browser approval URL and comparison code. Open it in native
-Safari and complete Google sign-in yourself. Marketplace installations have buyer
-and provider scopes distinct from legacy clients. The installation key and rotating
-authentication material use mode-0600 storage under `~/.adr-v2`; upstream provider
-keys are never stored there. Refresh and paid requests are not replayed after an
-unknown network outcome. An interrupted refresh is marked uncertain on disk; resolve/revoke that installation before re-enrollment. A process interrupted while holding auth.lock requires operator recovery after confirming no other adr-cli process is running. Logout revokes the installation before clearing local state.
+Select workspace files and accept bounded access. Tools run exclusively in a
+pinned offline buyer VM. Each mutation, command and export requires a fresh,
+action-bound approval. Model requests go through the marketplace relay. Unknown
+paid outcomes are held for reconciliation and never automatically replayed.
 
-## Foreground provider serving
+Export creates a fresh private directory containing the complete selected
+workspace and a reviewed manifest of additions, modifications and deletions.
+Original host files are preserved. Conflicting or changed originals, symlinks,
+path escapes, credentials and oversized inputs are rejected. This implementation
+exports a snapshot; it does not apply changes over the original checkout.
 
-Use the pinned Microsandbox runtime with absolute `ADROUTER_NEW_RUNTIME_EXECUTABLE`,
-`ADROUTER_NEW_RUNTIME_LIBRARY`, and `ADROUTER_NEW_RUNTIME_HOME` paths. Select a
-dedicated runtime home. `doctor` verifies executable/library identities.
+## Evaluation and release status
 
-```sh
-node bin/adr-cli.mjs --local --actor provider provider serve NODE_ID --max-calls 1 --max-output 1024
-```
+With ordinary admissions closed, the server-configured owner can evaluate their
+own approved listing through separately scoped operator endpoints. Normal
+self-purchase remains rejected. Evaluation sessions, receipts and charges are
+marked separately and do not count as buyer acceptance or provider earnings.
 
-Run this yourself with an approved endpoint and bounded upstream-spending authority.
-The hidden prompt holds the API key only in foreground memory. Re-enter it after
-restart. Self-hosted loopback engines without authentication may use `--no-key`.
-No existing saved provider key is read or migrated. Provider mode does not inspect
-the working directory.
+Operator evaluation uses budgeted marketplace inference and a separate offline
+VM for generated code. Reports bind the exact session and immutable listing revision, with version,
+settled sample count, elapsed time, freshness and any cancellation request ID.
+The runner waits up to the disclosed cold-activation deadline, supports Esc/Cancel,
+and makes one bounded cancellation attempt after tool and offline-code checks.
+Unknown outcomes retain their allowance and USD liabilities across restarts. Automatic reports remain **provisional** until upstream cancellation
+is independently verified and recorded with an evidence reference. Ordinary buyers
+cannot purchase an unqualified or stale listing. Repeat/idle evaluation is off;
+each run requires explicit budget confirmation and available node capacity.
 
-The host connects outbound to the WSS relay. A separate connector VM receives a
-one-use capability for one exact request. Only the fixed broker adds upstream
-authentication. Model engines remain outside the VM. Redirects, arbitrary headers,
-credentialed URLs, private remote destinations and provider-side tools are rejected.
-A serving invocation is limited to 1–30 calls, explicit output bounds and nine
-minutes. Stop with Ctrl+C. Cold activation and sandboxed evaluation are not integrated.
+Local checks and synthetic Apple Silicon VM execution do not establish live
+provider acceptance. This milestone needs the non-secret supply reference,
+separate browser approvals, a real key entered only inside the guest, and reviewed
+upstream cancellation/billing evidence. The cumulative live ceiling is USD 10.
 
-## Test-credit sessions
+Linux x86-64/KVM, separate hosts, ordinary beta accounts, registry candidates and
+alpha promotion are deferred for this private milestone. They remain mandatory
+release gates in `release-policy.json`; `private: true` and publication disabled
+remain intact. Solana, mainnet and `latest` are out of scope.
 
-```sh
-node bin/adr-cli.mjs --local --actor admin admin grant --user local-buyer --amount 1000
-node bin/adr-cli.mjs --local connect LISTING_ID --budget 100 --max-output 1024
-node bin/adr-cli.mjs --local sessions
-node bin/adr-cli.mjs --local session inspect SESSION_ID
-node bin/adr-cli.mjs --local session stop SESSION_ID
-node bin/adr-cli.mjs --local receipts
-```
+See [private acceptance and rollout](docs/private-mac-acceptance.md) for the exact
+procedure, recovery boundaries and remaining operator steps.
 
-Accepting a quote requires a separate confirmation or `--accept`. The provider must
-be online. One session occupies a node. Each inference reserves its worst-case
-charge before dispatch; uncertain outcomes retain the liability for operator
-reconciliation. Stop/expiry release known unused credits once. `session resume`
-restores status and ordered events without replaying inference or tool actions.
+## Validation
 
-The bounded inference HTTP/relay path exists, but the buyer agent and coding tools
-are **not yet integrated into the terminal**. `connect` reserves a session; it does
-not start an agent. The network reports `agentExecution: not_enabled`.
+`npm run check` checks all JavaScript source, generated Router validators, the
+separate Pi 0.85.1 provenance lock, and unit tests. Router owns the marketplace
+contract and generator; commit that source before regenerating this client's
+validators. Do not hand-edit generated files.
 
-## Verification and limits
+The runtime scripts use only the explicitly supplied non-secret paths
+`ADROUTER_NEW_RUNTIME_EXECUTABLE`, `ADROUTER_NEW_RUNTIME_LIBRARY` and
+`ADROUTER_NEW_RUNTIME_HOME`:
 
-```sh
-npm ci --ignore-scripts
-npm run check
-node bin/adr-cli.mjs --local --json doctor
-```
+- `node scripts/verify-buyer-runtime.mjs`: actual VM tools, approvals and export with synthetic inference.
+- `node scripts/verify-egress-runtime.mjs`: guest TLS to the fixed upstream without a key or inference; deny unapproved destinations.
+- `npm run test:runtime`: retained synthetic two-VM feasibility test, not release acceptance.
 
-The generated contract is pinned to committed Router source. Verify cross-repository
-consistency with the Router generator's `--check`; never edit `src/generated` by hand.
-Runtime/image identities remain in `runtime/manifest.json` and `runtime/guest-images.json`.
-`npm run test:runtime` is the existing real two-VM synthetic feasibility test, not
-live-provider or release acceptance. The new broker path still needs actual VM,
-provider, Linux/KVM and separate-host staging acceptance.
-
-Workspace import/export helpers remain a feasibility layer with one-use review.
-They do not yet implement the planned full buyer execution, additions/deletions or
-race-resistant host application. Pi components have not been vendored. No runtime
-installer, automated benchmark, diagnostics exporter or release pipeline is claimed.
-
-MIT. Microsandbox is an external Apache-2.0 runtime; Node images retain upstream
-licenses. Package ownership and publication require separate release checks.
+Pi fuzzy search and bounded tool-output truncation are generated from the locked
+0.85.1 source revision; their MIT license is included. `scripts/vendor-pi.mjs`
+reproduces the selected components without importing Pi credentials or host tools.

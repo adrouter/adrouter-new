@@ -22,11 +22,13 @@
     "runtime/manifest.json",
     "runtime/guest-images.json",
     "README.md",
-    "LICENSE"
+    "LICENSE",
+    "pi-provenance.lock.json",
+    "release-policy.json"
   ],
   "scripts": {
     "test": "node --test test/*.test.mjs",
-    "check": "node --check bin/adr-cli.mjs && node --check src/cli.mjs && node --check src/network.mjs && node --check src/provider.mjs && node --check src/provider-broker.mjs && node --check src/terminal.mjs && node --check src/runtime.mjs && node --check src/workspace.mjs && node scripts/verify-provenance.mjs && npm test",
+    "check": "node scripts/check-source.mjs && node scripts/verify-provenance.mjs && npm test",
     "test:runtime": "node scripts/verify-runtime.mjs"
   },
   "publishConfig": {

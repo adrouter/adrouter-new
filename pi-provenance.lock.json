@@ -1,0 +1,23 @@
+{
+  "version": "0.85.1",
+  "repository": "https://github.com/earendil-works/pi",
+  "revision": "d981de1229ef899957bbe968bc8dcda02a21f477",
+  "adaptation": "TypeScript type erasure only; host/credential/agent execution remains adr-cli owned.",
+  "files": {
+    "fuzzy.mjs": {
+      "source": "packages/tui/src/fuzzy.ts",
+      "sourceSha256": "8286a6feb16672e52114df5300369d20f48e27c9e87da2dc87294ea3b1223b8e",
+      "outputSha256": "30fa5150de3a6c7c43f0d2f6302efc24e807f02142a62e6a0a3654c51489b3b7"
+    },
+    "truncate.mjs": {
+      "source": "packages/agent/src/harness/utils/truncate.ts",
+      "sourceSha256": "0b1d69f589ebced5ed7b3527c515e6fe7a0aca08660c6f8e84310fe040d73e34",
+      "outputSha256": "0436e18b4915ebbfbe4221533fb1768776dd8dabf402d24d8e4b5e659f2e8104"
+    },
+    "LICENSE": {
+      "source": "LICENSE",
+      "sourceSha256": "0457f5bcec3b3b211605dfb5d1a49042fd638f3686a410fe099c24a25af13c48",
+      "outputSha256": "0457f5bcec3b3b211605dfb5d1a49042fd638f3686a410fe099c24a25af13c48"
+    }
+  }
+}

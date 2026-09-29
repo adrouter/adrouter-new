@@ -54,7 +54,7 @@ test('provider broker excludes private destinations and only calls a fixed self-
   const server = createServer(async (req, res) => { let bytes = ''; for await (const chunk of req) bytes += chunk; received = { path: req.url, authorization: req.headers.authorization, body: JSON.parse(bytes) }; res.setHeader('content-type', 'application/json'); res.end(JSON.stringify({ choices: [{ message: { content: 'synthetic output' } }], usage: { prompt_tokens: 2, completion_tokens: 4 } })); });
   await new Promise(r => server.listen(0, '127.0.0.1', r));
   try {
-    const result = await upstreamInference({ endpoint: `http://127.0.0.1:${server.address().port}/v1/chat/completions`, model: 'fixed-model', supplyClass: 'self_hosted' }, 'synthetic-key', { requestId: 'request', messages: [{ role: 'user', content: 'fixture' }], maxOutputTokens: 8, endpoint: 'https://other.test' });
+    const result = await upstreamInference({ endpoint: `http://127.0.0.1:${server.address().port}/v1/chat/completions`, model: 'fixed-model', supplyClass: 'self_hosted' }, 'synthetic-key', { requestId: 'request', messages: [{ role: 'user', content: 'fixture' }], maxOutputTokens: 8, upstreamBudget: { reservedMicrousd: '100', inputBound: 8192, tariffVersion: 'synthetic-v1', inputMicrousdPerMillion: '1000', outputMicrousdPerMillion: '2000' }, endpoint: 'https://other.test' });
     assert.equal(received.path, '/v1/chat/completions'); assert.equal(received.body.model, 'fixed-model'); assert.equal(received.authorization, 'Bearer synthetic-key'); assert.equal(result.text, 'synthetic output'); assert.equal(JSON.stringify(result).includes('synthetic-key'), false);
   } finally { await new Promise(r => server.close(r)); }
 });
@@ -80,4 +80,12 @@ test('unknown refresh outcome is persisted and cannot reuse the rotating refresh
     await assert.rejects(n.request('/v2/me'), /refresh_outcome_unknown_reenroll_required/);
     assert.equal(calls, 1);
   } finally { await rm(home, { recursive: true, force: true }); }
+});
+
+test('official DeepSeek requests disable thinking for text/tool-only continuation', async () => {
+  const { upstreamBody } = await import('../src/provider-broker.mjs');
+  const frame = { messages: [{ role: 'user', content: 'synthetic' }], maxOutputTokens: 32, tools: [] };
+  const body = upstreamBody({ endpoint: 'https://api.deepseek.com/chat/completions', model: 'deepseek-v4-flash' }, frame);
+  assert.deepEqual(body.thinking, { type: 'disabled' }); assert.equal(body.max_tokens, 32);
+  assert.equal('thinking' in upstreamBody({ endpoint: 'https://example.test/infer', model: 'fixed' }, frame), false);
 });

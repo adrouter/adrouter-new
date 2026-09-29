@@ -4,8 +4,8 @@ import { Network, AuthStore, ClientError } from './network.mjs';
 import { ask, choose, render } from './terminal.mjs';
 import { SandboxRuntime } from './runtime.mjs';
 
-const booleanOptions = new Set(['json', 'local', 'accept', 'help', 'no-key']);
-const valueOptions = new Set(['network', 'actor', 'name', 'model', 'endpoint', 'supply', 'rights', 'availability', 'input-rate', 'output-rate', 'budget', 'max-output', 'duration', 'after', 'idempotency-key', 'review', 'user', 'amount', 'max-calls']);
+const booleanOptions = new Set(['json', 'local', 'accept', 'help', 'no-key', 'operator']);
+const valueOptions = new Set(['profile', 'network', 'actor', 'name', 'model', 'endpoint', 'supply', 'rights', 'availability', 'input-rate', 'output-rate', 'budget', 'max-output', 'duration', 'after', 'idempotency-key', 'review', 'user', 'amount', 'max-calls']);
 export function parseArgs(args) {
   const options = {}; const words = [];
   for (let i = 0; i < args.length; i++) {
@@ -21,8 +21,8 @@ export function parseArgs(args) {
 }
 export const usage = `adr-cli — adr-v2 compute marketplace (test credits, no cash value)
 
-  adr-cli [--network HTTPS_ORIGIN | --local] [--json] [command]
-  login | logout | whoami
+  adr-cli [--profile default|provider|operator|NAME] [--network HTTPS_ORIGIN | --local] [--json] [command]
+  login [--operator] | logout | whoami
   market [--model TEXT] [--supply authorized_api|self_hosted] [--after CURSOR]
   market inspect LISTING_ID
   connect LISTING_ID --budget UNITS [--accept]
@@ -34,7 +34,7 @@ Provider create flags: --name --model --endpoint --supply --rights
   --availability hot|cold --input-rate UNITS --output-rate UNITS
 Public metadata only. Never put an API key in flags, a URL or listing text.
 Provider serving: provider serve NODE_ID --max-calls 1 --max-output 1024
-  Requires the pinned VM runtime and hidden local credential entry.
+  Requires the pinned VM runtime and hidden guest-only credential entry.
 Local development: --local --actor buyer|provider|admin
 Local admin: admin pending | approve NODE_ID --review REFERENCE | grant --user local-buyer --amount UNITS
 Use --idempotency-key KEY to recover a mutation after an uncertain response.
@@ -53,7 +53,11 @@ export async function run(args, dependencies = {}) {
   const { words, options: o } = parseArgs(args); const json = !!o.json;
   const output = dependencies.output ?? (value => render(value, json));
   if (o.help || words[0] === 'help') { output({ usage }); return; }
-  const store = dependencies.store ?? new AuthStore();
+  if (!words.length && !json && process.stdin.isTTY && process.stdout.isTTY) {
+    const { runTui } = await import('./tui.mjs');
+    return runTui(o, dependencies);
+  }
+  const store = dependencies.store ?? new AuthStore(undefined, o.profile ?? 'default');
   const local = !!o.local;
   const origin = o.network ?? (local ? 'http://127.0.0.1:8790' : (await store.read())?.origin);
   if (!origin && words[0] !== 'doctor') throw new ClientError('network_required_use_login_with_network_or_local');
@@ -100,9 +104,9 @@ export async function run(args, dependencies = {}) {
   }
   if (command === 'login') {
     const abort = new AbortController(); const cancel = () => abort.abort(); process.once('SIGINT', cancel);
-    try { output(await network.login(output, abort.signal)); } finally { process.removeListener('SIGINT', cancel); }
+    try { output(await network.login(output, abort.signal, { operator: o.operator || store.profile === 'operator' })); } finally { process.removeListener('SIGINT', cancel); }
   } else if (command === 'logout') output(await network.logout());
-  else if (command === 'whoami') output(await get('/me'));
+  else if (command === 'whoami') { const scope = String((await store.read())?.scope ?? ''); output(await get(scope.includes('marketplace:operator') ? '/admin/me' : scope.includes('marketplace:provider') && !scope.includes('marketplace:buyer') ? '/providers/me' : '/me')); }
   else if (command === 'market') {
     if (sub === 'inspect') output(await get(`/listings/${requireId(id)}`, true));
     else if (!sub) {
@@ -141,7 +145,7 @@ export async function run(args, dependencies = {}) {
     else if (sub === 'grant') output(await post('/admin/grants', { userId: o.user, amount: o.amount }));
     else throw new ClientError('unknown_command');
   } else if (command === 'doctor') {
-    let runtime; try { runtime = await new SandboxRuntime({ executable: process.env.ADROUTER_NEW_RUNTIME_EXECUTABLE, library: process.env.ADROUTER_NEW_RUNTIME_LIBRARY, home: process.env.ADROUTER_NEW_RUNTIME_HOME }).verify(); } catch (e) { runtime = { status: 'unavailable', code: e.code ?? 'runtime_unavailable' }; }
+    let runtime; try { runtime = await (await (await import('./provider.mjs')).configuredRuntime()).verify(); } catch (e) { runtime = { status: 'unavailable', code: e.code ?? 'runtime_unavailable' }; }
     output({ product: 'adr-v2', runtime, network: network ? await get('/network/config', true) : 'not_configured', credentials: 'provider_keys_memory_only', releaseAcceptance: false });
   } else throw new ClientError('unknown_command');
 }

@@ -10,3 +10,8 @@ assert.equal(createHash('sha256').update(bytes).digest('hex'), metadata.validato
 // Full cross-repository drift verification is the Router generator's --check.
 // This local check detects accidental projection corruption, not source trust.
 console.log('generated validator integrity passed');
+
+const pi = JSON.parse(await readFile(new URL('../pi-provenance.lock.json', import.meta.url)));
+assert.equal(pi.version, '0.85.1'); assert.equal(pi.revision, 'd981de1229ef899957bbe968bc8dcda02a21f477');
+for (const [path, entry] of Object.entries(pi.files)) assert.equal(createHash('sha256').update(await readFile(new URL(`../src/vendor/pi/${path}`, import.meta.url))).digest('hex'), entry.outputSha256);
+console.log('Pi component provenance passed');

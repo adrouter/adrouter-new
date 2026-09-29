@@ -1,7 +1,7 @@
 {
   "schemaVersion": 1,
   "repository": "adrouter/adrouter-new",
-  "package": "@adrouter/new",
+  "package": "@adrouter/adr-cli",
   "version": "0.1.0-alpha.1",
   "candidateChannel": "candidate",
   "finalChannel": "alpha",
@@ -13,7 +13,7 @@
     "canonical-contract-drift",
     "boundary-and-revocation",
     "transactional-lifecycle-accounting",
-    "chain-failure-recovery",
+    "test-credit-uncertain-outcome-recovery",
     "adversarial-containment",
     "clean-source-artifact-provenance-sbom",
     "deployed-component-immutable-identities",

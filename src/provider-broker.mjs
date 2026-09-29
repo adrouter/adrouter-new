@@ -1,8 +1,9 @@
-import { request as httpsRequest } from 'node:https';
+import { connect as tlsConnect } from 'node:tls';
+import { Agent, request as httpsRequest } from 'node:https';
 import { request as httpRequest } from 'node:http';
 import { isIP } from 'node:net';
 import { lookup } from 'node:dns';
-import { ClientError } from './network.mjs';
+class ClientError extends Error { constructor(code) { super(code); this.code = code; } }
 
 export function publicAddress(address) {
   if (address.includes(':')) return /^[23]/.test(address) && !/^(2001:(0:|db8:)|2002:)/i.test(address) && !address.includes('.');
@@ -13,22 +14,52 @@ export function publicAddress(address) {
 }
 export function validateBinding(node) {
   const url = new URL(node.endpoint);
-  const loopback = ['127.0.0.1', '[::1]'].includes(url.hostname);
+  const loopback = ['127.0.0.1', '[::1]'].includes(url.hostname) || (node.localEngine === true && url.hostname === 'host.microsandbox.internal');
   if (url.username || url.password || url.search || url.hash || !(url.protocol === 'https:' || (node.supplyClass === 'self_hosted' && loopback && url.protocol === 'http:'))) throw new ClientError('endpoint_not_permitted');
   const address = url.hostname.replace(/^\[|\]$/g, '');
   if (isIP(address) && !publicAddress(address) && !(node.supplyClass === 'self_hosted' && loopback)) throw new ClientError('endpoint_address_rejected');
   return { url, loopback: node.supplyClass === 'self_hosted' && loopback };
+}
+export function tunnelAgent(node, url) {
+  if(!node.tunnel)return undefined;
+  const agent=new Agent({keepAlive:false,maxSockets:1});
+  agent.createConnection=(_options,callback)=>{
+    const request=httpRequest({host:'host.microsandbox.internal',port:node.tunnel.port,method:'CONNECT',path:'/upstream',headers:{authorization:`Bearer ${node.tunnel.capability}`},timeout:10000});
+    request.once('connect',(response,socket,head)=>{
+      if(response.statusCode!==200||head.length){socket.destroy();callback(new Error('tunnel_rejected'));return;}
+      const secure=tlsConnect({socket,servername:url.hostname,rejectUnauthorized:true});
+      let ready=false;
+      secure.once('secureConnect',()=>{ready=true;callback(null,secure);});
+      secure.once('error',error=>{if(!ready)callback(error);});
+    });
+    request.once('error',error=>callback(error));request.once('timeout',()=>request.destroy(new Error('tunnel_timeout')));request.end();
+  };
+  return agent;
+}
+export function upstreamBody(node, frame) {
+  const url = new URL(node.endpoint);
+  // The connector contract carries text/tool messages, not reasoning history.
+  // DeepSeek defaults to thinking, whose tool continuation requires that history.
+  const plainDeepSeek = url.protocol === 'https:' && url.hostname === 'api.deepseek.com';
+  return { model: node.model, messages: frame.messages, max_tokens: frame.maxOutputTokens,
+    ...(frame.tools?.length ? { tools: frame.tools } : {}),
+    ...(plainDeepSeek ? { thinking: { type: 'disabled' } } : {}), stream: false };
 }
 // Fixed approved endpoint, model and headers. Neither relay nor guest can choose
 // a URL, header, redirect, tool or arbitrary proxy target. DNS is checked at the
 // connection's lookup, not in an earlier rebindable preflight.
 export function upstreamInference(node, key, frame, signal) {
   const { url, loopback } = validateBinding(node);
-  const bytes = JSON.stringify({ model: node.model, messages: frame.messages, max_tokens: frame.maxOutputTokens, stream: false });
+  const authority = frame.upstreamBudget;
+  const inputBound = Buffer.byteLength(JSON.stringify({ messages: frame.messages, ...(frame.tools?.length ? { tools: frame.tools } : {}) })) + frame.messages.length * 64 + 1024;
+  if (!authority || inputBound > authority.inputBound || !['reservedMicrousd','inputMicrousdPerMillion','outputMicrousdPerMillion'].every(k => /^(0|[1-9][0-9]{0,18})$/.test(authority[k]))) throw new ClientError('upstream_authority_required');
+  const worst = (BigInt(inputBound) * BigInt(authority.inputMicrousdPerMillion) + BigInt(frame.maxOutputTokens) * BigInt(authority.outputMicrousdPerMillion) + 999999n) / 1000000n;
+  if (worst > BigInt(authority.reservedMicrousd)) throw new ClientError('upstream_authority_exceeded');
+  const bytes = JSON.stringify(upstreamBody(node, frame));
   return new Promise((resolve, reject) => {
     const fail = () => reject(new ClientError('upstream_failed_outcome_unknown'));
     const request = (url.protocol === 'https:' ? httpsRequest : httpRequest)(url, {
-      method: 'POST', signal, timeout: 40000,
+      method: 'POST', signal, timeout: 40000, agent: tunnelAgent(node,url),
       headers: { 'content-type': 'application/json', 'content-length': Buffer.byteLength(bytes), ...(key ? { authorization: `Bearer ${key}` } : {}) },
       lookup(hostname, options, callback) {
         lookup(hostname, options, (error, addresses, family) => {
@@ -46,10 +77,12 @@ export function upstreamInference(node, key, frame, signal) {
       response.once('end', () => {
         try {
           const data = JSON.parse(Buffer.concat(chunks).toString('utf8'));
-          const text = data.choices?.[0]?.message?.content;
+          const text = data.choices?.[0]?.message?.content ?? '';
+          const toolCalls = data.choices?.[0]?.message?.tool_calls ?? [];
+          if (!Array.isArray(toolCalls) || toolCalls.length > 8 || (toolCalls.length && !frame.tools?.length) || toolCalls.some(t => t.type !== 'function' || typeof t.id !== 'string' || !/^[A-Za-z0-9_-]{1,96}$/.test(t.id) || !['read_file','search','write_file','delete_file','run_command'].includes(t.function?.name) || typeof t.function.arguments !== 'string' || t.function.arguments.length > 65536)) { fail(); return; }
           const inputTokens = data.usage?.prompt_tokens; const outputTokens = data.usage?.completion_tokens;
-          if (typeof text !== 'string' || Buffer.byteLength(text) > 131072 || !Number.isSafeInteger(inputTokens) || inputTokens < 0 || !Number.isSafeInteger(outputTokens) || outputTokens < 0 || outputTokens > frame.maxOutputTokens || data.choices?.[0]?.message?.tool_calls) { fail(); return; }
-          resolve({ type: 'result', requestId: frame.requestId, text, inputTokens, outputTokens });
+          if (typeof text !== 'string' || Buffer.byteLength(text) > 131072 || !Number.isSafeInteger(inputTokens) || inputTokens < 0 || inputTokens > inputBound || !Number.isSafeInteger(outputTokens) || outputTokens < 0 || outputTokens > frame.maxOutputTokens) { fail(); return; }
+          resolve({ type: 'result', requestId: frame.requestId, text, toolCalls, inputTokens, outputTokens });
         } catch { fail(); }
       });
     });

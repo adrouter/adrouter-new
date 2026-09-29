@@ -103,7 +103,7 @@ try {
     })().catch(e=>{console.log(JSON.stringify({error:'connector_fixture_failed',code:e.cause?.code??e.code??e.name}));});`;
   connectorTask = runtime.run(connector, ['node', '-e', connectorCode], { timeoutSeconds: 30 });
   connectorTask.catch(() => {});
-  const request = { type: 'inference', sessionId: 'fixture-session', requestId: 'fixture-request', bindingRevision: 'fixture-binding', sequence: 1, deadlineUnixMs: Date.now() + 15000, messages: [{ role: 'user', content: 'Update the fixture workspace' }], maxOutputTokens: 32 };
+  const request = { type: 'inference', sessionId: 'fixture-session', requestId: 'fixture-request', bindingRevision: 'fixture-binding', sequence: 1, deadlineUnixMs: Date.now() + 15000, messages: [{ role: 'user', content: 'Update the fixture workspace' }], maxOutputTokens: 32, tools: [], upstreamBudget: { reservedMicrousd: '100', inputBound: 8192, tariffVersion: 'synthetic-v1', inputMicrousdPerMillion: '1000', outputMicrousdPerMillion: '2000' } };
   const buyerCode = `
     (async () => {
       const fs = require('node:fs');

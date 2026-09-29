@@ -14,12 +14,19 @@ export function networkOrigin(value, local = false) {
   return url.origin;
 }
 export class AuthStore {
-  constructor(home = homedir()) { this.home = home; }
+  constructor(home = homedir(), profile = 'default') {
+    if (!/^[a-z][a-z0-9_-]{0,31}$/.test(profile)) throw new ClientError('invalid_profile_name');
+    this.home = home; this.profile = profile;
+  }
   async directory() {
-    const base = await realpath(this.home); const directory = join(base, '.adr-v2');
-    await mkdir(directory, { mode: 0o700 }).catch(e => { if (e.code !== 'EEXIST') throw e; });
-    const stat = await lstat(directory);
-    if (!stat.isDirectory() || stat.isSymbolicLink() || stat.uid !== process.getuid() || (stat.mode & 0o077)) throw new ClientError('state_directory_unsafe');
+    const base = await realpath(this.home); let directory = base;
+    // Default remains at the original path; named profiles never copy credentials.
+    for (const part of ['.adr-v2', ...(this.profile === 'default' ? [] : ['profiles', this.profile])]) {
+      directory = join(directory, part);
+      await mkdir(directory, { mode: 0o700 }).catch(e => { if (e.code !== 'EEXIST') throw e; });
+      const stat = await lstat(directory);
+      if (!stat.isDirectory() || stat.isSymbolicLink() || stat.uid !== process.getuid() || (stat.mode & 0o077)) throw new ClientError('state_directory_unsafe');
+    }
     return directory;
   }
   async read() {
@@ -104,12 +111,15 @@ export class Network {
     });
     return this.send(path, { ...options, identity, token: identity.access_token });
   }
-  async login(notify, signal) {
+  async login(notify, signal, { operator = false } = {}) {
     if (this.local) return { status: 'local_development', actor: this.actor };
+    return this.store.withLock(() => this.enroll(notify, signal, operator));
+  }
+  async enroll(notify, signal, operator) {
     if (await this.store.read()) throw new ClientError('logout_existing_installation_first');
     const keys = generateKeyPairSync('ed25519');
     const identity = { origin: this.origin, publicKey: keys.publicKey.export({ format: 'jwk' }), privateKey: keys.privateKey.export({ format: 'jwk' }) };
-    const authorization = await this.send('/v1/device/authorizations', { method: 'POST', identity, body: { client_kind: 'marketplace', client_version: '0.1.0-alpha.1', display_name: 'adr-cli', public_key_jwk: identity.publicKey, storage_class: 'file_protected', requested_scopes: ['marketplace:buyer', 'marketplace:provider'] }, signal });
+    const authorization = await this.send('/v1/device/authorizations', { method: 'POST', identity, body: { client_kind: 'marketplace', client_version: '0.1.0-alpha.1', display_name: `adr-cli ${this.store.profile}`, public_key_jwk: identity.publicKey, storage_class: 'file_protected', requested_scopes: operator ? ['marketplace:operator'] : this.store.profile === 'provider' ? ['marketplace:provider'] : ['marketplace:buyer', 'marketplace:provider'] }, signal });
     let approved = false;
     try {
       const verification = new URL(authorization.verification_uri_complete);
