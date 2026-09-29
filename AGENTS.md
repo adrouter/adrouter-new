@@ -15,4 +15,3 @@ Runtime tests require actual microVMs; mocks cannot satisfy platform acceptance.
 Package remains private until the release gates are implemented and satisfied.
 Publish immutable candidate first, retain the draft release through acceptance,
 then alpha only. No mainnet and no latest promotion.
-

@@ -1,12 +1,12 @@
 {
   "schemaVersion": 1,
-  "recordedAt": "2026-09-29T14:02:04.679Z",
+  "recordedAt": "2026-09-29T14:04:22.872Z",
   "kind": "real_microvm_synthetic_inference_feasibility",
   "sourceSha256": {
     "scripts/verify-runtime.mjs": "867b2cf0e33fff2c6dadd1186e9cc9f5224366eff9b0f0bbc3f0ac4465255f63",
     "src/runtime.mjs": "821e1ce73092d0cb6f4befe0036a29eaf09b44ef79070221c3ccfc2f1bc63ee6",
     "src/workspace.mjs": "e1a98c8494079853de1ab318e1eb9a40dacd405fb5f338e779dc3c30c9150f50",
-    "src/generated/validators.mjs": "4f16d6c4fe8ca1984d82ee0924f9929abf1e6bc792da1e43877cd478bf471d0e",
+    "src/generated/validators.mjs": "98bfe6aebbc63fa3e2039b504343147cb9e2830ef7726dfd344b8ee82b86bbda",
     "runtime/manifest.json": "8bf30ebd92035858b5b767540aca93f73c7f435678a31e1de6d6b76912940813",
     "runtime/guest-images.json": "296a98158c9dd3cf15cfa6176b1ad2b7d9cd69160777a41e047249875d63ff9d"
   },
