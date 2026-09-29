@@ -1,0 +1,39 @@
+{
+  "name": "@adrouter/new",
+  "version": "0.1.0-alpha.1",
+  "private": true,
+  "description": "AdRouter devnet inference marketplace client and provider connector",
+  "type": "module",
+  "engines": {
+    "node": ">=22.14.0"
+  },
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/adrouter/adrouter-new.git"
+  },
+  "bin": {
+    "adrouter-new": "bin/adrouter-new.mjs"
+  },
+  "files": [
+    "bin/",
+    "src/",
+    "runtime/manifest.json",
+    "runtime/guest-images.json",
+    "README.md",
+    "LICENSE"
+  ],
+  "scripts": {
+    "test": "node --test test/*.test.mjs",
+    "check": "node --check bin/adrouter-new.mjs && node --check src/runtime.mjs && node --check src/workspace.mjs && node scripts/verify-provenance.mjs && npm test",
+    "test:runtime": "node scripts/verify-runtime.mjs"
+  },
+  "publishConfig": {
+    "access": "public",
+    "tag": "candidate",
+    "registry": "https://registry.npmjs.org/"
+  },
+  "dependencies": {
+    "ajv": "8.20.0"
+  }
+}

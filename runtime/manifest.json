@@ -1,0 +1,21 @@
+{
+  "schemaVersion": 1,
+  "runtime": "microsandbox",
+  "version": "0.7.4",
+  "repository": "https://github.com/superradcompany/microsandbox",
+  "license": "Apache-2.0",
+  "platforms": {
+    "darwin-arm64": {
+      "archive": "https://github.com/superradcompany/microsandbox/releases/download/v0.7.4/microsandbox-darwin-aarch64.tar.gz",
+      "sha256": "f61cc7ca635a311fdada5a6b8a1d4a8d93342b924edefed90c27a4574f4bfdc0",
+      "executableSha256": "1dc5c7a9b28d85f06307a006394e8693e58fe31f9dc1e1919bf7d06c3706473e",
+      "librarySha256": "43e36ee2b1f2a7488c25f34193f657568a7733281d856ad267506ccc02993d59"
+    },
+    "linux-x64": {
+      "archive": "https://github.com/superradcompany/microsandbox/releases/download/v0.7.4/microsandbox-linux-x86_64.tar.gz",
+      "sha256": "a3689a2fb4cc9dd88e36f7c11883bb2bdf98b1c1ffd2f41a414224e4cd89bf59",
+      "executableSha256": "b75244c1d0d24566009aa94d06f92b957cfd5affdf5550935dedc378cb0691e4",
+      "librarySha256": "ce9a749e8471e89aa5e2ad88de0c1581c3384c100bcb107a75bb12739a12d590"
+    }
+  }
+}

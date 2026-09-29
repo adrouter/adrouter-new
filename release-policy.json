@@ -1,0 +1,24 @@
+{
+  "schemaVersion": 1,
+  "repository": "adrouter/adrouter-new",
+  "package": "@adrouter/new",
+  "version": "0.1.0-alpha.1",
+  "candidateChannel": "candidate",
+  "finalChannel": "alpha",
+  "githubDraftThroughAcceptance": true,
+  "githubPrerelease": true,
+  "mainnet": false,
+  "publicationEnabled": false,
+  "requiredGates": [
+    "canonical-contract-drift",
+    "boundary-and-revocation",
+    "transactional-lifecycle-accounting",
+    "chain-failure-recovery",
+    "adversarial-containment",
+    "clean-source-artifact-provenance-sbom",
+    "deployed-component-immutable-identities",
+    "installed-candidate-darwin-arm64-real-providers",
+    "installed-candidate-linux-x64-real-kvm",
+    "anonymous-exact-version-install"
+  ]
+}

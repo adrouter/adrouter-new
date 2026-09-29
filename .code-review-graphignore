@@ -1,0 +1,8 @@
+node_modules/**
+src/generated/**
+output/**
+coverage/**
+.git/**
+.code-review-graph/**
+.env*
+*.tgz

@@ -1,0 +1,37 @@
+{
+  "schemaVersion": 1,
+  "recordedAt": "2026-09-29T14:02:04.679Z",
+  "kind": "real_microvm_synthetic_inference_feasibility",
+  "sourceSha256": {
+    "scripts/verify-runtime.mjs": "867b2cf0e33fff2c6dadd1186e9cc9f5224366eff9b0f0bbc3f0ac4465255f63",
+    "src/runtime.mjs": "821e1ce73092d0cb6f4befe0036a29eaf09b44ef79070221c3ccfc2f1bc63ee6",
+    "src/workspace.mjs": "e1a98c8494079853de1ab318e1eb9a40dacd405fb5f338e779dc3c30c9150f50",
+    "src/generated/validators.mjs": "4f16d6c4fe8ca1984d82ee0924f9929abf1e6bc792da1e43877cd478bf471d0e",
+    "runtime/manifest.json": "8bf30ebd92035858b5b767540aca93f73c7f435678a31e1de6d6b76912940813",
+    "runtime/guest-images.json": "296a98158c9dd3cf15cfa6176b1ad2b7d9cd69160777a41e047249875d63ff9d"
+  },
+  "identity": {
+    "platform": "darwin-arm64",
+    "version": "0.7.4",
+    "executableSha256": "1dc5c7a9b28d85f06307a006394e8693e58fe31f9dc1e1919bf7d06c3706473e",
+    "librarySha256": "43e36ee2b1f2a7488c25f34193f657568a7733281d856ad267506ccc02993d59"
+  },
+  "image": "docker.io/library/node@sha256:0a7108bf6c7bf5de370ffb1a3ed6be93d405b43ff159f681a8d18c0e2bc2e402",
+  "guestManifest": "sha256:85cdd100016a2e09927c0776bb7ebebcfefce5cd0af49893ada91cbc4d78ee22",
+  "checks": [
+    "two_guest_execution",
+    "typed_relay_fixture",
+    "provider_local_synthetic_auth",
+    "no_credential_on_wire",
+    "no_host_files_or_git",
+    "no_shared_mounts",
+    "cpu_memory_policy",
+    "deny_default_network",
+    "buyer_broker_bypass_blocked",
+    "reviewed_export",
+    "original_unchanged",
+    "cancel_tears_down",
+    "all_guests_removed"
+  ],
+  "releaseAcceptance": false
+}
