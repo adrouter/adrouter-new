@@ -28,6 +28,10 @@ const problems = {
   refresh_outcome_unknown_reenroll_required: 'A previous sign-in refresh had an unknown result. Revoke this installation through AdRouter before enrolling again.',
   auth_state_busy: 'This profile is busy. Use separate --profile provider and --profile operator terminals, or wait for the operation to finish.',
   private_owner_evaluation_required: 'Private acceptance is limited to the configured owner. Use the separately approved operator profile.',
+  handshake_failed: 'The provider guest handshake failed. Known unused credits were returned.',
+  handshake_required: 'Complete the provider guest handshake before coding.',
+  session_request_limit: 'All five inference requests were dispatched. Finish this session and explicitly accept another.',
+  marketplace_buyer_scope_only: 'Use the Buyer profile to request buyer permission only.',
   invalid_profile_name: 'Use a lowercase profile name starting with a letter, up to 32 letters, digits, underscores or hyphens.',
   activation_expired: 'Cold activation expired or the session closed. Start a new evaluation only after the provider is available.',
   cancelled: 'Operation cancelled. Check sessions for any unsettled work before starting another.',
@@ -175,7 +179,7 @@ export async function runTui(options = {}, dependencies = {}) {
     const edited = await ui.form('Provider limits', [
       { name: 'maxCalls', label: 'Maximum requests', default: '5', validate: integer(1, 30) },
       { name: 'maxOutputTokens', label: 'Output tokens / request', default: '1024', validate: integer(1, 8192) },
-    ], bounds, 'One concurrent session · maximum VM lifetime nine minutes.');
+    ], bounds, 'One concurrent session · Hot serving continues while this terminal stays open. Cold/evaluation guests remain bounded.');
     if (!edited) return;
     Object.assign(bounds, edited);
     const budget = await get('/providers/budget');
@@ -234,10 +238,16 @@ export async function runTui(options = {}, dependencies = {}) {
       { name: 'duration', label: 'Session seconds', default: '300', validate: integer(60, 600) },
     ], {}, listing.name);
     if (!bounds) return;
-    const quote = await post('/quotes', { listingId: listing.id, maximumCharge: bounds.budget, maxOutputTokens: Number(bounds.output), durationSeconds: Number(bounds.duration) });
+    const privateMode = !config.admissions && config.privateRehearsal;
+    if (privateMode && !await confirm('Private rehearsal · provisional qualification', ['This provider has provisional qualification. This session does not establish full acceptance.', 'Limits: 100 test credits, 300 seconds, five inference requests, at most 1,024 output tokens each.'], 'Acknowledge and request private session')) return;
+    const mode = privateMode ? { mode: 'private_rehearsal', acknowledgeProvisional: true } : {};
+    const quote = await post('/quotes', { listingId: listing.id, maximumCharge: bounds.budget, maxOutputTokens: Number(bounds.output), durationSeconds: Number(bounds.duration), ...mode });
     if (!await confirm('Review your quote', [...listingLines(listing), '', `Maximum reserved: ${quote.maximumCharge} test credits`, `Output limit: ${quote.maxOutputTokens} tokens`, `Session duration: ${quote.durationSeconds} seconds`, `Quote expires: ${date(quote.expiresAt)}`, `Cold activation deadline: ${quote.activationDeadlineSeconds || 0} seconds. Expired activation refunds the reservation.`], 'Accept and reserve test credits')) return;
-    const session = await post('/sessions', { quoteId: quote.id, accept: true }, `accept_${quote.id}`);
-    await sessionDetail(session.id);
+    const session = await post('/sessions', { quoteId: quote.id, accept: true, ...mode }, `accept_${quote.id}`);
+    if (privateMode) {
+      try { const ready = await ui.task('Verify provider guest handshake', signal => network.request(`/v2/sessions/${session.id}/handshake`, { method: 'POST', body: {}, signal }), { cancel: true }); await buyerAgent(ready, listing); }
+      finally { await post(`/sessions/${session.id}/stop`); }
+    } else await sessionDetail(session.id);
   }
   async function browse() {
     actor('buyer'); let filters = { model: '', supplyClass: 'any', availability: 'any' }; let cursor;
@@ -253,27 +263,39 @@ export async function runTui(options = {}, dependencies = {}) {
       else if (selection === 'refresh') cursor = undefined;
       else await attempt(async () => {
         const listing = await get(`/listings/${selection}`, true);
-        const action = await ui.menu('Compute details', [item('buy', 'Get a test-credit quote', listing.ready ? 'Review exact limits before reserving.' : 'The provider must start before a quote can be accepted.', !config?.admissions || !(listing.ready || (listing.availability === 'cold' && listing.controlOnline))), item('back', 'Back')], { lines: listingLines(listing) });
+        const action = await ui.menu('Compute details', [item('buy', 'Get a test-credit quote', listing.ready ? 'Review exact limits before reserving.' : 'The provider must start before a quote can be accepted.', !(config?.admissions || config?.privateRehearsal) || !(listing.ready || (listing.availability === 'cold' && listing.controlOnline))), item('back', 'Back')], { lines: listingLines(listing) });
         if (action === 'buy') await buy(listing);
       });
     }
   }
-  async function buyerAgent(session) {
+  async function buyerAgent(session, selectedListing) {
     const input = await ui.form('Buyer workspace', [
       { name: 'root', label: 'Workspace directory', default: process.cwd(), validate: required },
       { name: 'files', label: 'Files to import (comma separated)', help: 'Explicit relative paths. No secrets, hidden files, symlinks or archives.', validate: required },
       { name: 'prompt', label: 'Coding task', maxLength: 32000, validate: required },
     ]);
     if (!input || !await confirm('Start isolated buyer VM?', ['Tools run only in a disposable VM without network.', 'Each command or mutation needs a separate approval.', 'Export creates a reviewed snapshot; original files remain unchanged.'])) return;
-    const { runBuyer } = await import('./buyer.mjs');
+    const listing = selectedListing ?? await get(`/listings/${session.listingId}`, true);
+    const { openBuyer } = await import('./buyer.mjs');
     const abort = new AbortController();
-    const result = await runBuyer(network, session.id, { ...input, files: input.files.split(',').map(x => x.trim()), runtimeConfig, signal: abort.signal,
+    const buyer = await openBuyer(network, session.id, { ...input, files: input.files.split(',').map(x => x.trim()), runtimeConfig, signal: abort.signal,
       approve: (action, permission) => confirm('Approve this action once?', [action.name, JSON.stringify(action.args ?? action.changes, null, 2), `Approval expires: ${date(permission.expiresAt)}`], 'Allow once'),
       activity: (title, work) => ui.task(title, work, { cancel: true }),
       progress: async value => { if (value.status === 'answer' && value.text) await ui.page('Agent response', [value.text]); },
     });
-    await ui.page('Reviewed workspace exported', [result.directory, result.manifest, 'The manifest lists additions, modifications and deletions.']);
+    try {
+      await buyer.prompt(input.prompt);
+      for (;;) {
+        const current = await buyer.status();
+        const remaining = Math.max(0,Number(current.requestLimit??5)-Number(current.requestSequence??0));
+        const choice = await ui.menu('Coding session', [item('prompt','Follow-up task','Continue in the same isolated workspace.',!remaining || current.expiresAt<=Date.now()),item('export','Review and export workspace'),item('finish','Finish session')], { lines: [`${listing.name} · ${listing.model}`,`Expires: ${date(current.expiresAt)}`,`Remaining inference requests: ${remaining}`,`Handshake: ${words(current.handshakeStatus??'not_required')}`] });
+        if (!choice || choice==='finish')break;
+        if(choice==='export') { const result=await buyer.export(); await ui.page('Reviewed workspace export',[result.directory,result.manifest]); }
+        if(choice==='prompt') { const next=await ui.form('Follow-up coding task',[{name:'prompt',label:'Task',maxLength:32000,validate:required}]); if(next)await buyer.prompt(next.prompt); }
+      }
+    } finally { await buyer.close(); }
   }
+
   async function sessionDetail(id) {
     for (;;) {
       const session = await get(`/sessions/${id}`);
@@ -296,7 +318,7 @@ export async function runTui(options = {}, dependencies = {}) {
   }
   async function admin() {
     actor('admin');
-    const choice = await ui.menu('Marketplace operator', [item('suspension', 'Manage listing suspension'), item('cancellationReview', 'Review evaluation cancellation'), ...(network.local ? [item('grant', 'Grant local test credits')] : []), item('allowance','Manage marketplace allowances'), item('evaluation', 'Evaluation queue'), item('evaluationSessions', 'Evaluation sessions'), item('tariff', 'Qualify upstream tariff'), item('reconcile', 'Reconcile uncertain requests'), item('back', 'Back')], { subtitle: network.local ? 'Local fixtures only.' : 'Requires a separately approved marketplace operator installation.' });
+    const choice = await ui.menu('Marketplace operator', [item('suspension', 'Manage listing suspension'), item('cancellationReview', 'Review evaluation cancellation'), ...(network.local ? [item('grant', 'Grant local test credits')] : []), item('allowance','Manage marketplace allowances'), item('evaluation', 'Evaluation queue'), item('evaluationSessions', 'Evaluation sessions'), item('tariff', 'Qualify upstream tariff'), item('capacity','Release stopped execution capacity'), item('reconcile', 'Reconcile uncertain requests'), item('back', 'Back')], { subtitle: network.local ? 'Local fixtures only.' : 'Requires a separately approved marketplace operator installation.' });
     if (choice === 'evaluationSessions') {
       const sessions = await get('/admin/evaluation-sessions');
       const id = await ui.menu('Evaluation sessions', [...sessions.map(s => item(s.id, `${s.state} · ${s.id}`, `Evaluation only · reserved ${s.funded} · charged ${s.charged}`)), item('back', 'Back')]);
@@ -306,6 +328,11 @@ export async function runTui(options = {}, dependencies = {}) {
       const policy=policies.find(p=>p.id===id);
       const values=await ui.form('Separate marketplace limits',[{name:'dailyLimit',label:'Daily test credits',default:policy.dailyLimit,validate:integer(0,999999999999999)},{name:'monthlyLimit',label:'Monthly test credits',default:policy.monthlyLimit,validate:integer(0,999999999999999)},{name:'reviewReference',label:'Change reference',validate:required}]);
       if(values&&await confirm('Update marketplace limits?', ['Legacy balances and limits remain separate.',JSON.stringify(values,null,2)]))await post(`/admin/allowances/${id}`,{...values,expectedRevision:policy.revision});
+    } else if(choice==='capacity') {
+      const requests=await get('/admin/requests');const id=await ui.menu('Stopped execution capacity',[...requests.map(r=>item(r.sessionId,r.sessionId,`Unresolved request ${r.id}`)),item('back','Back')]);
+      if(!id||id==='back')return;
+      const evidence=await ui.form('Verified guest teardown',[{name:'teardownEvidenceReference',label:'Teardown evidence reference',validate:required}]);
+      if(evidence&&await confirm('Release execution capacity?', ['Verify the provider guest was removed, readiness cleared and relay disconnected.', 'The unresolved request and financial reservations remain held.'], 'Confirm verified teardown')) await post(`/admin/sessions/${id}/release-execution`,{...evidence,guestTeardownVerified:true});
     } else if(choice==='reconcile') {
       const requests=await get('/admin/requests');const id=await ui.menu('Uncertain requests',[...requests.map(r=>item(r.id,r.id,`Held upstream: ${r.upstreamReserved} micro-USD`)),item('back','Back')]);
       if(!id||id==='back')return;
@@ -346,7 +373,7 @@ export async function runTui(options = {}, dependencies = {}) {
   }
   async function selectProfile() {
     if (providersRunning.size) { await ui.page('Provider is running', ['Keep this profile open and start another terminal with adr-cli --profile operator. Stop providers before switching profiles.']); return; }
-    const chosen = await ui.menu('Choose profile', [item('default', 'Default', 'Preserves the original installation'), item('provider', 'Provider', 'Independent provider installation and refresh state'), item('operator', 'Operator', 'Independent operator approval'), item('custom', 'Named profile'), item('back', 'Back')]);
+    const chosen = await ui.menu('Choose profile', [item('default', 'Default', 'Preserves the original installation'), item('provider', 'Provider', 'Independent provider installation and refresh state'), item('buyer', 'Buyer', 'Independent buyer-only installation and refresh state'), item('operator', 'Operator', 'Independent operator approval'), item('custom', 'Named profile'), item('back', 'Back')]);
     if (!chosen || chosen === 'back') return;
     let profile = chosen;
     if (chosen === 'custom') { const value = await ui.form('New or existing profile', [{ name: 'profile', label: 'Profile name', validate: value => /^[a-z][a-z0-9_-]{0,31}$/.test(value) ? '' : 'Use up to 32 lowercase letters, digits, underscores or hyphens.' }]); if (!value) return; profile = value.profile; }
@@ -378,7 +405,7 @@ export async function runTui(options = {}, dependencies = {}) {
     for (;;) {
       if (terminating) return;
       if (!network.local && !(await store.read())) {
-        const selection = await ui.menu('Sign in to AdRouter', [item('login', store.profile === 'operator' ? 'Approve operator in browser' : 'Continue in browser', 'Approve this profile with the comparison code.'), ...(store.profile === 'operator' ? [] : [item('operatorLogin', 'Sign in as operator', 'Separate approval; current owner/operator role required.')]), item('profiles', 'Choose profile'), item('diagnostics', 'Network status'), item('exit', 'Exit')], { subtitle: config?.admissions === false ? (config.privateOwnerEvaluation ? 'Private owner evaluation only. Ordinary purchases are disabled.' : 'This network has marketplace admissions disabled.') : 'Your installation is separate from other AdRouter clients.' });
+        const selection = await ui.menu('Sign in to AdRouter', [item('login', store.profile === 'operator' ? 'Approve operator in browser' : 'Continue in browser', 'Approve this profile with the comparison code.'), ...(store.profile === 'operator' ? [] : [item('operatorLogin', 'Sign in as operator', 'Separate approval; current owner/operator role required.')]), item('profiles', 'Choose profile'), item('diagnostics', 'Network status'), item('exit', 'Exit')], { subtitle: config?.admissions === false ? (config.privateOwnerEvaluation ? config.privateRehearsal ? 'Private two-account rehearsal and owner evaluation. Ordinary purchases are disabled.' : 'Private owner evaluation only. Ordinary purchases are disabled.' : 'This network has marketplace admissions disabled.') : 'Your installation is separate from other AdRouter clients.' });
         if (!selection || selection === 'exit') return;
         if (selection === 'profiles') await attempt(selectProfile);
         else if (selection === 'login') await attempt(() => signIn(store.profile === 'operator'));

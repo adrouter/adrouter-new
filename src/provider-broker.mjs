@@ -48,18 +48,22 @@ export function upstreamBody(node, frame) {
 // Fixed approved endpoint, model and headers. Neither relay nor guest can choose
 // a URL, header, redirect, tool or arbitrary proxy target. DNS is checked at the
 // connection's lookup, not in an earlier rebindable preflight.
-export function upstreamInference(node, key, frame, signal) {
+export function upstreamInference(node, key, frame, signal, onTiming = () => {}) {
   const { url, loopback } = validateBinding(node);
   const authority = frame.upstreamBudget;
   const inputBound = Buffer.byteLength(JSON.stringify({ messages: frame.messages, ...(frame.tools?.length ? { tools: frame.tools } : {}) })) + frame.messages.length * 64 + 1024;
   if (!authority || inputBound > authority.inputBound || !['reservedMicrousd','inputMicrousdPerMillion','outputMicrousdPerMillion'].every(k => /^(0|[1-9][0-9]{0,18})$/.test(authority[k]))) throw new ClientError('upstream_authority_required');
   const worst = (BigInt(inputBound) * BigInt(authority.inputMicrousdPerMillion) + BigInt(frame.maxOutputTokens) * BigInt(authority.outputMicrousdPerMillion) + 999999n) / 1000000n;
   if (worst > BigInt(authority.reservedMicrousd)) throw new ClientError('upstream_authority_exceeded');
+  const deadlineMs = Number.isSafeInteger(frame.deadlineUnixMs) ? Math.max(1,Math.min(120000,frame.deadlineUnixMs-Date.now())) : 120000;
   const bytes = JSON.stringify(upstreamBody(node, frame));
   return new Promise((resolve, reject) => {
-    const fail = () => reject(new ClientError('upstream_failed_outcome_unknown'));
+    const started = Date.now(); let statusCode = null, headersMs = null, finished = false;
+    const deadline = setTimeout(() => { request.destroy(); fail(); }, deadlineMs);
+    const timing = outcome => { if(finished)return; finished=true;clearTimeout(deadline);onTiming({phase:'upstream',outcome,statusCode,headersMs,totalMs:Date.now()-started}); };
+    const fail = () => { timing('unknown'); reject(new ClientError('upstream_failed_outcome_unknown')); };
     const request = (url.protocol === 'https:' ? httpsRequest : httpRequest)(url, {
-      method: 'POST', signal, timeout: 40000, agent: tunnelAgent(node,url),
+      method: 'POST', signal, timeout: deadlineMs, agent: tunnelAgent(node,url),
       headers: { 'content-type': 'application/json', 'content-length': Buffer.byteLength(bytes), ...(key ? { authorization: `Bearer ${key}` } : {}) },
       lookup(hostname, options, callback) {
         lookup(hostname, options, (error, addresses, family) => {
@@ -70,6 +74,7 @@ export function upstreamInference(node, key, frame, signal) {
         });
       },
     }, response => {
+      statusCode=response.statusCode; headersMs=Date.now()-started;
       if (response.statusCode !== 200) { response.resume(); fail(); return; }
       const chunks = []; let size = 0;
       response.on('data', chunk => { size += chunk.length; if (size > 1024 * 1024) { response.destroy(); fail(); } else chunks.push(chunk); });
@@ -82,7 +87,7 @@ export function upstreamInference(node, key, frame, signal) {
           if (!Array.isArray(toolCalls) || toolCalls.length > 8 || (toolCalls.length && !frame.tools?.length) || toolCalls.some(t => t.type !== 'function' || typeof t.id !== 'string' || !/^[A-Za-z0-9_-]{1,96}$/.test(t.id) || !['read_file','search','write_file','delete_file','run_command'].includes(t.function?.name) || typeof t.function.arguments !== 'string' || t.function.arguments.length > 65536)) { fail(); return; }
           const inputTokens = data.usage?.prompt_tokens; const outputTokens = data.usage?.completion_tokens;
           if (typeof text !== 'string' || Buffer.byteLength(text) > 131072 || !Number.isSafeInteger(inputTokens) || inputTokens < 0 || inputTokens > inputBound || !Number.isSafeInteger(outputTokens) || outputTokens < 0 || outputTokens > frame.maxOutputTokens) { fail(); return; }
-          resolve({ type: 'result', requestId: frame.requestId, text, toolCalls, inputTokens, outputTokens });
+          timing('succeeded'); resolve({ type: 'result', requestId: frame.requestId, text, toolCalls, inputTokens, outputTokens });
         } catch { fail(); }
       });
     });

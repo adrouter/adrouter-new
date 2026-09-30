@@ -63,7 +63,7 @@ test('DeepSeek guided default submits valid metadata and resumes edits after can
   const {runTui} = await import('../src/tui.mjs');
   const {MarketplaceDraft} = await import('../src/generated/validators.mjs');
   let homeVisits=0, formVisits=0, posted;
-  const config={protocol:'2.0.0',product:'adr-v2',settlement:'test_credits',cashValue:false,admissions:false,privateOwnerEvaluation:true,supplyClasses:['authorized_api','self_hosted'],connectorProfile:'inference_connector_v1',maxNodeSessions:1,relay:'wss_single_instance',agentExecution:'buyer_vm_v1',capabilities:['allowance_v1','provider_budget_v1','cold_activation_v1']};
+  const config={protocol:'2.0.0',product:'adr-v2',settlement:'test_credits',cashValue:false,admissions:false,privateRehearsal: false, privateOwnerEvaluation:true,supplyClasses:['authorized_api','self_hosted'],connectorProfile:'inference_connector_v1',maxNodeSessions:1,relay:'wss_single_instance',agentExecution:'buyer_vm_v1',capabilities:['allowance_v1','provider_budget_v1','cold_activation_v1']};
   const ui={start(){},stop(){},task:(_title,fn)=>fn(new AbortController().signal,()=>{}),page:async()=>{},
     menu:async title=>{
       if(title==='What would you like to do?')return ++homeVisits<=2?'create':'exit';

@@ -5,7 +5,7 @@ import { randomBytes } from 'node:crypto';
 import { readFile, writeFile, mkdtemp, copyFile, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { InferenceRequest } from './generated/validators.mjs';
+import { InferenceRequest, Handshake, HandshakeResult } from './generated/validators.mjs';
 import { SandboxRuntime } from './runtime.mjs';
 import { ClientError } from './network.mjs';
 import { validateBinding, publicAddress } from './provider-broker.mjs';
@@ -14,9 +14,9 @@ export async function configuredRuntime() {
   const config = process.env.ADROUTER_NEW_RUNTIME_EXECUTABLE ? { executable: process.env.ADROUTER_NEW_RUNTIME_EXECUTABLE, library: process.env.ADROUTER_NEW_RUNTIME_LIBRARY, home: process.env.ADROUTER_NEW_RUNTIME_HOME } : await loadRuntimeConfig();
   return new SandboxRuntime(config ?? {});
 }
-export async function createGuest(runtime, hostPorts, copyDirectory, endpoint, { signal } = {}) {
+export async function createGuest(runtime, hostPorts, copyDirectory, endpoint, { signal, continuous = false } = {}) {
   const images = JSON.parse(await readFile(new URL('../runtime/guest-images.json', import.meta.url)));
-  const name = await runtime.create({ image: images.node.reference, hostPorts, copyDirectory, endpoint, durationSeconds: 540, signal });
+  const name = await runtime.create({ image: images.node.reference, hostPorts, copyDirectory, endpoint, durationSeconds: 540, continuous, signal });
   try {
     signal?.throwIfAborted();
     const info = await runtime.inspect(name);
@@ -25,18 +25,20 @@ export async function createGuest(runtime, hostPorts, copyDirectory, endpoint, {
   } catch (error) { await runtime.remove(name); throw error; }
 }
 
-export async function startProvider(networkInput, nodeId, { maxCalls = 5, maxOutputTokens = 1024, runtimeConfig, noKey = false, notify = () => {}, consoleOptions } = {}) {
+export async function startProvider(networkInput, nodeId, { maxCalls = 5, maxOutputTokens = 1024, runtimeConfig, noKey = false, notify = () => {}, continuous: requestedContinuous, consoleOptions } = {}) {
   if (!Number.isInteger(maxCalls) || maxCalls < 1 || maxCalls > 30 || !Number.isInteger(maxOutputTokens) || maxOutputTokens < 1 || maxOutputTokens > 8192) throw new ClientError('provider_exposure_bound_invalid');
   const network = Object.create(networkInput); network.actor = 'provider';
   let node = await network.request(`/v2/providers/nodes/${nodeId}`);
   if (node.suspended === true) throw new ClientError('node_suspended');
+  const continuous = requestedContinuous ?? node.availability === 'hot';
+  if (continuous && node.availability !== 'hot') throw new ClientError('continuous_hot_only');
   const binding = validateBinding(node);
   if(noKey && node.supplyClass !== 'self_hosted')throw new ClientError('provider_credential_required');
   const enginePort = binding.loopback ? Number(binding.url.port) : undefined;
   if(binding.loopback && (!enginePort || enginePort < 1024))throw new ClientError('self_hosted_port_required');
   const runtime = runtimeConfig ? new SandboxRuntime(runtimeConfig) : await configuredRuntime(); await runtime.verify();
   const capability = randomBytes(32).toString('base64url');
-  let guest, copied, socket, timer, deadline, pending, guestReady = false, relayReady = false, stopped = false, starting = false, connecting = false, calls = 0;
+  let guest, copied, socket, timer, deadline, watchdog, pending, guestReady = false, relayReady = false, stopped = false, starting = false, connecting = false, calls = 0;
   let complete; const done = new Promise(resolve => { complete = resolve; });
   let activation = [];
   const abort = new AbortController();
@@ -47,11 +49,19 @@ export async function startProvider(networkInput, nodeId, { maxCalls = 5, maxOut
       let reply = { ok: true };
       if (req.method === 'POST' && req.url === '/ready' && bytes === '{"ready":true}') guestReady = true;
       else if (req.method === 'GET' && req.url === '/work') { reply = stopped ? { type: 'stop' } : pending?.frame ?? null; if (pending?.frame) pending.frame = undefined; }
-      else if (req.method === 'POST' && req.url === '/result') {
+      else if (req.method === 'POST' && req.url === '/handshake-result') {
+        const result = JSON.parse(bytes);
+        if (!pending || !HandshakeResult(result) || pending.id !== result.challengeId || Object.keys(pending.binding).some(k => k !== 'type' && pending.binding[k] !== result[k])) throw new Error('handshake_binding');
+        socket?.send(JSON.stringify(result)); pending = undefined;
+      } else if (req.method === 'POST' && req.url === '/timing') {
+        const timing = JSON.parse(bytes);
+        if (!pending || timing.requestId !== pending.id || timing.phase !== 'upstream' || !['unknown','succeeded'].includes(timing.outcome) || (timing.statusCode !== null && (!Number.isInteger(timing.statusCode) || timing.statusCode < 100 || timing.statusCode > 599)) || !Number.isInteger(timing.totalMs) || timing.totalMs < 0 || timing.totalMs > 135000 || (timing.headersMs !== null && (!Number.isInteger(timing.headersMs) || timing.headersMs < 0 || timing.headersMs > timing.totalMs))) throw new Error('timing_rejected');
+        socket?.send(JSON.stringify({type:'diagnostic',requestId:timing.requestId,phase:'upstream',outcome:timing.outcome,statusCode:timing.statusCode,headersMs:timing.headersMs,totalMs:timing.totalMs}));
+      } else if (req.method === 'POST' && req.url === '/result') {
         const result = JSON.parse(bytes);
         if (!pending || result.type !== 'result' || result.requestId !== pending.id || typeof result.text !== 'string' || !Number.isSafeInteger(result.inputTokens) || !Number.isSafeInteger(result.outputTokens)) throw new Error('result_binding');
-        socket?.send(JSON.stringify(result)); pending = undefined; calls++;
-        if (calls >= maxCalls) void stop();
+        socket?.send(JSON.stringify(result)); pending = undefined;
+        if (!continuous && calls >= maxCalls) void stop();
       } else if (req.method === 'POST' && req.url === '/failed') { void stop(); }
       else throw new Error('control_operation');
       res.writeHead(200, { 'content-type': 'application/json' }).end(JSON.stringify(reply));
@@ -72,7 +82,9 @@ export async function startProvider(networkInput, nodeId, { maxCalls = 5, maxOut
       });
     }});
     tunnels.add(upstream); const close=()=>{upstream.destroy();socket.destroy();tunnels.delete(upstream);};
-    upstream.setTimeout(45000,close);socket.setTimeout(45000,close);upstream.once('error',close);socket.once('error',close);socket.once('close',close);upstream.once('close',close);
+    const deadlineMs = Math.max(1, Math.min(120000, Number(pending?.binding?.deadlineUnixMs ?? Date.now() + 120000) - Date.now()));
+    const deadlineTimer = setTimeout(close,deadlineMs);
+    upstream.setTimeout(deadlineMs,close);socket.setTimeout(deadlineMs,close);upstream.once('close',()=>clearTimeout(deadlineTimer));upstream.once('error',close);socket.once('error',close);socket.once('close',close);upstream.once('close',close);
     upstream.once('connect',()=>{socket.write('HTTP/1.1 200 Connection Established\r\n\r\n');socket.pipe(upstream);upstream.pipe(socket);});
   });
   async function warm() {
@@ -84,13 +96,23 @@ export async function startProvider(networkInput, nodeId, { maxCalls = 5, maxOut
     try {
       copied = await mkdtemp(join(tmpdir(), 'adr-provider-'));
       for (const [from, to] of [['guest/provider-console.mjs', 'provider-console.mjs'], ['provider-broker.mjs', 'provider-broker.mjs'], ['provider-setup.mjs', 'provider-setup.mjs']]) await copyFile(new URL(from, import.meta.url), join(copied, to));
-      await writeFile(join(copied, 'config.json'), JSON.stringify({ control: `http://host.microsandbox.internal:${broker.address().port}`, capability, noKey, node: binding.loopback ? {...node,localEngine:true,endpoint:node.endpoint.replace(binding.url.hostname,'host.microsandbox.internal')} : {...node,tunnel:{port:broker.address().port,capability}}, maxCalls, maxOutputTokens }), { mode: 0o600 });
-      guest = await createGuest(runtime, [broker.address().port, ...(enginePort ? [enginePort] : [])], copied, undefined, { signal: warmSignal });
+      await writeFile(join(copied, 'config.json'), JSON.stringify({ control: `http://host.microsandbox.internal:${broker.address().port}`, capability, noKey, node: binding.loopback ? {...node,localEngine:true,endpoint:node.endpoint.replace(binding.url.hostname,'host.microsandbox.internal')} : {...node,tunnel:{port:broker.address().port,capability}}, maxCalls, maxOutputTokens, continuous }), { mode: 0o600 });
+      guest = await createGuest(runtime, [broker.address().port, ...(enginePort ? [enginePort] : [])], copied, undefined, { signal: warmSignal, continuous });
       warmSignal.throwIfAborted();
       if(noKey) await runtime.run(guest,['node','/workspace/provider-console.mjs'],{signal:warmSignal,timeoutSeconds:20});
       else await runtime.attachConsole(guest, ['node', '/workspace/provider-console.mjs'], { ...consoleOptions, signal: warmSignal });
       warmSignal.throwIfAborted();
       if (!guestReady) throw new ClientError('guest_start_failed');
+      if (continuous) {
+        await runtime.touch(guest,{signal:abort.signal});
+        let touching = false, lastTouch = Date.now();
+        watchdog = setInterval(() => {
+          if (touching || stopped) return;
+          if (Date.now() - lastTouch > 60000) { void stop(); return; }
+          touching = true;
+          void runtime.touch(guest,{signal:abort.signal}).then(()=>{lastTouch=Date.now();},()=>stop()).finally(()=>{touching=false;});
+        },20000);
+      }
       notify({ status: 'warm', credentials: 'guest_memory_only' });
     } catch (error) {
       const cleanup = await Promise.allSettled([stop(), guest && runtime.owned.has(guest) ? runtime.remove(guest) : Promise.resolve()]);
@@ -127,11 +149,15 @@ export async function startProvider(networkInput, nodeId, { maxCalls = 5, maxOut
           if (frame.type === 'ready') {
             relayReady = true;
             for (const a of activation) await network.request(`/v2/providers/nodes/${nodeId}/activations/${a.sessionId}`, { method: 'POST', body: {} });
-            activation = []; notify({ status: 'serving', remainingCalls: maxCalls - calls }); return;
+            activation = []; notify({ status: 'serving', remainingCalls: continuous ? null : maxCalls - calls }); return;
           }
           if (frame.type === 'cancel') { await stop(); return; }
-          if (pending || !InferenceRequest(frame) || frame.bindingRevision !== node.listingId || frame.maxOutputTokens > maxOutputTokens || calls >= maxCalls) throw new Error('frame_rejected');
-          pending = { id: frame.requestId, frame };
+          if (frame.type === 'handshake') {
+            if (pending || !Handshake(frame) || frame.bindingRevision !== node.listingId || frame.providerInstallationId !== node.installationId || frame.listingRevision !== node.listingRevision || frame.deadlineUnixMs <= Date.now()) throw new Error('handshake_rejected');
+            pending = { id: frame.challengeId, binding: frame, frame }; return;
+          }
+          if (pending || !InferenceRequest(frame) || frame.bindingRevision !== node.listingId || frame.maxOutputTokens > maxOutputTokens || (!continuous && calls >= maxCalls)) throw new Error('frame_rejected');
+          calls++; pending = { id: frame.requestId, binding: frame, frame };
         })().catch(() => void stop()); });
       }
     } catch { await stop(); }
@@ -139,8 +165,8 @@ export async function startProvider(networkInput, nodeId, { maxCalls = 5, maxOut
   }
   async function stop() {
     if (stopped) return done;
-    stopped = true; guestReady = false; relayReady = false; for(const tunnel of tunnels)tunnel.destroy(); abort.abort(); clearInterval(timer); clearTimeout(deadline); socket?.close();
-    process.removeListener('SIGINT', onSignal); process.removeListener('SIGTERM', onSignal);
+    stopped = true; guestReady = false; relayReady = false; for(const tunnel of tunnels)tunnel.destroy(); abort.abort(); clearInterval(timer); clearInterval(watchdog); clearTimeout(deadline); socket?.close();
+    for (const name of ['SIGINT','SIGTERM','SIGHUP','SIGTSTP']) process.removeListener(name,onSignal);
     let teardownVerified = true;
     try { if (guest && runtime.owned.has(guest)) await runtime.remove(guest); }
     catch { teardownVerified = false; }
@@ -154,8 +180,8 @@ export async function startProvider(networkInput, nodeId, { maxCalls = 5, maxOut
   const onSignal = () => void stop();
   try {
     await new Promise(resolve => broker.listen(0, '0.0.0.0', resolve));
-    process.once('SIGINT', onSignal); process.once('SIGTERM', onSignal);
-    deadline = setTimeout(onSignal, 540000);
+    for (const name of ['SIGINT','SIGTERM','SIGHUP','SIGTSTP']) process.once(name,onSignal);
+    if (!continuous) deadline = setTimeout(onSignal, 540000);
     if (node.availability === 'hot') await warm();
     await tick(); if (!stopped) timer = setInterval(() => void tick(), 3000);
     return { done, stop, warm, get status() { return { stopped, guestReady, relayReady, calls, activation }; } };

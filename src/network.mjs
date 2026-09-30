@@ -85,7 +85,7 @@ export class Network {
         if (token) headers.Authorization = `DPoP ${token}`;
       }
       let response;
-      try { response = await this.fetcher(this.origin + path, { method, headers, body: bytes, redirect: 'error', signal: signal ? AbortSignal.any([signal, AbortSignal.timeout(65000)]) : AbortSignal.timeout(65000) }); }
+      try { response = await this.fetcher(this.origin + path, { method, headers, body: bytes, redirect: 'error', signal: signal ? AbortSignal.any([signal, AbortSignal.timeout(135000)]) : AbortSignal.timeout(135000) }); }
       catch { throw new ClientError(signal?.aborted ? 'cancelled' : 'network_unavailable_outcome_unknown'); }
       const reader = response.body?.getReader(); let size = 0; const chunks = [];
       try { if (reader) for (;;) { const { value, done } = await reader.read(); if (done) break; size += value.length; if (size > 1024 * 1024) { await reader.cancel(); throw new ClientError('response_too_large'); } chunks.push(Buffer.from(value)); } }
@@ -102,7 +102,7 @@ export class Network {
     const identity = await this.store.withLock(async () => {
       const identity = await this.store.read();
       if (!identity || identity.origin !== this.origin) throw new ClientError('login_required');
-      const cleanup = options.method === 'POST' && /^\/v2\/(?:providers\/nodes\/[^/]+\/(?:pause|stop)|sessions\/[^/]+\/stop|admin\/evaluation-sessions\/[^/]+\/stop)$/.test(path);
+      const cleanup = options.method === 'POST' && /^\/v2\/(?:providers\/nodes\/[^/]+\/(?:pause|stop)|sessions\/[^/]+\/stop|admin\/evaluation-sessions\/[^/]+\/stop|admin\/sessions\/[^/]+\/release-execution)$/.test(path);
       if (cleanup) return identity;
       if (identity.refreshPending) throw new ClientError('refresh_outcome_unknown_reenroll_required');
       if (Date.now() >= identity.expiresAt - 30000) {
@@ -123,7 +123,7 @@ export class Network {
     if (await this.store.read()) throw new ClientError('logout_existing_installation_first');
     const keys = generateKeyPairSync('ed25519');
     const identity = { origin: this.origin, publicKey: keys.publicKey.export({ format: 'jwk' }), privateKey: keys.privateKey.export({ format: 'jwk' }) };
-    const authorization = await this.send('/v1/device/authorizations', { method: 'POST', identity, body: { client_kind: 'marketplace', client_version: version, display_name: `adr-cli ${this.store.profile}`, public_key_jwk: identity.publicKey, storage_class: 'file_protected', requested_scopes: operator ? ['marketplace:operator'] : this.store.profile === 'provider' ? ['marketplace:provider'] : ['marketplace:buyer', 'marketplace:provider'] }, signal });
+    const authorization = await this.send('/v1/device/authorizations', { method: 'POST', identity, body: { client_kind: 'marketplace', client_version: version, display_name: `adr-cli ${this.store.profile}`, public_key_jwk: identity.publicKey, storage_class: 'file_protected', requested_scopes: operator ? ['marketplace:operator'] : this.store.profile === 'provider' ? ['marketplace:provider'] : this.store.profile === 'buyer' ? ['marketplace:buyer'] : ['marketplace:buyer', 'marketplace:provider'] }, signal });
     let approved = false;
     try {
       const verification = new URL(authorization.verification_uri_complete);

@@ -4,7 +4,7 @@ import { readFile } from 'node:fs/promises';
 import { readHiddenKey } from './provider-setup.mjs';
 import { upstreamInference } from './provider-broker.mjs';
 const configuration = JSON.parse(await readFile('/workspace/config.json', 'utf8'));
-const { control, capability, node, maxCalls, maxOutputTokens } = configuration;
+const { control, capability, node, maxCalls, maxOutputTokens, continuous } = configuration;
 const controlRequest = async (path, body) => {
   const response = await fetch(`${control}${path}`, { method: body === undefined ? 'GET' : 'POST', redirect: 'error', headers: { authorization: `Bearer ${capability}`, 'content-type': 'application/json' }, body: body === undefined ? undefined : JSON.stringify(body), signal: AbortSignal.timeout(5000) });
   if (!response.ok) throw new Error('control_unavailable');
@@ -29,20 +29,30 @@ if (process.argv[2] !== '--worker') {
     const abort = new AbortController(); let attempted = 0; const seen = new Set();
     const stop = () => { key = ''; abort.abort(); process.exit(0); };
     process.once('SIGTERM', stop); process.once('SIGINT', stop);
-    const lifetime = setTimeout(stop, 540000);
+    const lifetime = continuous ? undefined : setTimeout(stop, 540000);
+    const challenges = new Set(); let lastTiming;
     try {
       await controlRequest('/ready', { ready: true }); process.send('ready');
-      while (attempted < maxCalls) {
+      while (continuous || attempted < maxCalls) {
         const frame = await controlRequest('/work');
         if (!frame) { await new Promise(r => setTimeout(r, 250)); continue; }
         if (frame.type === 'stop') break;
+        if (frame.type === 'handshake') {
+          if (challenges.has(frame.challengeId) || frame.deadlineUnixMs <= Date.now() || frame.bindingRevision !== node.listingId || frame.providerInstallationId !== node.installationId || frame.listingRevision !== node.listingRevision) throw new Error('handshake_rejected');
+          challenges.add(frame.challengeId);
+          if (challenges.size > 4096) challenges.delete(challenges.values().next().value);
+          await controlRequest('/handshake-result',{ ...frame,type:'handshake_result' }); continue;
+        }
         if (frame.type !== 'inference' || seen.has(frame.requestId) || frame.deadlineUnixMs <= Date.now() || frame.maxOutputTokens > maxOutputTokens) throw new Error('frame_rejected');
-        seen.add(frame.requestId); attempted++;
-        const timeout = AbortSignal.any([abort.signal, AbortSignal.timeout(Math.max(1, Math.min(40000, frame.deadlineUnixMs - Date.now())))]);
-        const result = await upstreamInference(node, key, frame, timeout);
+        seen.add(frame.requestId); if(seen.size>4096)seen.delete(seen.values().next().value); attempted++;
+        const timeout = AbortSignal.any([abort.signal, AbortSignal.timeout(Math.max(1, Math.min(120000, frame.deadlineUnixMs - Date.now())))]);
+        lastTiming = undefined;
+        const result = await upstreamInference(node, key, frame, timeout, timing => { lastTiming={requestId:frame.requestId,...timing}; });
+        if(lastTiming)await controlRequest('/timing',lastTiming);
+        lastTiming=undefined;
         await controlRequest('/result', result);
       }
-    } catch { await controlRequest('/failed', { code: 'provider_outcome_unknown' }).catch(() => {}); }
+    } catch { if(lastTiming)await controlRequest('/timing',lastTiming).catch(()=>{}); await controlRequest('/failed', { code: 'provider_outcome_unknown' }).catch(() => {}); }
     finally { clearTimeout(lifetime); stop(); }
   });
 }

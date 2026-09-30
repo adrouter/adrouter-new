@@ -75,11 +75,11 @@ export class SandboxRuntime {
     }
   }
 
-  async create({ image, copyDirectory, hostPorts = [], endpoint, memoryMiB = 256, durationSeconds = 180, signal }) {
+  async create({ image, copyDirectory, hostPorts = [], endpoint, memoryMiB = 256, durationSeconds = 180, continuous = false, signal }) {
     if (!this.verified) throw new RuntimeError('runtime_not_verified');
     if (!/^([a-z0-9./:_-]+)@sha256:[a-f0-9]{64}$/.test(image)) throw new RuntimeError('immutable_image_required');
     if (!Number.isInteger(memoryMiB) || memoryMiB < 128 || memoryMiB > 2048) throw new RuntimeError('memory_limit_invalid');
-    if (!Number.isInteger(durationSeconds) || durationSeconds < 10 || durationSeconds > 600) throw new RuntimeError('duration_limit_invalid');
+    if (!continuous && (!Number.isInteger(durationSeconds) || durationSeconds < 10 || durationSeconds > 600)) throw new RuntimeError('duration_limit_invalid');
     if (!Array.isArray(hostPorts) || hostPorts.length > 2 || hostPorts.some(p => !Number.isInteger(p) || p < 1024 || p > 65535)) throw new RuntimeError('host_ports_invalid');
     let upstream;
     if (endpoint) {
@@ -92,7 +92,7 @@ export class SandboxRuntime {
       // A local connector uses single-tenant with deny-all plus exact broker
       // ports. Offline evaluator guests retain the multi-tenant floor.
       '--security', 'restricted', '--deployment-profile', hostPorts.length ? 'single-tenant' : 'multi-tenant', '--no-net',
-      '--root-disk', '1G', '--max-duration', `${durationSeconds}s`, '--idle-timeout', '60s',
+      '--root-disk', '1G', ...(continuous ? [] : ['--max-duration', `${durationSeconds}s`]), '--idle-timeout', '60s',
       '--max-tcp-connections', '8', '--max-udp-connections', '1'];
     for (const port of hostPorts) args.push('--net-rule', `allow@host:tcp:${port}`);
     if (upstream) args.push('--net-rule', `allow@${upstream.hostname}:tcp:${upstream.port || 443}`, '--net-rule', 'allow@dns');
@@ -136,6 +136,8 @@ export class SandboxRuntime {
       });
     } catch (error) { await this.remove(name); throw error; }
   }
+
+  async touch(name, { signal } = {}) { this.requireOwned(name); await this.call(['ping', name, '--touch'], { signal }); }
 
   async inspect(name) { this.requireOwned(name); return JSON.parse(await this.call(['inspect', name, '--format', 'json'])); }
 

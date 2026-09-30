@@ -91,3 +91,25 @@ suspension or deadline. Unknown charges stay reserved until upstream evidence is
 reviewed. A failed cleanup is reported explicitly and must be reconciled before a
 new run. Evaluation Sessions supports inspection/stopping after an uncertain start.
 No artifact or source test asserts Linux/KVM or full release readiness.
+
+
+## Two-account continuous rehearsal milestone
+
+Configure `ADROUTER_MARKETPLACE_PRIVATE_BUYER_ID` to one verified account distinct
+from `ADROUTER_MARKETPLACE_ACCEPTANCE_OWNER_ID`. General admissions stay false.
+The configured buyer is buyer-only at approval, issuance, refresh and use. Request
+buyer installation approval in native Safari with `adr-cli --profile buyer`.
+Preserve provider/operator installation identities during private tarball replacement.
+
+Apply the committed execution-capacity migration before replacing the staging API.
+Drain and disable the sole relay before in-place replacement; keep Pages unchanged.
+Never auto-release the historical uncertain session. After verified guest removal,
+normal stop and cleared readiness/relay, an operator can use Release stopped execution
+capacity with a teardown reference. This preserves its USD liability and settlement.
+
+Run Router `scripts/verify-marketplace-continuous-mac.ts` against the exact installed
+package. The actual hot guest must survive at least eleven minutes, handshake and serve
+two sequential synthetic sessions without re-entering a credential, preserve multi-turn
+workspace state, perform approved actions/export, and stop on foreground termination.
+These checks are separate from a live two-account settled response and coding action.
+Live key entry remains guest-only. Stop for required operator authentication.

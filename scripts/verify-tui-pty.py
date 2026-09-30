@@ -3,7 +3,7 @@ from http.server import BaseHTTPRequestHandler,HTTPServer
 # Explicit source or installed-package path; no real profiles are opened.
 package=os.environ['ADR_ACCEPTANCE_CLIENT_ROOT']
 fixture=tempfile.mkdtemp(prefix='adr-tui-fixture-',dir='/tmp')
-config=dict(protocol='2.0.0',product='adr-v2',settlement='test_credits',cashValue=False,admissions=False,privateOwnerEvaluation=True,supplyClasses=['authorized_api','self_hosted'],connectorProfile='inference_connector_v1',maxNodeSessions=1,relay='wss_single_instance',agentExecution='buyer_vm_v1',capabilities=['allowance_v1','provider_budget_v1','cold_activation_v1','private_owner_evaluation_v1'],activationDeadlineSeconds=120)
+config=dict(protocol='2.0.0',product='adr-v2',settlement='test_credits',cashValue=False,admissions=False,privateOwnerEvaluation=True,privateRehearsal=False,supplyClasses=['authorized_api','self_hosted'],connectorProfile='inference_connector_v1',maxNodeSessions=1,relay='wss_single_instance',agentExecution='buyer_vm_v1',capabilities=['allowance_v1','provider_budget_v1','cold_activation_v1','private_owner_evaluation_v1'],activationDeadlineSeconds=120)
 class Handler(BaseHTTPRequestHandler):
  def do_GET(self):
   self.send_response(200);self.send_header('content-type','application/json');self.end_headers();self.wfile.write(json.dumps(config).encode())
@@ -24,7 +24,7 @@ try:
   elif stage==2 and b'What would you like to do?' in captured:
    os.write(master,b'\x1b[B'*7+b'\r');stage=3;captured=b''
   elif stage==3 and b'Choose profile' in captured and b'Default' in captured:
-   os.write(master,b'\x1b[B'*2+b'\r');stage=4;captured=b''
+   os.write(master,b'\x1b[B'*3+b'\r');stage=4;captured=b''
   elif stage==4 and b'operator' in captured and b'What would you like to do?' in captured:
    os.write(master,b'\x03');stage=5
   if p.poll() is not None:break

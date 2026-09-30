@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { runTui, providerFields } from '../src/tui.mjs';
 import { run } from '../src/cli.mjs';
-const config = { protocol:'2.0.0',product:'adr-v2',settlement:'test_credits',cashValue:false,admissions:false,privateOwnerEvaluation:true,supplyClasses:['authorized_api','self_hosted'],connectorProfile:'inference_connector_v1',maxNodeSessions:1,relay:'wss_single_instance',agentExecution:'buyer_vm_v1',capabilities:['allowance_v1','provider_budget_v1','cold_activation_v1'],activationDeadlineSeconds:120 };
+const config = { protocol:'2.0.0',product:'adr-v2',settlement:'test_credits',cashValue:false,admissions:false,privateRehearsal: false, privateOwnerEvaluation:true,supplyClasses:['authorized_api','self_hosted'],connectorProfile:'inference_connector_v1',maxNodeSessions:1,relay:'wss_single_instance',agentExecution:'buyer_vm_v1',capabilities:['allowance_v1','provider_budget_v1','cold_activation_v1'],activationDeadlineSeconds:120 };
 const id = '11111111-1111-4111-8111-111111111111';
 const evaluation = { id, sessionId:id, listingId:id, listingRevision:1, cancellationRequestId:id, provisional:true, version:'synthetic', sampleCount:1, elapsedMs:10, passed:false, recordedAt:1, freshUntil:Date.now()+60000, checks:{format:true,tools:true,usage:true,cancellation:false,offlineExecution:true} };
 const listing = { id,nodeId:id,name:'Test',model:'test',supplyClass:'authorized_api',availability:'hot',inputRate:'1',outputRate:'2',rateDenominator:'1000000',connectorProfile:'inference_connector_v1',revision:1,publishedAt:1,ready:false,controlOnline:false,activationDeadlineSeconds:120,evaluation };

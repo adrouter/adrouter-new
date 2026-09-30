@@ -4,7 +4,7 @@ import { Network, AuthStore, ClientError } from './network.mjs';
 import { ask, choose, render } from './terminal.mjs';
 import { SandboxRuntime } from './runtime.mjs';
 
-const booleanOptions = new Set(['json', 'local', 'accept', 'help', 'no-key', 'operator']);
+const booleanOptions = new Set(['json', 'local', 'accept', 'help', 'no-key', 'operator', 'private-rehearsal', 'acknowledge-provisional', 'bounded']);
 const valueOptions = new Set(['profile', 'network', 'actor', 'name', 'model', 'endpoint', 'supply', 'availability', 'input-rate', 'output-rate', 'budget', 'max-output', 'duration', 'after', 'idempotency-key', 'review', 'user', 'amount', 'max-calls']);
 export function parseArgs(args) {
   const options = {}; const words = [];
@@ -21,7 +21,7 @@ export function parseArgs(args) {
 }
 export const usage = `adr-cli — adr-v2 compute marketplace (test credits, no cash value)
 
-  adr-cli [--profile default|provider|operator|NAME] [--network HTTPS_ORIGIN | --local] [--json] [command]
+  adr-cli [--profile default|buyer|provider|operator|NAME] [--network HTTPS_ORIGIN | --local] [--json] [command]
   login [--operator] | logout | whoami
   market [--model TEXT] [--supply authorized_api|self_hosted] [--after CURSOR]
   market inspect LISTING_ID
@@ -33,7 +33,9 @@ export const usage = `adr-cli — adr-v2 compute marketplace (test credits, no c
 Provider create flags: --name --model --endpoint --supply
   --availability hot|cold --input-rate UNITS --output-rate UNITS
 Public metadata only. Never put an API key in flags, a URL or listing text.
-Provider serving: provider serve NODE_ID --max-calls 1 --max-output 1024
+Provider serving: provider serve NODE_ID --max-output 1024
+  Hot listings serve continuously in the foreground; --bounded retains evaluation limits.
+Private connect: --private-rehearsal --acknowledge-provisional --budget 100 --accept
   Requires the pinned VM runtime and hidden guest-only credential entry.
 Local development: --local --actor buyer|provider|admin
 Local admin: admin nodes | suspend|unsuspend NODE_ID --review REFERENCE | grant --user local-buyer --amount UNITS
@@ -122,16 +124,19 @@ export async function run(args, dependencies = {}) {
       requireId(id);
       if (json && !o['no-key']) throw new ClientError('interactive_terminal_required');
       const { serveProvider } = await import('./provider.mjs');
-      output(await serveProvider(network, id, { maxCalls: Number(o['max-calls'] ?? '5'), maxOutputTokens: Number(o['max-output'] ?? '1024'), noKey: !!o['no-key'], notify: output }));
+      output(await serveProvider(network, id, { maxCalls: Number(o['max-calls'] ?? '5'), maxOutputTokens: Number(o['max-output'] ?? '1024'), noKey: !!o['no-key'], ...(o.bounded ? {continuous:false} : {}), notify: output }));
     } else if (sub === 'benchmark') throw new ClientError('sandboxed_evaluation_not_integrated');
     else throw new ClientError('unknown_command');
   } else if (command === 'connect') {
     const listingId = requireId(sub);
-    const quote = await post('/quotes', { listingId, maximumCharge: o.budget ?? '1000', maxOutputTokens: Number(o['max-output'] ?? '1024'), durationSeconds: Number(o.duration ?? '300') }); output({ quote });
+    const mode = o['private-rehearsal'] ? { mode: 'private_rehearsal', acknowledgeProvisional: !!o['acknowledge-provisional'] } : {};
+    const quote = await post('/quotes', { listingId, maximumCharge: o.budget ?? (o['private-rehearsal'] ? '100' : '1000'), maxOutputTokens: Number(o['max-output'] ?? '1024'), durationSeconds: Number(o.duration ?? '300'), ...mode }); output({ quote });
     let accept = !!o.accept;
     if (!accept && !json && process.stdin.isTTY) accept = await choose('Reserve this bounded test-credit quote?', ['Cancel', 'Accept quote']) === 1;
     if (!accept) { output({ status: 'quote_not_accepted', quoteId: quote.id }); return; }
-    output(await post('/sessions', { quoteId: quote.id, accept: true }, `accept_${quote.id}`));
+    const session = await post('/sessions', { quoteId: quote.id, accept: true, ...mode }, `accept_${quote.id}`);
+    output(session);
+    if(o['private-rehearsal'])output(await post(`/sessions/${session.id}/handshake`));
   } else if (command === 'sessions') output(await get('/sessions'));
   else if (command === 'session') {
     if (sub === 'stop') output(await post(`/sessions/${requireId(id)}/stop`));

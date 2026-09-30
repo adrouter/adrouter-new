@@ -139,3 +139,28 @@ Owner-only acceptance checks the configured active owner during approval, token 
 refresh and authenticated use. Stop/pause and signed revocation remain available
 when acceptance or client policy is disabled, while installation ownership and
 proof verification remain required. Ordinary marketplace admissions remain closed.
+
+
+## Continuous hot providers and private buyers
+
+Hot listings default to continuous foreground serving. Keep the provider terminal open.
+A 60-second VM idle watchdog is touched every 20 seconds; shutdown, terminal closure,
+suspension, runtime/relay failure or uncertain inference tears down the guest. There
+is no continuous-mode lifetime request cutoff. Cold serving and `provider serve --bounded`
+retain evaluation limits. Each separately accepted buyer session permits five dispatched
+inferences, including tool continuations and uncertain outcomes.
+
+Use `--profile buyer` for the distinct private account. It requests only
+`marketplace:buyer`; provider/operator profiles and existing installations remain separate.
+With general admissions disabled, Browse can offer a private rehearsal only when the
+server advertises that capability. Acknowledge provisional qualification, accept the
+100-credit / 300-second / 1,024-output-token quote, then verify the guest handshake.
+The handshake consumes no upstream inference. Success opens workspace selection and a
+coding session automatically. Follow-up tasks keep the same isolated workspace and
+conversation; commands, mutations and reviewed snapshot export still need fresh approval.
+
+Inference uses a 120-second absolute deadline capped by session expiry. The client
+allows 135 seconds for outcome and cleanup. Unknown requests are never replayed.
+Operator capacity release requires stopped execution, reviewed guest-teardown evidence,
+cleared readiness and relay disconnection; unresolved liabilities remain reserved.
+Private rehearsal evidence does not establish full provider qualification or public release.
