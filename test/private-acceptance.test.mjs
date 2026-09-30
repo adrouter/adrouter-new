@@ -4,23 +4,26 @@ import { mkdtemp, rm, readdir, lstat, symlink, realpath } from 'node:fs/promises
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { PassThrough } from 'node:stream';
-import { AuthStore } from '../src/network.mjs';
+import { AuthStore, Network } from '../src/network.mjs';
 import { waitForActivation, evaluateNode } from '../src/evaluation.mjs';
 import { installRuntime, saveRuntimeConfig } from '../src/runtime-install.mjs';
 import { TerminalUI } from '../src/tui-screen.mjs';
 import { parseArgs } from '../src/cli.mjs';
 
-test('default, provider and operator profiles have independent identities, locks and logout state', async () => {
+test('default, buyer, provider and operator profiles have independent identities, locks and logout state', async () => {
   const home = await mkdtemp(join(tmpdir(), 'adr-profiles-'));
   try {
-    const original = new AuthStore(home), provider = new AuthStore(home, 'provider'), operator = new AuthStore(home, 'operator');
+    const original = new AuthStore(home), provider = new AuthStore(home, 'provider'), operator = new AuthStore(home, 'operator'), buyer = new AuthStore(home,'buyer');
+    await buyer.write({fixture:'buyer'});
     await original.write({ fixture: 'default' }); await provider.write({ fixture: 'provider' }); await operator.write({ fixture: 'operator' });
     assert.equal(await original.directory(), join(await realpath(home), '.adr-v2'));
     assert.notEqual(await provider.directory(), await operator.directory());
     await provider.withLock(() => operator.withLock(() => original.withLock(async () => {
       await assert.rejects(new AuthStore(home, 'provider').withLock(() => {}), /auth_state_busy/);
     })));
+    await buyer.withLock(()=>provider.withLock(async()=>{await assert.rejects(new AuthStore(home,'buyer').withLock(()=>{}),/auth_state_busy/);}));
     await operator.clear(); assert.equal(await operator.read(), null);
+    assert.deepEqual(await buyer.read(),{fixture:'buyer'});
     assert.deepEqual(await provider.read(), { fixture: 'provider' }); assert.deepEqual(await original.read(), { fixture: 'default' });
     assert.equal((await lstat(join(await provider.directory(), 'installation.json'))).mode & 0o777, 0o600);
     for (const name of ['../default', '/tmp/evil', '', 'UPPER', 'a'.repeat(33)]) assert.throws(() => new AuthStore(home, name), /invalid_profile/);
@@ -98,4 +101,19 @@ test('termination during guest-console suspension does not reenter raw terminal 
   await ui.suspend(async () => ui.terminate());
   assert.equal(input.isRaw, false); assert.equal(ui.started, false);
   await assert.rejects(ui.menu('No more input', ['Exit']), /cancelled/);
+});
+
+
+test('buyer profile enrollment requests only buyer scope and cancellation creates no installation state',async()=>{
+ const home=await mkdtemp(join(tmpdir(),'adr-buyer-enrollment-'));
+ const store=new AuthStore(home,'buyer'),abort=new AbortController(),network=new Network({origin:'https://example.test',store});let requested,cancelled=false;
+ network.send=async(path,options)=>{
+  if(path==='/v1/device/authorizations'){requested=options.body.requested_scopes;return {verification_uri_complete:'https://example.test/connect',user_code:'synthetic-code',expires_in:30,interval:5,device_code:'synthetic-device'};}
+  if(path.endsWith('/cancel')){cancelled=true;return {};}
+  throw new Error('unexpected_token_issuance');
+ };
+ try{
+  await assert.rejects(network.login(()=>abort.abort(),abort.signal));
+  assert.deepEqual(requested,['marketplace:buyer']);assert.equal(cancelled,true);assert.equal(await store.read(),null);
+ }finally{await rm(home,{recursive:true,force:true});}
 });
