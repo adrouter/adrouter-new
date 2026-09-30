@@ -46,3 +46,16 @@ test('persistent buyer keeps conversation and guest across follow-ups, denies to
  await buyer.close();assert.equal(removed,1);assert.equal(stopped,1);
  }finally{await buyer?.close();await rm(root,{recursive:true,force:true});}
 });
+
+
+test('repeated buyer close preserves failed teardown and never reports cleanup success',async()=>{
+ const {openBuyer}=await import('../src/buyer.mjs');const root=await realpath(await mkdtemp(join(tmpdir(),'adr-cleanup-failure-')));await writeFile(join(root,'task.txt'),'fixture');
+ let removals=0,stops=0;
+ const runtime={owned:new Set(),verify:async()=>{},create:async()=>{runtime.owned.add('guest');return 'guest';},inspect:async()=>({config:{manifest_digest:JSON.parse(await readFile(new URL('../runtime/guest-images.json',import.meta.url))).node[`linux-${process.arch}`],mounts:[],network:{policy:{default_egress:'deny'}}}}),run:async()=>'',touch:async()=>{},remove:async()=>{removals++;throw new Error('synthetic teardown failure');}};
+ const network={request:async path=>{if(path.endsWith('/stop')){stops++;return {};}return {id:'session',state:'ready',expiresAt:Date.now()+300000,maxOutputTokens:1024};}};
+ try{
+  const buyer=await openBuyer(network,'session',{root,files:['task.txt'],runtime,approve:async()=>false});
+  const result=await Promise.allSettled([buyer.close(),buyer.close()]);assert.equal(result.every(r=>r.status==='rejected' && r.reason.code==='buyer_cleanup_required'),true);
+  await assert.rejects(buyer.close(),/buyer_cleanup_required/);assert.equal(removals,1);assert.equal(stops,1);
+ }finally{await rm(root,{recursive:true,force:true});}
+});
