@@ -1,7 +1,7 @@
 import { createHash, randomUUID } from 'node:crypto';
 import { readFile, lstat, mkdir, access } from 'node:fs/promises';
 import { constants } from 'node:fs';
-import { execFile, spawn } from 'node:child_process';
+import { execFile, spawn, spawnSync } from 'node:child_process';
 import { promisify } from 'node:util';
 import { isAbsolute } from 'node:path';
 
@@ -128,6 +128,12 @@ export class SandboxRuntime {
   async attachConsole(name, command, { signal, stdio = 'inherit' } = {}) {
     this.requireOwned(name);
     if (!Array.isArray(command) || command.some(x => typeof x !== 'string' || x.includes('\0'))) throw new RuntimeError('guest_command_invalid');
+    let terminalState;
+    if (process.stdin.isTTY && stdio === 'inherit') {
+      const captured=spawnSync('/bin/stty',['-g'],{stdio:[0,'pipe','ignore'],encoding:'utf8',timeout:1000});
+      terminalState=captured.status===0?captured.stdout.trim():undefined;
+      if(!terminalState || !/^[A-Za-z0-9_=;:-]+$/.test(terminalState))throw new RuntimeError('terminal_state_unavailable');
+    }
     try {
       await new Promise((resolve, reject) => {
         const child = spawn(this.executable, ['exec', '--tty', '--timeout', '120s', '--rlimit', 'core=0', '--rlimit', 'nofile=128', name, '--', ...command], { env: runtimeEnvironment(this.home, this.library), stdio, signal });
@@ -135,6 +141,12 @@ export class SandboxRuntime {
         child.once('exit', code => code === 0 ? resolve() : reject(new RuntimeError('guest_console_cancelled')));
       });
     } catch (error) { await this.remove(name); throw error; }
+    finally {
+      if(terminalState) {
+        const restored=spawnSync('/bin/stty',[terminalState],{stdio:[0,'ignore','ignore'],timeout:1000});
+        if(restored.status!==0) { if(this.owned.has(name))await this.remove(name);throw new RuntimeError('terminal_restore_failed'); }
+      }
+    }
   }
 
   async touch(name, { signal } = {}) { this.requireOwned(name); await this.call(['ping', name, '--touch'], { signal }); }
