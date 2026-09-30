@@ -1,9 +1,11 @@
 import { createHash, createPrivateKey, generateKeyPairSync, randomUUID, sign } from 'node:crypto';
 import { constants } from 'node:fs';
-import { mkdir, lstat, open, rename, unlink, realpath } from 'node:fs/promises';
+import { readFile, mkdir, lstat, open, rename, unlink, realpath } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 import { setTimeout as delay } from 'node:timers/promises';
+
+const { version } = JSON.parse(await readFile(new URL('../package.json', import.meta.url), 'utf8'));
 
 export class ClientError extends Error { constructor(code) { super(code); this.code = code; } }
 export const safeText = value => String(value).replace(/[\x00-\x08\x0b-\x1f\x7f-\x9f\u202a-\u202e\u2066-\u2069]/g, '');
@@ -63,7 +65,7 @@ export class AuthStore {
 const digest = value => createHash('sha256').update(value).digest();
 export function proof(identity, method, url, body, nonce, token) {
   const header = { typ: 'dpop+jwt', alg: 'EdDSA', jwk: identity.publicKey };
-  const payload = { jti: randomUUID(), iat: Math.floor(Date.now() / 1000), htm: method, htu: new URL(url).origin + new URL(url).pathname, client_kind: 'marketplace', client_version: '0.1.0-alpha.1', ...(nonce ? { nonce } : {}), ...(token ? { ath: digest(token).toString('base64url') } : {}), ...(body === undefined ? {} : { bht: digest(body).toString('base64url') }) };
+  const payload = { jti: randomUUID(), iat: Math.floor(Date.now() / 1000), htm: method, htu: new URL(url).origin + new URL(url).pathname, client_kind: 'marketplace', client_version: version, ...(nonce ? { nonce } : {}), ...(token ? { ath: digest(token).toString('base64url') } : {}), ...(body === undefined ? {} : { bht: digest(body).toString('base64url') }) };
   const data = [header, payload].map(x => Buffer.from(JSON.stringify(x)).toString('base64url')).join('.');
   return `${data}.${sign(null, Buffer.from(data), createPrivateKey({ key: identity.privateKey, format: 'jwk' })).toString('base64url')}`;
 }
@@ -100,6 +102,8 @@ export class Network {
     const identity = await this.store.withLock(async () => {
       const identity = await this.store.read();
       if (!identity || identity.origin !== this.origin) throw new ClientError('login_required');
+      const cleanup = options.method === 'POST' && /^\/v2\/(?:providers\/nodes\/[^/]+\/(?:pause|stop)|sessions\/[^/]+\/stop|admin\/evaluation-sessions\/[^/]+\/stop)$/.test(path);
+      if (cleanup) return identity;
       if (identity.refreshPending) throw new ClientError('refresh_outcome_unknown_reenroll_required');
       if (Date.now() >= identity.expiresAt - 30000) {
         identity.refreshPending = true; await this.store.write(identity);
@@ -119,7 +123,7 @@ export class Network {
     if (await this.store.read()) throw new ClientError('logout_existing_installation_first');
     const keys = generateKeyPairSync('ed25519');
     const identity = { origin: this.origin, publicKey: keys.publicKey.export({ format: 'jwk' }), privateKey: keys.privateKey.export({ format: 'jwk' }) };
-    const authorization = await this.send('/v1/device/authorizations', { method: 'POST', identity, body: { client_kind: 'marketplace', client_version: '0.1.0-alpha.1', display_name: `adr-cli ${this.store.profile}`, public_key_jwk: identity.publicKey, storage_class: 'file_protected', requested_scopes: operator ? ['marketplace:operator'] : this.store.profile === 'provider' ? ['marketplace:provider'] : ['marketplace:buyer', 'marketplace:provider'] }, signal });
+    const authorization = await this.send('/v1/device/authorizations', { method: 'POST', identity, body: { client_kind: 'marketplace', client_version: version, display_name: `adr-cli ${this.store.profile}`, public_key_jwk: identity.publicKey, storage_class: 'file_protected', requested_scopes: operator ? ['marketplace:operator'] : this.store.profile === 'provider' ? ['marketplace:provider'] : ['marketplace:buyer', 'marketplace:provider'] }, signal });
     let approved = false;
     try {
       const verification = new URL(authorization.verification_uri_complete);
@@ -141,7 +145,14 @@ export class Network {
     }
   }
   async logout() {
-    if (!this.local) { const identity = await this.store.read(); if (identity) { await this.request('/v1/installation/revoke', { method: 'POST', body: { installation_id: identity.installation_id } }); await this.store.clear(); } }
+    if (!this.local) await this.store.withLock(async () => {
+      const identity = await this.store.read();
+      if (!identity) return;
+      if (identity.origin !== this.origin) throw new ClientError('login_required');
+      // Revocation uses its own fresh proof, even when refresh or access is disabled.
+      await this.send('/v1/installation/revoke', { method: 'POST', identity, token: identity.access_token, body: { installation_id: identity.installation_id } });
+      await this.store.clear();
+    });
     return { status: 'signed_out' };
   }
 }

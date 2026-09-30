@@ -73,7 +73,7 @@ using isolated synthetic profile state.
    for the exact cancelled request, settle it through the reconciliation endpoint,
    then use a different operator installation or browser principal to record the
    independent cancellation review. Transport closure alone is insufficient.
-10. Close private acceptance after testing, stop owned guests and record sanitized
+10. Retain configured owner access after testing, stop owned guests, pause their listings and record sanitized
     outcomes. Retain unresolved accounting. On failure stop new work, drain the relay,
     restore recorded application artifacts, and preserve migration history.
 

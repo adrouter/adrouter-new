@@ -44,13 +44,17 @@ installation's granted scopes. `--profile operator login` requests operator scop
 ## Provider operation
 
 Choose a preset, edit public metadata, and supply a non-secret authorization
-reference. The DeepSeek preset retains `deepseek-v4-flash`; the upstream currently
-serves this alias with V4.1 Flash. The official DeepSeek connector disables
+reference. The DeepSeek preset uses the documented `deepseek-flash` request identifier. The official DeepSeek connector disables
 thinking explicitly because the marketplace wire contract carries text/tools,
 not reasoning history (see [DeepSeek thinking mode](https://api-docs.deepseek.com/guides/thinking_mode)). Test-credit prices are separate from USD upstream
 cost. Source approval and a qualified, versioned upstream tariff are required.
 
-Set a cumulative spending cap explicitly. It covers all your nodes, installations
+The guided flow verifies or installs the runtime, sets limits, waits for source approval,
+publishes the listing, and then attaches the guest console. Back/Cancel retain
+in-progress form values during the session; submitted drafts remain on the backend.
+The original jellyfish panel uses a compact `adr v2` header when space is limited.
+
+Set a cumulative spending cap explicitly in USD (up to six decimal places). It covers all your nodes, installations
 and restarts. Consumed spending and uncertain liabilities are never reset by a
 restart or timeout. Increases require confirmation and a matching revision.
 The independent USD 10 ceiling is only for live acceptance testing.
@@ -129,3 +133,8 @@ The runtime scripts use only the explicitly supplied non-secret paths
 Pi fuzzy search and bounded tool-output truncation are generated from the locked
 0.85.1 source revision; their MIT license is included. `scripts/vendor-pi.mjs`
 reproduces the selected components without importing Pi credentials or host tools.
+
+Owner-only acceptance checks the configured active owner during approval, token issuance,
+refresh and authenticated use. Stop/pause and signed revocation remain available
+when acceptance or client policy is disabled, while installation ownership and
+proof verification remain required. Ordinary marketplace admissions remain closed.

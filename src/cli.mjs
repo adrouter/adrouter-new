@@ -122,7 +122,7 @@ export async function run(args, dependencies = {}) {
       requireId(id);
       if (json && !o['no-key']) throw new ClientError('interactive_terminal_required');
       const { serveProvider } = await import('./provider.mjs');
-      output(await serveProvider(network, id, { maxCalls: Number(o['max-calls'] ?? '1'), maxOutputTokens: Number(o['max-output'] ?? '1024'), noKey: !!o['no-key'], notify: output }));
+      output(await serveProvider(network, id, { maxCalls: Number(o['max-calls'] ?? '5'), maxOutputTokens: Number(o['max-output'] ?? '1024'), noKey: !!o['no-key'], notify: output }));
     } else if (sub === 'benchmark') throw new ClientError('sandboxed_evaluation_not_integrated');
     else throw new ClientError('unknown_command');
   } else if (command === 'connect') {

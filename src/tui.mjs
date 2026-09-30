@@ -1,3 +1,4 @@
+import { usdToMicrousd, formatUsd } from './money.mjs';
 import { randomUUID } from 'node:crypto';
 import { spawn } from 'node:child_process';
 import { TerminalUI } from './tui-screen.mjs';
@@ -10,6 +11,8 @@ const integer = (min, max) => value => /^(0|[1-9][0-9]*)$/.test(value) && Number
 const date = value => typeof value === 'number' ? new Date(value).toLocaleString() : '—';
 const words = value => String(value ?? '—').replaceAll('_', ' ');
 const problems = {
+  marketplace_owner_only: 'Sign in with the configured owner account. Other accounts cannot use this private marketplace.',
+  marketplace_access_disabled: 'Owner access is disabled. Revoke this installation in the dashboard if sign-out cannot refresh it.',
   login_required: 'Sign in to AdRouter to continue.',
   marketplace_admissions_disabled: 'This network is not accepting marketplace activity yet. Your settings have not enabled it.',
   client_disabled: 'Marketplace sign-in is disabled on this network until acceptance is enabled.',
@@ -58,7 +61,7 @@ export const providerFields = [
 
 export async function runTui(options = {}, dependencies = {}) {
   const ui = dependencies.ui ?? new TerminalUI(); let store = dependencies.store ?? new AuthStore(undefined, options.profile ?? 'default');
-  let network = dependencies.network; let config; let runtimeConfig; const providersRunning = new Map(); let currentProviderId;
+  let network = dependencies.network; let config; let runtimeConfig; const providersRunning = new Map(); const setupDrafts = new Map(); const limitDrafts = new Map(); let currentProviderId;
   const actor = role => { if (network.local) network.actor = role; };
   const get = async (path, publicAccess = false) => {
     const value = await ui.task('Loading AdRouter', () => network.request(`/v2${path}`, { public: publicAccess }));
@@ -91,13 +94,14 @@ export async function runTui(options = {}, dependencies = {}) {
       return result;
     }, { cancel: true, onKey: openSafari, lines: ['Requesting a browser approval code…'] });
   }
-  async function spendingBudget() {
+  async function spendingBudget(setup = false) {
     actor('provider'); const b = await get('/providers/budget');
-    const choice = await ui.menu('Cumulative upstream spending', [item('edit', 'Set total authority'), item('back', 'Back')], { lines: [`Total: ${b.totalMicrousd} micro-USD`, `Consumed: ${b.consumedMicrousd}`, `Outstanding: ${b.outstandingMicrousd}`, `Remaining: ${b.remainingMicrousd}`, 'This cap spans every listing, installation and restart.', '1,000,000 micro-USD = USD 1. Test credits are separate.'] });
-    if (choice !== 'edit') return;
-    const values = await ui.form('Provider total authority', [{ name: 'totalMicrousd', label: 'Total micro-USD', default: b.totalMicrousd, validate: integer(0, 999999999999999) }]);
-    if (!values || !await confirm('Confirm cumulative authority', [`Total authority: ${values.totalMicrousd} micro-USD`, 'Consumed and uncertain spending stay deducted.'], 'Confirm total authority')) return;
-    await post('/providers/budget', { ...values, expectedRevision: b.revision, confirmIncrease: true });
+    const choice = await ui.menu('Cumulative upstream spending', [item('edit', 'Set total authority'), ...(setup ? [item('keep', 'Use current cap', '', BigInt(b.remainingMicrousd) <= 0n)] : []), item('back', 'Back')], { lines: [`Total: ${formatUsd(b.totalMicrousd)}`, `Consumed: ${formatUsd(b.consumedMicrousd)}`, `Outstanding: ${formatUsd(b.outstandingMicrousd)}`, `Remaining: ${formatUsd(b.remainingMicrousd)}`, 'This cap spans every listing, installation and restart.', 'The separate USD 10 acceptance ceiling includes outstanding liabilities. Test credits are separate.'] });
+    if (choice !== 'edit') return choice === 'keep';
+    const values = await ui.form('Provider total authority', [{ name: 'totalUsd', label: 'Total USD', default: formatUsd(b.totalMicrousd).slice(4), validate: value => { try { usdToMicrousd(value); return ''; } catch { return 'Enter USD with up to six decimal places.'; } } }]);
+    if (!values || !await confirm('Confirm cumulative authority', [`Total authority: ${formatUsd(usdToMicrousd(values.totalUsd))}`, 'Consumed and uncertain spending stay deducted.'], 'Confirm total authority')) return;
+    await post('/providers/budget', { totalMicrousd: usdToMicrousd(values.totalUsd), expectedRevision: b.revision, confirmIncrease: true });
+    return true;
   }
   async function runtimeSetup() {
     const choice=await ui.menu('Runtime setup',[item('install','Install pinned runtime'),item('existing','Verify an existing runtime'),item('back','Back')]);
@@ -116,34 +120,79 @@ export async function runTui(options = {}, dependencies = {}) {
     runtimeConfig = await saveRuntimeConfig(values);
     await ui.page('Runtime verified', [`Microsandbox ${identity.version}`, identity.platform, 'Only these non-secret paths are saved. Binary hashes are checked before reuse.']);
   }
-  async function launch(node) {
-    const bounds = await ui.form(node.availability === 'cold' ? 'Start cold provider control' : 'Start hot provider VM', [
+  async function launch(node, preparedBounds) {
+    const savedBounds = limitDrafts.get(node.id) ?? {}; limitDrafts.set(node.id, savedBounds);
+    const bounds = preparedBounds ?? await ui.form(node.availability === 'cold' ? 'Start cold provider control' : 'Start hot provider VM', [
       { name: 'maxCalls', label: 'Maximum requests', default: '5', validate: integer(1, 30) },
       { name: 'maxOutputTokens', label: 'Output tokens / request', default: '1024', validate: integer(1, 8192) },
-    ], {}, 'VM lifetime: at most nine minutes. Enter your API key only in the VM console.');
+    ], savedBounds, 'One concurrent session. VM lifetime: at most nine minutes. Enter your API key only in the VM console.');
     if (!bounds) return;
+    Object.assign(savedBounds, bounds);
     const { startProvider } = await import('./provider.mjs');
-    if (!await confirm('Launch this VM?', [node.name, `Endpoint: ${node.endpoint}`, `Model: ${node.model}`, `Maximum requests: ${bounds.maxCalls}`, `Maximum output per request: ${bounds.maxOutputTokens}`, 'Pending source approval cannot serve buyers.', 'The terminal will attach directly to the guest. Ctrl+C stops it.'], node.availability === 'cold' ? 'Start cold control' : 'Launch hot VM')) return;
+    if (!await confirm('Launch this VM?', [node.name, `Endpoint: ${node.endpoint}`, `Model: ${node.model}`, `Maximum requests: ${bounds.maxCalls}`, `Maximum output per request: ${bounds.maxOutputTokens}`, 'Source approval and publication must be complete before serving.', 'The terminal will attach directly to the guest. Ctrl+C stops it.'], node.availability === 'cold' ? 'Start cold control' : 'Launch hot VM')) return;
     const result = await ui.suspend(() => startProvider(network, node.id, { maxCalls: Number(bounds.maxCalls), maxOutputTokens: Number(bounds.maxOutputTokens), runtimeConfig, notify: value => { if (value.status === 'activation_required' && currentProviderId === node.id) ui.pending?.resolve('refresh'); } }));
     providersRunning.set(node.id, result);
-    await ui.page('Provider operation started', ['Keep this TUI open.', node.availability === 'hot' ? 'The VM is warm. Source approval and publication are still required before serving.' : 'Control is online. Return to the listing to accept activation requests within 120 seconds.']);
+    await ui.page('Provider operation started', ['Keep this TUI open.', `VM: ${result.status.guestReady ? 'ready' : 'not started'}`, `Backend: ${result.status.relayReady ? 'Hot · ready' : 'awaiting relay confirmation'}`, 'Refresh the listing to read backend readiness.']);
   }
   async function createListing() {
     actor('provider');
-    const preset = await ui.menu('List compute · 1 of 3', [item('deepseek', 'DeepSeek V4 Flash · official API', 'Prefill your selected test provider. Its V4 request ID currently resolves to V4.1 Flash upstream.'), item('custom', 'Other authorized API'), item('self', 'Self-hosted inference')], { subtitle: 'Keys stay with you. Only public listing metadata is submitted.' });
+    const draftKey = `${store.profile ?? 'default'}:${network.origin}`;
+    const savedDraft = setupDrafts.get(draftKey);
+    const preset = savedDraft ? 'resume' : await ui.menu('List compute · 1 of 3', [item('deepseek', 'DeepSeek Flash · official API', 'Prefill your selected test provider. Uses the documented deepseek-flash request ID.'), item('custom', 'Other authorized API'), item('self', 'Self-hosted inference')], { subtitle: 'Keys stay with you. Only public listing metadata is submitted.' });
     if (!preset) return;
     // Operator-selected test configuration, not a claim about general model capabilities.
-    let draft = preset === 'deepseek' ? { name: 'DeepSeek Flash · hot compute', model: 'deepseek-v4-flash', endpoint: 'https://api.deepseek.com/chat/completions', supplyClass: 'authorized_api' } : { supplyClass: preset === 'self' ? 'self_hosted' : 'authorized_api' };
+    let draft = savedDraft ?? (preset === 'deepseek' ? { name: 'DeepSeek Flash - hot compute', model: 'deepseek-flash', endpoint: 'https://api.deepseek.com/chat/completions', supplyClass: 'authorized_api' } : { supplyClass: preset === 'self' ? 'self_hosted' : 'authorized_api' });
+    setupDrafts.set(draftKey, draft);
     for (;;) {
-      draft = await ui.form('List compute · 2 of 3', providerFields, draft, 'Defaults are editable. Permission must be entered; it is never assumed.');
-      if (!draft) return;
+      const edited = await ui.form('List compute · 2 of 3', providerFields, draft, 'Defaults are editable. Permission must be entered; it is never assumed.');
+      if (!edited) return;
+      Object.assign(draft, edited);
       if (!MarketplaceDraft(draft)) { await ui.page('Check listing fields', ['Use printable metadata and integer test-credit prices.']); continue; }
       const decision = await ui.menu('List compute · 3 of 3', [item('edit', 'Edit details'), item('create', 'Create draft and configure provider'), item('cancel', 'Cancel')], { lines: [draft.name, `${draft.model} · ${draft.availability}`, draft.endpoint, `Supply: ${words(draft.supplyClass)}`, `Permission: ${draft.rightsReference}`, `Input ${draft.inputRate} / output ${draft.outputRate} test credits per 1M tokens`, '', 'Source approval and publication are required before serving buyers.'] });
       if (decision === 'edit') continue;
       if (decision !== 'create') return;
       const node = await post('/providers/nodes', draft);
+      setupDrafts.delete(draftKey);
+      await guidedProvider(node);
       await manageNode(node.id, true); return;
     }
+  }
+  async function guidedProvider(node) {
+    // A server draft is already durable; Back never deletes it.
+    const { configuredRuntime } = await import('./provider.mjs');
+    const { SandboxRuntime } = await import('./runtime.mjs');
+    let verified = false;
+    while (!verified) {
+      try {
+        await ui.task('Verify provider VM runtime', async () => (runtimeConfig ? new SandboxRuntime(runtimeConfig) : await configuredRuntime()).verify());
+        verified = true;
+      } catch {
+        if (!await confirm('Set up the lightweight VM', ['Your listing draft is saved.', 'Install or verify the pinned runtime before setting provider limits.'], 'Configure runtime')) return;
+        await runtimeSetup();
+        if (!runtimeConfig) return;
+      }
+    }
+    const bounds = limitDrafts.get(node.id) ?? {}; limitDrafts.set(node.id, bounds);
+    const edited = await ui.form('Provider limits', [
+      { name: 'maxCalls', label: 'Maximum requests', default: '5', validate: integer(1, 30) },
+      { name: 'maxOutputTokens', label: 'Output tokens / request', default: '1024', validate: integer(1, 8192) },
+    ], bounds, 'One concurrent session · maximum VM lifetime nine minutes.');
+    if (!edited) return;
+    Object.assign(bounds, edited);
+    const budget = await get('/providers/budget');
+    if (!await confirm('Cumulative provider spending', [`Remaining: ${formatUsd(budget.remainingMicrousd)}`, 'Consumed and outstanding amounts persist across retries and restarts.', 'The independent USD 10 acceptance ceiling also applies.'], 'Review or set spending cap')) return;
+    if (!await spendingBudget(true)) return;
+    if (BigInt((await get('/providers/budget')).remainingMicrousd) <= 0n) { await ui.page('Spending cap required', ['Set a cap with remaining authority before launching the provider.']); return; }
+    node = await get(`/providers/nodes/${node.id}`);
+    if (node.approval !== 'approved') {
+      await ui.page('Source approval required', ['Your draft and limits are saved for this session.', 'In the separate operator profile, review the supply permission reference and qualify a current conservative tariff.', 'Then choose Continue setup from My provider listings.']); return;
+    }
+    if (node.status !== 'published') {
+      if (!await confirm('Publish approved compute?', [node.name, node.endpoint, node.model, 'Provider credentials will be entered only inside the guest.'], 'Publish')) return;
+      await post(`/providers/nodes/${node.id}/publish`);
+      node = await get(`/providers/nodes/${node.id}`);
+    }
+    await launch(node, bounds);
   }
   async function manageNode(id, created = false) {
     for (;;) {
@@ -151,15 +200,17 @@ export async function runTui(options = {}, dependencies = {}) {
       if (providersRunning.get(node.id)?.status.stopped) providersRunning.delete(node.id);
       currentProviderId = node.id;
       const selection = await ui.menu(created ? 'Your listing is drafted' : node.name, [
+        item('setup', 'Continue setup', 'Runtime → limits → source approval → publication → guest → relay', providersRunning.has(node.id)),
         item('launch', node.availability === 'cold' ? 'Start cold control' : 'Launch hot VM', 'Keep this TUI open while providing.', providersRunning.has(node.id)),
         ...(providersRunning.get(node.id)?.status.activation.length ? [item('activate', 'Activate reserved buyer session', 'Launch the VM and enter the key before the 120-second deadline.')] : []),
         item('publish', 'Publish approved listing', node.approval === 'approved' ? 'Creates a new immutable public revision.' : 'Waiting for operator source approval.', node.approval !== 'approved'),
         item('pause', 'Pause listing'), item('stop', 'Stop serving and close sessions'), item('refresh', 'Refresh status'), item('back', 'Back'),
-      ], { lines: [`Model: ${node.model}`, `Source review: ${node.approval} · Listing: ${node.status}`, `Provider: ${node.ready ? 'hot · relay connected' : node.availability === 'cold' && Number(node.leaseUntil) > Date.now() ? 'cold · control online' : 'offline'}`, `Permission: ${node.rightsReference}`, `Listing reference: ${node.id}`] });
+      ], { lines: [`Model: ${node.model}`, `Source review: ${node.approval} · Listing: ${node.status}`, `VM: ${providersRunning.get(node.id)?.status.guestReady ? 'ready' : 'not running'}`, `Backend: ${node.ready ? 'Hot · ready' : node.availability === 'cold' && Number(node.leaseUntil) > Date.now() ? 'cold · control online' : 'offline'}`, `Permission: ${node.rightsReference}`, `Listing reference: ${node.id}`] });
       currentProviderId = undefined; created = false;
       if (!selection || selection === 'back') return;
       await attempt(async () => {
-        if (selection === 'launch') await launch(node);
+        if (selection === 'setup') await guidedProvider(node);
+        else if (selection === 'launch') await guidedProvider(node);
         else if (selection === 'activate') await ui.suspend(() => providersRunning.get(node.id).warm());
         else if (selection === 'stop' && providersRunning.has(node.id)) { await providersRunning.get(node.id).stop(); providersRunning.delete(node.id); }
         else if (selection !== 'refresh' && await confirm(`${words(selection)} listing?`, [node.name, selection === 'stop' ? 'Known unused credits are released; unknown outcomes remain held.' : 'This changes the public availability of this listing.'])) await post(`/providers/nodes/${node.id}/${selection}`);

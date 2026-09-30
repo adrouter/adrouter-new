@@ -1,9 +1,10 @@
+import { renderBanner } from './brand.mjs';
 import { fuzzyFilter } from './vendor/pi/fuzzy.mjs';
 import readline from 'node:readline';
 import { safeText, ClientError } from './network.mjs';
 import { readFile } from 'node:fs/promises';
 
-const logo = JSON.parse(await readFile(new URL('./assets/brand-terminal.json', import.meta.url), 'utf8')).lines;
+const { version } = JSON.parse(await readFile(new URL('../package.json', import.meta.url), 'utf8'));
 const clean = value => safeText(value).replace(/[\r\n\t]/g, ' ');
 const clip = (value, width) => [...clean(value)].slice(0, Math.max(0, width)).join('');
 export function wrapText(value, width) {
@@ -18,12 +19,14 @@ export function wrapText(value, width) {
 
 // All untrusted labels and values are plain text. Only this renderer emits ANSI.
 export function renderScreen({ title, subtitle = '', lines = [], focus = 0, footer = '', context = '' }, columns = 80, rows = 24, color = true) {
-  const width = Math.max(12, columns - 2); const height = Math.max(1, rows - 1);
-  const blue = text => color ? `\x1b[38;2;63;101;245m${text}\x1b[0m` : text;
+  const width = Math.max(1, columns - 2); const height = Math.max(1, rows - 1);
+  const blue = text => color ? `${/truecolor|24bit/.test(process.env.COLORTERM ?? '') ? '\x1b[38;2;63;101;245m' : '\x1b[38;5;63m'}${text}\x1b[0m` : text;
   const result = [];
-  if (width >= 68 && height >= 22) {
-    for (let i = 0; i < logo.length; i++) result.push(blue(logo[i]) + (i === 1 ? '   AdRouter' : i === 2 ? '   Compute marketplace' : i === 3 ? `   ${clip(context, width - 25)}` : ''));
-  } else result.push(blue('AdRouter') + `  ${clip(context, width - 12)}`);
+  // The original panel is 16 rows; only show it when navigation still fits.
+  if (width >= 68 && height >= 16 + Math.min(lines.length, 10) + 8) {
+    result.push(...renderBanner(width, version, clean(context), color,
+      /truecolor|24bit/.test(process.env.COLORTERM ?? '') ? 'truecolor' : '256color'));
+  } else result.push(blue(clip(`adr v2 · v${version}`, width)), clip(context, width));
   result.push(blue('─'.repeat(width)), clip(title, width));
   if (subtitle) result.push(...wrapText(subtitle, width));
   result.push('');
@@ -44,7 +47,7 @@ export function renderScreen({ title, subtitle = '', lines = [], focus = 0, foot
 
 export class TerminalUI {
   constructor({ input = process.stdin, output = process.stdout, color = !process.env.NO_COLOR } = {}) {
-    this.input = input; this.output = output; this.color = color; this.context = '';
+    this.input = input; this.output = output; this.color = color && process.env.TERM !== 'dumb'; this.context = '';
     this.resize = () => this.draw();
     this.onKey = (text, key = {}) => {
       if (key.ctrl && key.name === 'c') { this.pending?.resolve(null); return; }
@@ -118,7 +121,8 @@ export class TerminalUI {
       lines.push({ text: '  Continue →', selected: selected === fields.length }, '', fields[selected]?.help ?? 'Review your settings on the next screen.', error);
       this.draw({ title, subtitle, lines, focus: selected, footer: '↑↓ / Tab Move  ←→ Options  Type Edit  Ctrl+U Clear  Enter Next  Esc Back' });
     };
-    return this.interact((text, key, finish) => {
+    const remember = () => Object.assign(initial, values);
+    const result = await this.interact((text, key, finish) => {
       if (key.name === 'escape') { finish(null); return; }
       const field = fields[selected];
       if (key.name === 'up' || (key.name === 'tab' && key.shift)) { selected = (selected + fields.length) % (fields.length + 1); replace = true; }
@@ -142,6 +146,8 @@ export class TerminalUI {
       }
       draw();
     }, draw);
+    remember();
+    return result;
   }
   async page(title, lines) {
     let offset = 0;

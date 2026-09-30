@@ -16,7 +16,7 @@ export async function configuredRuntime() {
 }
 export async function createGuest(runtime, hostPorts, copyDirectory, endpoint, { signal } = {}) {
   const images = JSON.parse(await readFile(new URL('../runtime/guest-images.json', import.meta.url)));
-  const name = await runtime.create({ image: images.node.reference, hostPorts, copyDirectory, endpoint, durationSeconds: 600, signal });
+  const name = await runtime.create({ image: images.node.reference, hostPorts, copyDirectory, endpoint, durationSeconds: 540, signal });
   try {
     signal?.throwIfAborted();
     const info = await runtime.inspect(name);
@@ -25,7 +25,7 @@ export async function createGuest(runtime, hostPorts, copyDirectory, endpoint, {
   } catch (error) { await runtime.remove(name); throw error; }
 }
 
-export async function startProvider(networkInput, nodeId, { maxCalls = 30, maxOutputTokens = 1024, runtimeConfig, noKey = false, notify = () => {}, consoleOptions } = {}) {
+export async function startProvider(networkInput, nodeId, { maxCalls = 5, maxOutputTokens = 1024, runtimeConfig, noKey = false, notify = () => {}, consoleOptions } = {}) {
   if (!Number.isInteger(maxCalls) || maxCalls < 1 || maxCalls > 30 || !Number.isInteger(maxOutputTokens) || maxOutputTokens < 1 || maxOutputTokens > 8192) throw new ClientError('provider_exposure_bound_invalid');
   const network = Object.create(networkInput); network.actor = 'provider';
   let node = await network.request(`/v2/providers/nodes/${nodeId}`);
@@ -35,7 +35,7 @@ export async function startProvider(networkInput, nodeId, { maxCalls = 30, maxOu
   if(binding.loopback && (!enginePort || enginePort < 1024))throw new ClientError('self_hosted_port_required');
   const runtime = runtimeConfig ? new SandboxRuntime(runtimeConfig) : await configuredRuntime(); await runtime.verify();
   const capability = randomBytes(32).toString('base64url');
-  let guest, copied, socket, timer, deadline, pending, guestReady = false, stopped = false, starting = false, connecting = false, calls = 0;
+  let guest, copied, socket, timer, deadline, pending, guestReady = false, relayReady = false, stopped = false, starting = false, connecting = false, calls = 0;
   let complete; const done = new Promise(resolve => { complete = resolve; });
   let activation = [];
   const abort = new AbortController();
@@ -124,6 +124,7 @@ export async function startProvider(networkInput, nodeId, { maxCalls = 30, maxOu
           if (typeof event.data !== 'string' || event.data.length > 1024 * 1024) throw new Error('frame_limit');
           const frame = JSON.parse(event.data);
           if (frame.type === 'ready') {
+            relayReady = true;
             for (const a of activation) await network.request(`/v2/providers/nodes/${nodeId}/activations/${a.sessionId}`, { method: 'POST', body: {} });
             activation = []; notify({ status: 'serving', remainingCalls: maxCalls - calls }); return;
           }
@@ -137,7 +138,7 @@ export async function startProvider(networkInput, nodeId, { maxCalls = 30, maxOu
   }
   async function stop() {
     if (stopped) return done;
-    stopped = true; guestReady = false; for(const tunnel of tunnels)tunnel.destroy(); abort.abort(); clearInterval(timer); clearTimeout(deadline); socket?.close();
+    stopped = true; guestReady = false; relayReady = false; for(const tunnel of tunnels)tunnel.destroy(); abort.abort(); clearInterval(timer); clearTimeout(deadline); socket?.close();
     process.removeListener('SIGINT', onSignal); process.removeListener('SIGTERM', onSignal);
     let teardownVerified = true;
     try { if (guest && runtime.owned.has(guest)) await runtime.remove(guest); }
@@ -156,7 +157,7 @@ export async function startProvider(networkInput, nodeId, { maxCalls = 30, maxOu
     deadline = setTimeout(onSignal, 540000);
     if (node.availability === 'hot') await warm();
     await tick(); if (!stopped) timer = setInterval(() => void tick(), 3000);
-    return { done, stop, warm, get status() { return { stopped, guestReady, calls, activation }; } };
+    return { done, stop, warm, get status() { return { stopped, guestReady, relayReady, calls, activation }; } };
   } catch (error) { await stop(); throw error; }
 }
 export async function serveProvider(network, nodeId, options = {}) { const controller = await startProvider(network, nodeId, options); return controller.done; }
