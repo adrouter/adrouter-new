@@ -73,18 +73,18 @@ test('DeepSeek guided default submits valid metadata and resumes edits after can
     },
     form:async(title,fields,initial)=>{
       if(title!=='List compute · 2 of 3')return null;
-      if(++formVisits===1){initial.rightsReference='synthetic-permission';return null;}
-      assert.equal(initial.rightsReference,'synthetic-permission');
+      if(++formVisits===1){initial.name='Edited listing';return null;}
+      assert.equal(initial.name,'Edited listing');
       const values=Object.fromEntries(fields.map(f=>[f.name,initial[f.name]??f.default??'']));
       assert.equal(values.model,'deepseek-flash');assert.equal(MarketplaceDraft(values),true);return values;
     }
   };
   const network={local:true,origin:'http://127.0.0.1:8790',request:async(path,options)=>{
     if(path.endsWith('/network/config'))return config;
-    if(path==='/v2/providers/nodes'){posted=options.body;return {...posted,id:'synthetic-node',approval:'pending',status:'draft'};}
-    if(path.endsWith('/synthetic-node'))return {...posted,id:'synthetic-node',approval:'pending',status:'draft'};
+    if(path==='/v2/providers/nodes'){posted=options.body;return {...posted,id:'synthetic-node',suspended:false,status:'draft'};}
+    if(path.endsWith('/synthetic-node'))return {...posted,id:'synthetic-node',suspended:false,status:'draft'};
     throw new Error('unexpected request');
   }};
   await runTui({}, {network,ui,store:{profile:'provider'}});
-  assert.equal(posted.rightsReference,'synthetic-permission');assert.equal(homeVisits,3);
+  assert.equal('rightsReference' in posted,false);assert.equal(posted.name,'Edited listing');assert.equal(homeVisits,3);
 });

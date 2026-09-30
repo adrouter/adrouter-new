@@ -42,7 +42,7 @@ test('mutation has no network retry after unknown outcome and rejects redirects'
 });
 test('provider CLI creates only metadata and market browsing is public', async () => {
   const calls = []; const output = []; const network = { request: async (path, options) => { calls.push({ path, options }); return path.startsWith('/v2/listings') ? { listings: [], nextCursor: null } : { id: 'fixture' }; } };
-  await run(['--local', '--json', 'provider', 'create', '--name', 'Permitted capacity', '--model', 'test-model', '--endpoint', 'https://api.example.test/v1/chat/completions', '--rights', 'agreement-123'], { network, output: v => output.push(v) });
+  await run(['--local', '--json', 'provider', 'create', '--name', 'Permitted capacity', '--model', 'test-model', '--endpoint', 'https://api.example.test/v1/chat/completions'], { network, output: v => output.push(v) });
   assert.equal(calls[0].path, '/v2/providers/nodes'); assert.equal(calls[0].options.body.supplyClass, 'authorized_api'); assert.equal('apiKey' in calls[0].options.body, false);
   await run(['--local', '--json', 'market', '--model', 'test model'], { network, output: v => output.push(v) });
   assert.equal(calls[1].options.public, true); assert.equal(calls[1].path, '/v2/listings?model=test+model');

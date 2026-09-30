@@ -18,7 +18,7 @@ const problems = {
   client_disabled: 'Marketplace sign-in is disabled on this network until acceptance is enabled.',
   client_not_allowed: 'Marketplace sign-in is not available on this network yet.',
   invalid_network_response: 'This server did not return the marketplace API. Check the network or its deployed version.',
-  source_approval_required: 'The operator must approve your supply reference before publication.',
+  node_suspended: 'An operator has suspended this listing. It must be cleared before you can republish.',
   provider_offline: 'The provider must start its hot VM before you can reserve this compute.',
   insufficient_test_credits: 'Your available test credits do not cover this quote.',
   capacity_unavailable: 'This provider is already serving another session. Choose another listing or try later.',
@@ -53,7 +53,6 @@ export const providerFields = [
   { name: 'model', label: 'Request model ID', validate: required, help: 'Exact upstream request ID. Defaults come from the selected setup preset.' },
   { name: 'endpoint', label: 'API endpoint', maxLength: 2048, validate: value => { try { const u = new URL(value); return u.username || u.password || u.search || u.hash || !['https:', 'http:'].includes(u.protocol) ? 'Use an endpoint URL with no credentials, query or fragment.' : ''; } catch { return 'Enter a valid API endpoint URL.'; } }, help: 'Public endpoint metadata only. Never paste an API key here.' },
   { name: 'supplyClass', label: 'Supply type', choices: ['authorized_api', 'self_hosted'], default: 'authorized_api', help: 'Authorized API capacity or your own inference engine. Subscription supply is excluded.' },
-  { name: 'rightsReference', label: 'Permission reference', validate: required, help: 'Your non-secret permission/agreement reference. This is reviewed before publication.' },
   { name: 'availability', label: 'Availability', choices: ['hot', 'cold'], default: 'hot', help: 'Hot warms a VM now. Cold keeps control online; you have 120 seconds to activate after a reservation.' },
   { name: 'inputRate', label: 'Input test credits / 1M', default: '1000', validate: integer(0, 999999999), help: 'Editable marketplace test-credit price; this is not your upstream USD cost.' },
   { name: 'outputRate', label: 'Output test credits / 1M', default: '1000', validate: integer(0, 999999999), help: 'Editable marketplace test-credit price; no cash settlement.' },
@@ -129,7 +128,7 @@ export async function runTui(options = {}, dependencies = {}) {
     if (!bounds) return;
     Object.assign(savedBounds, bounds);
     const { startProvider } = await import('./provider.mjs');
-    if (!await confirm('Launch this VM?', [node.name, `Endpoint: ${node.endpoint}`, `Model: ${node.model}`, `Maximum requests: ${bounds.maxCalls}`, `Maximum output per request: ${bounds.maxOutputTokens}`, 'Source approval and publication must be complete before serving.', 'The terminal will attach directly to the guest. Ctrl+C stops it.'], node.availability === 'cold' ? 'Start cold control' : 'Launch hot VM')) return;
+    if (!await confirm('Launch this VM?', [node.name, `Endpoint: ${node.endpoint}`, `Model: ${node.model}`, `Maximum requests: ${bounds.maxCalls}`, `Maximum output per request: ${bounds.maxOutputTokens}`, 'Publish your listing and qualify its current tariff before your private evaluation.', 'The terminal will attach directly to the guest. Ctrl+C stops it.'], node.availability === 'cold' ? 'Start cold control' : 'Launch hot VM')) return;
     const result = await ui.suspend(() => startProvider(network, node.id, { maxCalls: Number(bounds.maxCalls), maxOutputTokens: Number(bounds.maxOutputTokens), runtimeConfig, notify: value => { if (value.status === 'activation_required' && currentProviderId === node.id) ui.pending?.resolve('refresh'); } }));
     providersRunning.set(node.id, result);
     await ui.page('Provider operation started', ['Keep this TUI open.', `VM: ${result.status.guestReady ? 'ready' : 'not started'}`, `Backend: ${result.status.relayReady ? 'Hot · ready' : 'awaiting relay confirmation'}`, 'Refresh the listing to read backend readiness.']);
@@ -144,11 +143,11 @@ export async function runTui(options = {}, dependencies = {}) {
     let draft = savedDraft ?? (preset === 'deepseek' ? { name: 'DeepSeek Flash - hot compute', model: 'deepseek-flash', endpoint: 'https://api.deepseek.com/chat/completions', supplyClass: 'authorized_api' } : { supplyClass: preset === 'self' ? 'self_hosted' : 'authorized_api' });
     setupDrafts.set(draftKey, draft);
     for (;;) {
-      const edited = await ui.form('List compute · 2 of 3', providerFields, draft, 'Defaults are editable. Permission must be entered; it is never assumed.');
+      const edited = await ui.form('List compute · 2 of 3', providerFields, draft, 'Defaults are editable. Only public listing metadata is submitted.');
       if (!edited) return;
       Object.assign(draft, edited);
       if (!MarketplaceDraft(draft)) { await ui.page('Check listing fields', ['Use printable metadata and integer test-credit prices.']); continue; }
-      const decision = await ui.menu('List compute · 3 of 3', [item('edit', 'Edit details'), item('create', 'Create draft and configure provider'), item('cancel', 'Cancel')], { lines: [draft.name, `${draft.model} · ${draft.availability}`, draft.endpoint, `Supply: ${words(draft.supplyClass)}`, `Permission: ${draft.rightsReference}`, `Input ${draft.inputRate} / output ${draft.outputRate} test credits per 1M tokens`, '', 'Source approval and publication are required before serving buyers.'] });
+      const decision = await ui.menu('List compute · 3 of 3', [item('edit', 'Edit details'), item('create', 'Create draft and configure provider'), item('cancel', 'Cancel')], { lines: [draft.name, `${draft.model} · ${draft.availability}`, draft.endpoint, `Supply: ${words(draft.supplyClass)}`, `Input ${draft.inputRate} / output ${draft.outputRate} test credits per 1M tokens`, '', 'Publish your listing and qualify its current tariff before your private evaluation.'] });
       if (decision === 'edit') continue;
       if (decision !== 'create') return;
       const node = await post('/providers/nodes', draft);
@@ -184,13 +183,14 @@ export async function runTui(options = {}, dependencies = {}) {
     if (!await spendingBudget(true)) return;
     if (BigInt((await get('/providers/budget')).remainingMicrousd) <= 0n) { await ui.page('Spending cap required', ['Set a cap with remaining authority before launching the provider.']); return; }
     node = await get(`/providers/nodes/${node.id}`);
-    if (node.approval !== 'approved') {
-      await ui.page('Source approval required', ['Your draft and limits are saved for this session.', 'In the separate operator profile, review the supply permission reference and qualify a current conservative tariff.', 'Then choose Continue setup from My provider listings.']); return;
-    }
+    if (node.suspended) { await ui.page('Listing suspended', ['An operator must clear suspension before you can republish.']); return; }
     if (node.status !== 'published') {
-      if (!await confirm('Publish approved compute?', [node.name, node.endpoint, node.model, 'Provider credentials will be entered only inside the guest.'], 'Publish')) return;
+      if (!await confirm('Publish this listing?', [node.name, node.endpoint, node.model, 'Publication exposes listing metadata.', ...(config?.admissions === false ? ['Ordinary purchases remain disabled on this network.'] : []), 'Provider credentials will be entered only inside the guest.'], 'Publish')) return;
       await post(`/providers/nodes/${node.id}/publish`);
       node = await get(`/providers/nodes/${node.id}`);
+    }
+    if (!node.tariffQualified) {
+      await ui.page('Qualify the current tariff', ['Publish your listing and qualify its current tariff before your private evaluation.', 'Your listing is published. In the separate operator profile, choose Qualify upstream tariff.', 'Then choose Continue setup from My provider listings.']); return;
     }
     await launch(node, bounds);
   }
@@ -200,12 +200,12 @@ export async function runTui(options = {}, dependencies = {}) {
       if (providersRunning.get(node.id)?.status.stopped) providersRunning.delete(node.id);
       currentProviderId = node.id;
       const selection = await ui.menu(created ? 'Your listing is drafted' : node.name, [
-        item('setup', 'Continue setup', 'Runtime → limits → source approval → publication → guest → relay', providersRunning.has(node.id)),
+        item('setup', 'Continue setup', 'Runtime → limits → publication → tariff → guest → relay', providersRunning.has(node.id)),
         item('launch', node.availability === 'cold' ? 'Start cold control' : 'Launch hot VM', 'Keep this TUI open while providing.', providersRunning.has(node.id)),
         ...(providersRunning.get(node.id)?.status.activation.length ? [item('activate', 'Activate reserved buyer session', 'Launch the VM and enter the key before the 120-second deadline.')] : []),
-        item('publish', 'Publish approved listing', node.approval === 'approved' ? 'Creates a new immutable public revision.' : 'Waiting for operator source approval.', node.approval !== 'approved'),
+        item('publish', 'Publish listing', 'Exposes listing metadata as a new immutable revision.', node.suspended),
         item('pause', 'Pause listing'), item('stop', 'Stop serving and close sessions'), item('refresh', 'Refresh status'), item('back', 'Back'),
-      ], { lines: [`Model: ${node.model}`, `Source review: ${node.approval} · Listing: ${node.status}`, `VM: ${providersRunning.get(node.id)?.status.guestReady ? 'ready' : 'not running'}`, `Backend: ${node.ready ? 'Hot · ready' : node.availability === 'cold' && Number(node.leaseUntil) > Date.now() ? 'cold · control online' : 'offline'}`, `Permission: ${node.rightsReference}`, `Listing reference: ${node.id}`] });
+      ], { lines: [`Model: ${node.model}`, `Suspended: ${node.suspended ? 'yes' : 'no'} · Listing: ${node.status}`, `VM: ${providersRunning.get(node.id)?.status.guestReady ? 'ready' : 'not running'}`, `Backend: ${node.ready ? 'Hot · ready' : node.availability === 'cold' && Number(node.leaseUntil) > Date.now() ? 'cold · control online' : 'offline'}`, `Listing reference: ${node.id}`] });
       currentProviderId = undefined; created = false;
       if (!selection || selection === 'back') return;
       await attempt(async () => {
@@ -221,7 +221,7 @@ export async function runTui(options = {}, dependencies = {}) {
     actor('provider');
     for (;;) {
       const nodes = await get('/providers/nodes');
-      const selected = await ui.menu('My provider listings', [...nodes.map(n => item(n.id, `${n.name} · ${n.approval} · ${n.status}`)), item('new', '+ List new compute'), item('back', 'Back')], { subtitle: nodes.length ? 'Select a listing to launch, publish, pause or stop.' : 'You have no listings yet.' });
+      const selected = await ui.menu('My provider listings', [...nodes.map(n => item(n.id, `${n.name} · ${n.suspended ? 'suspended · ' : ''}${n.status}`)), item('new', '+ List new compute'), item('back', 'Back')], { subtitle: nodes.length ? 'Select a listing to launch, publish, pause or stop.' : 'You have no listings yet.' });
       if (!selected || selected === 'back') return;
       await attempt(() => selected === 'new' ? createListing() : manageNode(selected));
     }
@@ -296,7 +296,7 @@ export async function runTui(options = {}, dependencies = {}) {
   }
   async function admin() {
     actor('admin');
-    const choice = await ui.menu('Marketplace operator', [item('review', 'Review pending supply'), ...(network.local ? [item('grant', 'Grant local test credits')] : []), item('allowance','Manage marketplace allowances'), item('evaluation', 'Evaluation queue'), item('evaluationSessions', 'Evaluation sessions'), item('tariff', 'Qualify upstream tariff'), item('reconcile', 'Reconcile uncertain requests'), item('back', 'Back')], { subtitle: network.local ? 'Local fixtures only.' : 'Requires a separately approved marketplace operator installation.' });
+    const choice = await ui.menu('Marketplace operator', [item('suspension', 'Manage listing suspension'), item('cancellationReview', 'Review evaluation cancellation'), ...(network.local ? [item('grant', 'Grant local test credits')] : []), item('allowance','Manage marketplace allowances'), item('evaluation', 'Evaluation queue'), item('evaluationSessions', 'Evaluation sessions'), item('tariff', 'Qualify upstream tariff'), item('reconcile', 'Reconcile uncertain requests'), item('back', 'Back')], { subtitle: network.local ? 'Local fixtures only.' : 'Requires a separately approved marketplace operator installation.' });
     if (choice === 'evaluationSessions') {
       const sessions = await get('/admin/evaluation-sessions');
       const id = await ui.menu('Evaluation sessions', [...sessions.map(s => item(s.id, `${s.state} · ${s.id}`, `Evaluation only · reserved ${s.funded} · charged ${s.charged}`)), item('back', 'Back')]);
@@ -323,12 +323,22 @@ export async function runTui(options = {}, dependencies = {}) {
       if (!values || !await confirm('Run budgeted evaluation?', ['Provider upstream authority is reserved. Generated code runs in an offline disposable VM.', 'Result remains provisional until upstream cancellation evidence is reviewed.'])) return;
       const { evaluateNode } = await import('./evaluation.mjs');
       const result = await ui.task('Private owner evaluation', (signal, update) => evaluateNode(network, id, { ...values, runtimeConfig, signal, progress: value => update([words(value.status), ...(value.remainingSeconds ? [`Activate the provider within ${value.remainingSeconds} seconds.`] : []), ...(value.sessionId ? [`Evaluation session: ${value.sessionId}`] : []), 'Esc cancels. Uncertain upstream charges remain reserved.']) }), { cancel: true }); await ui.page('Evaluation result',[JSON.stringify(result,null,2)]);
-    } else if (choice === 'review') {
-      const nodes = await get('/admin/nodes'); const id = await ui.menu('Pending supply', [...nodes.map(n => item(n.id, n.name, n.rightsReference)), item('back', 'Back')]);
-      if (id && id !== 'back') {
-        const ref=await ui.form('Source review',[{name:'reviewReference',label:'Non-secret review evidence',validate:required}]);
-        if(ref&&await confirm('Approve reviewed supply?', [nodes.find(n=>n.id===id).rightsReference,ref.reviewReference,'Possession of an API key alone is insufficient.'])) await post(`/admin/nodes/${id}/review`,{approved:true,...ref});
-      }
+    } else if (choice === 'suspension') {
+      const nodes = await get('/admin/nodes');
+      const id = await ui.menu('Listing suspension', [...nodes.map(n => item(n.id, n.name, n.suspended ? 'Suspended' : words(n.status))), item('back', 'Back')]);
+      if (!id || id === 'back') return;
+      const node = nodes.find(n => n.id === id);
+      const reason = await ui.form(node.suspended ? 'Clear suspension' : 'Suspend listing', [{ name: 'reason', label: 'Operator reason', validate: required }]);
+      if (reason && await confirm(node.suspended ? 'Clear suspension?' : 'Suspend listing?', ['The listing stays paused until its provider explicitly republishes.', 'Sessions stop; uncertain charges remain reserved.'])) await post(`/admin/nodes/${id}/suspension`, { suspended: !node.suspended, reason: reason.reason });
+    } else if (choice === 'cancellationReview') {
+      const nodes = await get('/admin/evaluations');
+      const id = await ui.menu('Choose evaluation to review', [...nodes.map(n => item(n.nodeId, n.name)), item('back', 'Back')]);
+      if (!id || id === 'back') return;
+      const node = nodes.find(n => n.nodeId === id);
+      const listing = await get(`/listings/${node.listingId}`, true), evaluation = listing.evaluation;
+      if (!evaluation?.cancellationRequestId) { await ui.page('Cancellation evidence unavailable', ['This listing has no recorded evaluation cancellation to review.']); return; }
+      const evidence = await ui.form('Independent cancellation review', [{ name: 'reviewReference', label: 'Upstream evidence reference', validate: required }], {}, 'Use a different approved operator installation from the evaluation runner. Reconcile usage from independent upstream evidence first.');
+      if (evidence && await confirm('Record independent cancellation review?', [`Session: ${evaluation.sessionId}`, `Request: ${evaluation.cancellationRequestId}`, 'A closed connection alone does not prove computation or billing stopped.'])) await post(`/admin/evaluations/${id}/review`, { evaluationId: evaluation.id, sessionId: evaluation.sessionId, requestId: evaluation.cancellationRequestId, reviewReference: evidence.reviewReference });
     } else if (choice === 'grant') {
       const input = await ui.form('Grant local test credits', [{ name: 'userId', label: 'Local account', default: 'local-buyer', choices: ['local-buyer', 'local-provider'] }, { name: 'amount', label: 'Test credits', default: '1000', validate: integer(1, 1000000) }]);
       if (input && await confirm('Grant test credits?', [`${input.amount} test credits to ${input.userId}`, 'No cash value.'])) await post('/admin/grants', input);
@@ -379,7 +389,7 @@ export async function runTui(options = {}, dependencies = {}) {
       const scope = network.local ? ['marketplace:buyer', 'marketplace:provider', 'marketplace:operator'] : String((await store.read())?.scope ?? '').split(' ');
       const selection = await ui.menu('What would you like to do?', [
         item('browse', 'Browse compute', 'Find listings, compare prices and reserve bounded test-credit access.'),
-        ...(scope.includes('marketplace:provider') ? [item('create', 'List compute', 'Guided source review and hot/cold provider operation.'), item('providers', 'My provider listings'), item('budget', 'Provider spending budget')] : []),
+        ...(scope.includes('marketplace:provider') ? [item('create', 'List compute', 'Guided publication and hot/cold provider operation.'), item('providers', 'My provider listings'), item('budget', 'Provider spending budget')] : []),
         ...(scope.includes('marketplace:buyer') ? [item('sessions', 'My sessions'), item('receipts', 'Receipts')] : []), item('account', 'Account and sign-in'), item('profiles', 'Choose profile'), item('runtime', 'Runtime setup'), item('status', 'Network and diagnostics'),
         ...(scope.includes('marketplace:operator') ? [item('admin', network.local ? 'Local test operator' : 'Marketplace operator')] : []), item('exit', 'Exit'),
       ], { subtitle: `${network.local ? 'Local development identity · ' : ''}Test credits have no cash value.` });

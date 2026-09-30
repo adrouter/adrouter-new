@@ -61,8 +61,8 @@ using isolated synthetic profile state.
 6. In separate `--profile provider` and `--profile operator` terminals, have the
    operator approve each installation in native Safari. Stop whenever authentication
    is required. Never ask for credentials in chat or inspect browser sessions.
-7. Create the listing using the supplied non-secret authorization reference.
-   Approve supply separately from key possession. Qualify a current conservative
+7. Create and explicitly publish the listing without a permission reference or source review.
+   Publication exposes listing metadata; ordinary purchases remain disabled. Qualify a current conservative
    cache-miss/peak tariff from [DeepSeek pricing](https://api-docs.deepseek.com/quick_start/pricing/).
    Set cumulative provider authority at or below the remaining acceptance budget.
 8. Enter the real key directly inside the provider guest. Run explicit hot/cold
@@ -86,8 +86,8 @@ run or revision. Ordinary self-purchase remains rejected even for an operator.
 Evaluation charges do not accrue ordinary provider earnings or establish traction.
 
 Esc/Ctrl+C cancel evaluation; its cleanup stops the session and removes owned
-buyer/offline guests. The provider tears down on cancellation, disconnect, source
-revocation or deadline. Unknown charges stay reserved until upstream evidence is
+buyer/offline guests. The provider tears down on cancellation, disconnect, operator
+suspension or deadline. Unknown charges stay reserved until upstream evidence is
 reviewed. A failed cleanup is reported explicitly and must be reconciled before a
 new run. Evaluation Sessions supports inspection/stopping after an uncertain start.
 No artifact or source test asserts Linux/KVM or full release readiness.

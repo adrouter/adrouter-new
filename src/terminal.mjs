@@ -31,7 +31,7 @@ export function render(value, json = false) {
   if (json) { console.log(JSON.stringify(value)); return; }
   if (Array.isArray(value?.listings)) {
     console.log('\nCompute listings · test credits, no cash value');
-    if (!value.listings.length) console.log('No published listings match. A provider must create a listing and obtain source approval before publication.');
+    if (!value.listings.length) console.log('No published listings match. A provider must create and explicitly publish a listing.');
     for (const l of value.listings) console.log(safeText(`\n${l.name} · ${l.model}\n  ${l.supplyClass} · ${l.availability} · ${l.ready ? 'ready' : 'offline'}\n  Input ${l.inputRate} / output ${l.outputRate} credits per ${l.rateDenominator} tokens\n  ${l.id}`));
     if (value.nextCursor) console.log(`Next: market --after ${safeText(value.nextCursor)}`);
   } else console.log(safeText(JSON.stringify(value, null, 2)));

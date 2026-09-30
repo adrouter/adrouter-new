@@ -29,6 +29,7 @@ export async function startProvider(networkInput, nodeId, { maxCalls = 5, maxOut
   if (!Number.isInteger(maxCalls) || maxCalls < 1 || maxCalls > 30 || !Number.isInteger(maxOutputTokens) || maxOutputTokens < 1 || maxOutputTokens > 8192) throw new ClientError('provider_exposure_bound_invalid');
   const network = Object.create(networkInput); network.actor = 'provider';
   let node = await network.request(`/v2/providers/nodes/${nodeId}`);
+  if (node.suspended === true) throw new ClientError('node_suspended');
   const binding = validateBinding(node);
   if(noKey && node.supplyClass !== 'self_hosted')throw new ClientError('provider_credential_required');
   const enginePort = binding.loopback ? Number(binding.url.port) : undefined;
@@ -103,8 +104,8 @@ export async function startProvider(networkInput, nodeId, { maxCalls = 5, maxOut
     connecting = true;
     try {
       node = await network.request(`/v2/providers/nodes/${nodeId}`);
-      if (node.approval === 'revoked' || node.status === 'paused') { await stop(); return; }
-      if (node.approval !== 'approved' || node.status !== 'published') return;
+      if (node.suspended === true || node.status === 'paused') { await stop(); return; }
+      if (node.status !== 'published') return;
       if (node.availability === 'cold' && !guestReady) {
         await network.request(`/v2/providers/nodes/${nodeId}/heartbeat`, { method: 'POST', body: { ready: false } });
         activation = await network.request(`/v2/providers/nodes/${nodeId}/activations`);

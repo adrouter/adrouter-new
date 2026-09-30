@@ -5,7 +5,7 @@ import { ask, choose, render } from './terminal.mjs';
 import { SandboxRuntime } from './runtime.mjs';
 
 const booleanOptions = new Set(['json', 'local', 'accept', 'help', 'no-key', 'operator']);
-const valueOptions = new Set(['profile', 'network', 'actor', 'name', 'model', 'endpoint', 'supply', 'rights', 'availability', 'input-rate', 'output-rate', 'budget', 'max-output', 'duration', 'after', 'idempotency-key', 'review', 'user', 'amount', 'max-calls']);
+const valueOptions = new Set(['profile', 'network', 'actor', 'name', 'model', 'endpoint', 'supply', 'availability', 'input-rate', 'output-rate', 'budget', 'max-output', 'duration', 'after', 'idempotency-key', 'review', 'user', 'amount', 'max-calls']);
 export function parseArgs(args) {
   const options = {}; const words = [];
   for (let i = 0; i < args.length; i++) {
@@ -30,24 +30,24 @@ export const usage = `adr-cli — adr-v2 compute marketplace (test credits, no c
   provider create | listings | inspect NODE_ID | publish NODE_ID | pause NODE_ID | stop NODE_ID | serve NODE_ID
   doctor
 
-Provider create flags: --name --model --endpoint --supply --rights
+Provider create flags: --name --model --endpoint --supply
   --availability hot|cold --input-rate UNITS --output-rate UNITS
 Public metadata only. Never put an API key in flags, a URL or listing text.
 Provider serving: provider serve NODE_ID --max-calls 1 --max-output 1024
   Requires the pinned VM runtime and hidden guest-only credential entry.
 Local development: --local --actor buyer|provider|admin
-Local admin: admin pending | approve NODE_ID --review REFERENCE | grant --user local-buyer --amount UNITS
+Local admin: admin nodes | suspend|unsuspend NODE_ID --review REFERENCE | grant --user local-buyer --amount UNITS
 Use --idempotency-key KEY to recover a mutation after an uncertain response.
 No command opens your browser or deploys a service.`;
 async function draft(options, json) {
-  const fields = [['name', 'Listing name'], ['model', 'Exact upstream model'], ['endpoint', 'Endpoint URL (no credentials)'], ['supply', 'Supply class', 'authorized_api'], ['rights', 'Supply authorization reference'], ['availability', 'Availability', 'hot'], ['input-rate', 'Input credits per million tokens', '1000'], ['output-rate', 'Output credits per million tokens', '1000']];
+  const fields = [['name', 'Listing name'], ['model', 'Exact upstream model'], ['endpoint', 'Endpoint URL (no credentials)'], ['supply', 'Supply class', 'authorized_api'], ['availability', 'Availability', 'hot'], ['input-rate', 'Input credits per million tokens', '1000'], ['output-rate', 'Output credits per million tokens', '1000']];
   const values = {};
   for (const [name, label, fallback] of fields) {
     if (options[name] !== undefined) values[name] = options[name];
     else if (json || !process.stdin.isTTY) { if (fallback) values[name] = fallback; else throw new ClientError(`missing_${name.replaceAll('-', '_')}`); }
     else values[name] = await ask(label, fallback);
   }
-  return { name: values.name, model: values.model, endpoint: values.endpoint, supplyClass: values.supply, rightsReference: values.rights, availability: values.availability, inputRate: values['input-rate'], outputRate: values['output-rate'] };
+  return { name: values.name, model: values.model, endpoint: values.endpoint, supplyClass: values.supply, availability: values.availability, inputRate: values['input-rate'], outputRate: values['output-rate'] };
 }
 export async function run(args, dependencies = {}) {
   const { words, options: o } = parseArgs(args); const json = !!o.json;
@@ -88,13 +88,13 @@ export async function run(args, dependencies = {}) {
           const market = await get('/listings', true); output(market);
           if (market.listings.length) { const selected = await choose('Inspect compute', [...market.listings.map(l => `${l.name} · ${l.model}`), 'Back']); if (selected < market.listings.length) output(await get(`/listings/${market.listings[selected].id}`, true)); }
         } else if (selection === 1) {
-          output({ notice: 'List permitted inference access. API keys stay in the foreground broker. Source approval is required before publication.' });
+          output({ notice: 'List permitted inference access. API keys are entered only inside the guest. Publish your listing and qualify its current tariff before your private evaluation.' });
           const input = await draft(o, false); output(input);
           if (await choose('Create this draft?', ['Create draft', 'Back']) === 0) output(await post('/providers/nodes', input));
         } else if (selection === 2) {
           const nodes = await get('/providers/nodes'); output(nodes);
-          if (nodes.length) { const selected = await choose('Manage listing', [...nodes.map(n => `${n.name} · ${n.approval} · ${n.status}`), 'Back']); if (selected < nodes.length) {
-            const action = await choose(nodes[selected].name, ['Inspect', 'Publish approved draft', 'Pause listing', 'Back']);
+          if (nodes.length) { const selected = await choose('Manage listing', [...nodes.map(n => `${n.name} · ${n.status}`), 'Back']); if (selected < nodes.length) {
+            const action = await choose(nodes[selected].name, ['Inspect', 'Publish draft', 'Pause listing', 'Back']);
             if (action < 3) output(action === 0 ? nodes[selected] : await post(`/providers/nodes/${nodes[selected].id}/${action === 1 ? 'publish' : 'pause'}`));
           } }
         } else if (selection === 3) { output(await get('/sessions')); output(await get('/receipts')); }
@@ -140,8 +140,8 @@ export async function run(args, dependencies = {}) {
   } else if (command === 'receipts') output(await get('/receipts'));
   else if (command === 'admin') {
     if (!local) throw new ClientError('browser_operator_auth_required');
-    if (sub === 'pending') output(await get('/admin/nodes'));
-    else if (sub === 'approve' || sub === 'revoke') output(await post(`/admin/nodes/${requireId(id)}/review`, { approved: sub === 'approve', reviewReference: o.review ?? 'local-development-only' }));
+    if (sub === 'nodes') output(await get('/admin/nodes'));
+    else if (sub === 'suspend' || sub === 'unsuspend') output(await post(`/admin/nodes/${requireId(id)}/suspension`, { suspended: sub === 'suspend', reason: o.review ?? 'local-development-only' }));
     else if (sub === 'grant') output(await post('/admin/grants', { userId: o.user, amount: o.amount }));
     else throw new ClientError('unknown_command');
   } else if (command === 'doctor') {

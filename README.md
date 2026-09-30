@@ -12,7 +12,7 @@ approval is separate from other AdRouter clients. Operator sign-in requests only
 `marketplace:operator` and also requires a current owner/operator account role.
 JSON command compatibility remains available with `--json`; see `--help`.
 
-The TUI covers listing creation and source review, hot/cold provider control,
+The TUI covers listing creation and operator suspension, hot/cold provider control,
 provider cumulative budgets, marketplace account/session/receipt views, buyer
 execution, runtime installation/verification, and operator evaluation/tariff and
 uncertain-outcome reconciliation. Runtime paths selected or installed through the
@@ -43,14 +43,16 @@ installation's granted scopes. `--profile operator login` requests operator scop
 
 ## Provider operation
 
-Choose a preset, edit public metadata, and supply a non-secret authorization
-reference. The DeepSeek preset uses the documented `deepseek-flash` request identifier. The official DeepSeek connector disables
+Choose a preset and edit public metadata. The DeepSeek preset uses the documented `deepseek-flash` request identifier. The official DeepSeek connector disables
 thinking explicitly because the marketplace wire contract carries text/tools,
 not reasoning history (see [DeepSeek thinking mode](https://api-docs.deepseek.com/guides/thinking_mode)). Test-credit prices are separate from USD upstream
-cost. Source approval and a qualified, versioned upstream tariff are required.
+cost. Explicit publication and a qualified, versioned upstream tariff are required.
 
-The guided flow verifies or installs the runtime, sets limits, waits for source approval,
-publishes the listing, and then attaches the guest console. Back/Cancel retain
+The guided flow verifies or installs the runtime, sets limits and budget, publishes
+the listing, checks tariff qualification, then attaches the guest console and confirms
+relay readiness. Publish your listing and qualify its current tariff before your private evaluation.
+Publication exposes listing metadata; ordinary purchases remain disabled on this private network.
+Operator suspension stops serving; clearing it leaves the listing paused until you republish. Back/Cancel retain
 in-progress form values during the session; submitted drafts remain on the backend.
 The original jellyfish panel uses a compact `adr v2` header when space is limited.
 
@@ -59,7 +61,7 @@ and restarts. Consumed spending and uncertain liabilities are never reset by a
 restart or timeout. Increases require confirmation and a matching revision.
 The independent USD 10 ceiling is only for live acceptance testing.
 
-Hot setup warms a pinned VM before publication or readiness. The terminal attaches
+Hot setup warms a pinned VM after publication and tariff qualification. The terminal attaches
 directly to hidden input inside that VM. After key entry, press Ctrl+D when the
 guest says it is ready to return to the dashboard. The host JavaScript application
 never reads the upstream key. Credentialed HTTP and TLS run in the guest; the host
@@ -103,8 +105,7 @@ cannot purchase an unqualified or stale listing. Repeat/idle evaluation is off;
 each run requires explicit budget confirmation and available node capacity.
 
 Local checks and synthetic Apple Silicon VM execution do not establish live
-provider acceptance. This milestone needs the non-secret supply reference,
-separate browser approvals, a real key entered only inside the guest, and reviewed
+provider acceptance. This milestone needs separate browser approvals, a real key entered only inside the guest, and reviewed
 upstream cancellation/billing evidence. The cumulative live ceiling is USD 10.
 
 Linux x86-64/KVM, separate hosts, ordinary beta accounts, registry candidates and
