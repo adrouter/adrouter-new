@@ -65,6 +65,13 @@ export async function proposeExport(workspace, changedFiles) {
   return Object.freeze({ id: randomUUID(), changes: Object.freeze(changes) });
 }
 
+export async function changeDiffs(workspace,changes) {
+  return Promise.all(changes.map(async c=>{
+    const before=c.before===null?'':(await safeRead(workspace.root,c.path,workspace.rootIdentity)).toString('utf8');
+    return [...(c.before===null?[]:before.split('\n').map(l=>'- '+l)),...(c.content===null?[]:c.content.split('\n').map(l=>'+ '+l))];
+  }));
+}
+
 export class ExportApproval {
   #used = false;
   constructor(proposal) { this.proposal = proposal; }
@@ -103,7 +110,8 @@ export async function exportSnapshot(workspace, finalFiles, approval) {
 
 // Discover paths using Git ignore semantics without opening excluded contents.
 export async function projectManifest(root) {
-  const canonical=await realpath(root);if(canonical!==resolve(root))throw Error('workspace_root_symlink_rejected');
+  let canonical;try{canonical=await realpath(root);}catch{throw Error('workspace_directory_inaccessible');}if(canonical!==resolve(root))throw Error('workspace_root_symlink_rejected');if(!(await lstat(canonical)).isDirectory())throw Error('workspace_directory_required');
+  const exclusions={categories:['credentials and hidden/private paths','ignored files','dependencies and generated output','links and nonregular files','files larger than 2 MiB'],counts:{private:0,generated:0,links:0,oversize:0,ignored:0}};
   let paths;
   try { paths=(await execute('git',['-C',canonical,'ls-files','-z','--cached','--others','--exclude-standard'],{maxBuffer:8*1024*1024,env:{PATH:'/opt/homebrew/bin:/usr/bin:/bin'}})).stdout.split('\0').filter(Boolean); }
   catch {
@@ -113,16 +121,16 @@ export async function projectManifest(root) {
       const matchers=[...inherited];
       for(const name of ['.gitignore','.ignore']){const path=dir?`${dir}/${name}`:name;const stat=await lstat(join(canonical,path)).catch(e=>{if(e.code==='ENOENT')return null;throw e;});if(stat){if(stat.isSymbolicLink()||!stat.isFile()||stat.nlink!==1)throw Error('workspace_ignore_rejected');const patterns=(await safeRead(canonical,path,{dev:String(identity.dev),ino:String(identity.ino)})).toString('utf8');matchers.push({base:dir,filter:ignore().add(patterns)});}}
       for(const e of await readdir(join(canonical,dir),{withFileTypes:true})){
-        const p=dir?`${dir}/${e.name}`:e.name;try{checkRelative(p);}catch{continue;}
-        if(['node_modules','dist','build','coverage','vendor','target','__pycache__'].includes(e.name)||e.isSymbolicLink())continue;
-        let ignored=false;for(const m of matchers){const rel=m.base?p.slice(m.base.length+1):p;const state=m.filter.test(rel+(e.isDirectory()?'/':''));if(state.ignored)ignored=true;if(state.unignored)ignored=false;}if(ignored)continue;
+        const p=dir?`${dir}/${e.name}`:e.name;try{checkRelative(p);}catch{exclusions.counts.private++;continue;}
+        if(['node_modules','dist','build','coverage','vendor','target','__pycache__'].includes(e.name)){exclusions.counts.generated++;continue;}if(e.isSymbolicLink()){exclusions.counts.links++;continue;}
+        let ignored=false;for(const m of matchers){const rel=m.base?p.slice(m.base.length+1):p;const state=m.filter.test(rel+(e.isDirectory()?'/':''));if(state.ignored)ignored=true;if(state.unignored)ignored=false;}if(ignored){exclusions.counts.ignored++;continue;}
         if(e.isDirectory())await walk(p,matchers);else if(e.isFile())paths.push(p);if(paths.length>5000)throw Error('workspace_selection_invalid');
       }
     };await walk();
   }
   const result=[];let total=0;
-  for(const path of [...new Set(paths)].sort()){try{checkRelative(path);}catch{continue;}if(path.split('/').some(p=>['node_modules','dist','build','coverage','target','__pycache__'].includes(p)))continue;const s=await lstat(join(canonical,path));if(s.isSymbolicLink()||!s.isFile()||s.nlink!==1||s.size>MAX_BYTES)continue;total+=s.size;if(total>128*1024*1024)throw Error('workspace_total_limit');result.push({path,bytes:s.size,resource:path==='AGENTS.md'||path.includes('/skills/')||path.includes('/extensions/')||path.endsWith('SKILL.md')});}
-  if(!result.length||result.length>5000)throw Error('workspace_selection_invalid');return {root:canonical,files:result,totalBytes:total};
+  for(const path of [...new Set(paths)].sort()){try{checkRelative(path);}catch{exclusions.counts.private++;continue;}if(path.split('/').some(p=>['node_modules','dist','build','coverage','target','__pycache__'].includes(p)))continue;const s=await lstat(join(canonical,path));if(s.isSymbolicLink()||!s.isFile()||s.nlink!==1){exclusions.counts.links++;continue;}if(s.size>MAX_BYTES){exclusions.counts.oversize++;continue;}total+=s.size;if(total>128*1024*1024)throw Error('workspace_total_limit');result.push({path,bytes:s.size,resource:path==='package.json'||path.endsWith('.sh')||path==='AGENTS.md'||path.includes('/skills/')||path.includes('/extensions/')||path.endsWith('SKILL.md')});}
+  if(!result.length)throw Error('workspace_import_empty');if(result.length>5000)throw Error('workspace_selection_invalid');return {root:canonical,files:result,totalBytes:total,exclusions};
 }
 
 export async function reviewAndApply(workspace, finalFiles, approve, {journalRoot, recover}={}) {

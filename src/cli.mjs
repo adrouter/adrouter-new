@@ -143,8 +143,10 @@ export async function run(args, dependencies = {}) {
     const sessionId=requireId(sub),{projectManifest}=await import('./workspace.mjs'),{openCodingBuyer}=await import('./coding-buyer.mjs');
     if(!o.workspace)throw new ClientError('workspace_required');const manifest=await projectManifest(o.workspace);
     if(!o.trust)throw new ClientError('reviewed_workspace_trust_required');
-    const buyer=await openCodingBuyer(network,sessionId,{root:manifest.root,files:manifest.files.map(f=>f.path),trusted:true,profile:o.profile??'buyer',resumeId:o.resume});
-    try{await buyer.interactive({prompt:o.prompt??'',mode:o.mode??'interactive'});output(await buyer.save());}finally{await buyer.close();}
+    const interactive=(o.mode??'interactive')==='interactive';let ui,coordinator;
+    if(interactive&&process.stdin.isTTY&&process.stdout.isTTY){const {TerminalUI}=await import('./tui-screen.mjs'),{TerminalCoordinator}=await import('./terminal-coordinator.mjs');ui=new TerminalUI();coordinator=new TerminalCoordinator(ui);}
+    const buyer=await openCodingBuyer(network,sessionId,{root:manifest.root,files:manifest.files.map(f=>f.path),trusted:true,profile:o.profile??'buyer',resumeId:o.resume,coordinator,...(coordinator?{approve:(a,p)=>coordinator.approve(a,p)}:{})});
+    try{if(ui)ui.start();const code=()=>buyer.interactive({prompt:o.prompt??'',mode:o.mode??'interactive'});if(ui)await ui.suspend(code);else await code();output({...await buyer.save(),...(buyer.lifecycle.approvalRequired?{status:'approval_required'}:{})});}finally{ui?.stop();output(await buyer.close());}
   } else if (command === 'sessions') output(await get('/sessions'));
   else if (command === 'session') {
     if (sub === 'stop') output(await post(`/sessions/${requireId(id)}/stop`));

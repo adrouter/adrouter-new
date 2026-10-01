@@ -4,12 +4,12 @@ let authority;
 export async function bridge(path, body, signal, raw=false) {
   if(!authority && path!=='/child') authority = configuration.capability;
   const response=await fetch(`${configuration.control}${path}`,{method:'POST',redirect:'error',headers:{authorization:`Bearer ${authority??configuration.capability}`,'content-type':'application/json'},body:JSON.stringify(body),signal});
-  if(!response.ok)throw Error('coding_bridge_rejected');return raw?response:response.json();
+  if(!response.ok){let code;try{code=(await response.json()).code;}catch{}throw Error(/^[a-z0-9_]{1,80}$/.test(code??'')?code:'coding_bridge_rejected');}return raw?response:response.json();
 }
 export async function bindChild(purpose, mutation=false) {const grant=await bridge('/child',{purpose,mutation});authority=grant.capability;return grant;}
 export async function authorize(request,signal) { const result=await bridge('/approval',{name:request.toolName,args:request.arguments,toolCallId:request.toolCallId},signal);return {allow:result.allow===true,reason:result.allow?'':'Action denied by user.'}; }
 export const config=configuration;
-globalThis.__adrCodingBridge=async(operation,value,signal)=>{if(operation==='approval')return authorize(value,signal);if(operation==='share'){if(!/^\/tmp\/adr-agent\/sessions\/[a-zA-Z0-9_.-]+\.jsonl$/.test(value.sessionFile))throw Error('sharing_path_invalid');value={text:await readFile(value.sessionFile,'utf8')};}return bridge(`/host/${operation}`,value,signal);};
+globalThis.__adrCodingBridge=async(operation,value,signal)=>{if(operation==='approval')return authorize(value,signal);if(operation==='operator_command')return bridge('/operator-command',value,signal);if(operation==='share'){if(!/^\/tmp\/adr-agent\/sessions\/[a-zA-Z0-9_.-]+\.jsonl$/.test(value.sessionFile))throw Error('sharing_path_invalid');value={text:await readFile(value.sessionFile,'utf8')};}return bridge(`/host/${operation}`,value,signal);};
 
 globalThis.__adrCodingAuthorize=authorize;
 

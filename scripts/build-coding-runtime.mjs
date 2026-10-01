@@ -21,9 +21,13 @@ try {
   // Both main execution and extensions/children re-enter this package's guest
   // entrypoint. There is no old CLI executable/installation prerequisite.
   await patch('packages/coding-agent/bundled/pi-subagents-0.68.0/src/runs/shared/pi-spawn.ts','return { command: "adrouter", args };','return { command: process.execPath, args: ["/workspace/.adr-runtime/guest/coding-entry.mjs", "--child", ...args] };');
+  await patch('packages/coding-agent/src/core/agent-session.ts', 'signal: this._bashAbortController.signal,', 'signal: (globalThis as any).__adrCodingBridge ? AbortSignal.any([this._bashAbortController.signal, AbortSignal.timeout(120000)]) : this._bashAbortController.signal,');
   // Commands have a bounded default independent of the console lifetime.
   await patch('packages/coding-agent/src/core/tools/bash.ts','if (timeout === undefined) return undefined;','if (timeout === undefined) timeout = 120;\n\tif (timeout > 600) throw new Error("Command timeout exceeds 600 seconds");');
   await patch('packages/coding-agent/src/core/agent-session.ts','const authorizer = this._toolAuthorizer;','const authorizer = (globalThis as any).__adrCodingAuthorize ?? this._toolAuthorizer;');
+  // Operator shell shortcuts use the same host review boundary as model commands.
+  await patch('packages/coding-agent/src/core/agent-session.ts', 'this._bashAbortController = new AbortController();', `if ((globalThis as any).__adrCodingBridge) { const permission = await (globalThis as any).__adrCodingBridge("operator_command", {command,timeout:120}); if (!permission.allow) throw new Error("Action denied by user."); }\n\t\tthis._bashAbortController = new AbortController();`);
+
   await patch('packages/coding-agent/bundled/btw-23017e9/index.ts','child = spawn("adrouter", args, {','child = spawn(process.execPath, ["/workspace/.adr-runtime/guest/coding-entry.mjs", "--child", ...args], {');
   await patch('packages/coding-agent/src/utils/clipboard.ts','export async function copyToClipboard(text: string): Promise<void> {','export async function copyToClipboard(text: string): Promise<void> { if ((globalThis as any).__adrCodingBridge) { await (globalThis as any).__adrCodingBridge("clipboard", {text}); return; }');
   await patch('packages/coding-agent/src/modes/interactive/interactive-mode.ts','private async handleShareCommand(): Promise<void> {','private async handleShareCommand(): Promise<void> { if ((globalThis as any).__adrCodingBridge) { const result = await (globalThis as any).__adrCodingBridge("share", {sessionFile:this.session.sessionFile}); this.showWarning(result.message); return; }');
