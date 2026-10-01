@@ -68,8 +68,8 @@ try {
     const archive=join(work,`${arch}.tar.gz`);await writeFile(archive,bytes);await mkdir(join(output,'tools',arch),{recursive:true});
     for(const file of ['rg','LICENSE-MIT']){const data=execFileSync('/usr/bin/tar',['-xOzf',archive,`${name}/${file}`],{maxBuffer:16*1024*1024});await writeFile(join(output,'tools',arch,file),data,{mode:file==='rg'?0o700:0o600});}
   }
-  const files={};const walk=async(dir='')=>{for(const e of await readdir(join(output,dir),{withFileTypes:true})){const p=dir?`${dir}/${e.name}`:e.name;if(e.isDirectory())await walk(p);else if(e.isFile())files[p]=hash(await readFile(join(output,p)));else throw Error('coding_payload_link_rejected');}};await walk();
-  const metadata={schemaVersion:1,repository:'https://github.com/adrouter/adrouterCLI',revision,archiveSha256:hash(archive),adaptations,files};
+  const files={};const walk=async(dir='')=>{for(const e of await readdir(join(output,dir),{withFileTypes:true})){const p=dir?`${dir}/${e.name}`:e.name;if(e.name==='.npmignore'){await rm(join(output,p));continue;}if(e.isDirectory())await walk(p);else if(e.isFile())files[p]=hash(await readFile(join(output,p)));else throw Error('coding_payload_link_rejected');}};await walk();
+  const metadata={schemaVersion:1,repository:'https://github.com/adrouter/adrouterCLI',revision,archiveSha256:hash(archive),adaptations,prunedMetadata:['**/.npmignore'],files};
   await writeFile(join(output,'provenance.json'),JSON.stringify(metadata,null,2)+'\n');
   console.log(`Pinned coding runtime built: ${revision}, ${Object.keys(files).length} files`);
 } finally {await rm(work,{recursive:true,force:true});}

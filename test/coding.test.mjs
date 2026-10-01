@@ -39,3 +39,9 @@ test('manifest excludes credentials, dependency/generated folders and symlink es
  const root=await realpath(await mkdtemp(join(tmpdir(),'adr-manifest-test-')));
  try{await writeFile(join(root,'main.py'),'synthetic');await writeFile(join(root,'.env'),'synthetic forbidden fixture');await mkdir(join(root,'node_modules'));await writeFile(join(root,'node_modules','ignored.js'),'synthetic');await symlink('/etc',join(root,'escape'));const m=await projectManifest(root);assert.deepEqual(m.files.map(f=>f.path),['main.py']);}finally{await rm(root,{recursive:true,force:true});}
 });
+
+
+test('non-Git project manifests honor scoped ignore patterns and negations',async()=>{
+ const root=await realpath(await mkdtemp(join(tmpdir(),'adr-ignore-test-')));
+ try{await writeFile(join(root,'.gitignore'),'ignored.txt\n*.tmp\n!keep.tmp\n');await writeFile(join(root,'main.py'),'synthetic');await writeFile(join(root,'ignored.txt'),'synthetic excluded');await writeFile(join(root,'scratch.tmp'),'synthetic excluded');await writeFile(join(root,'keep.tmp'),'synthetic retained');const m=await projectManifest(root);assert.deepEqual(m.files.map(f=>f.path),['.gitignore','keep.tmp','main.py']);}finally{await rm(root,{recursive:true,force:true});}
+});

@@ -1,6 +1,6 @@
 {
   "name": "@adrouter/adr-cli",
-  "version": "0.1.0-alpha.7",
+  "version": "0.1.0-alpha.8",
   "private": true,
   "description": "adr-v2 test-credit compute marketplace terminal",
   "type": "module",
@@ -42,6 +42,7 @@
     "registry": "https://registry.npmjs.org/"
   },
   "dependencies": {
-    "ajv": "8.20.0"
+    "ajv": "8.20.0",
+    "ignore": "7.0.5"
   }
 }
