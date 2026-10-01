@@ -74,6 +74,16 @@ key before that deadline. Expiry releases credits without an inference charge.
 Keep the foreground TUI open. Back returns to its menu while serving continues;
 Stop or Exit tears down owned guests. A later start requires key entry again.
 
+Paused listings expose **Delete paused listing** in My provider listings. Cancel
+is the default; confirmed deletion is permanent and cannot be republished. All
+linked sessions and accounting must finish first. Receipts and immutable listing
+history remain, and deletion does not reset spending or uncertain liabilities.
+The command equivalent is `adr-cli --profile provider provider delete NODE_ID --confirm-delete`.
+
+Browse and quote review refresh current network policy. Diagnostics shows public
+admissions and private buyer rehearsal separately; approved private buyers can
+reserve hot listings while public admissions remain disabled.
+
 ## Buyer execution and export
 
 Select workspace files and accept bounded access. Tools run exclusively in a

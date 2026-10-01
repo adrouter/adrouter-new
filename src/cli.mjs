@@ -1,10 +1,10 @@
-import { MarketplaceDraft, MarketplaceListing, MarketplaceNetworkConfig, MarketplaceQuoteRequest } from './generated/validators.mjs';
+import { MarketplaceDraft, MarketplaceListing, MarketplaceNetworkConfig, MarketplaceQuoteRequest, ProviderNodeDeletion } from './generated/validators.mjs';
 import { randomUUID } from 'node:crypto';
 import { Network, AuthStore, ClientError } from './network.mjs';
 import { ask, choose, render } from './terminal.mjs';
 import { SandboxRuntime } from './runtime.mjs';
 
-const booleanOptions = new Set(['json', 'local', 'accept', 'help', 'no-key', 'operator', 'private-rehearsal', 'acknowledge-provisional', 'bounded','coding','trust']);
+const booleanOptions = new Set(['json', 'local', 'accept', 'help', 'no-key', 'operator', 'private-rehearsal', 'acknowledge-provisional', 'bounded','coding','trust','confirm-delete']);
 const valueOptions = new Set(['profile', 'network', 'actor', 'name', 'model', 'endpoint', 'supply', 'availability', 'input-rate', 'output-rate', 'budget', 'max-output', 'duration', 'after', 'idempotency-key', 'review', 'user', 'amount', 'max-calls','workspace','mode','resume','prompt','context-window']);
 export function parseArgs(args) {
   const options = {}; const words = [];
@@ -28,6 +28,7 @@ export const usage = `adr-cli — adr-v2 compute marketplace (test credits, no c
   connect LISTING_ID --budget UNITS [--accept]
   sessions | session inspect|resume|stop SESSION_ID | receipts
   provider create | listings | inspect NODE_ID | publish NODE_ID | pause NODE_ID | stop NODE_ID | serve NODE_ID
+  provider delete NODE_ID --confirm-delete
   doctor
 
 Provider create flags: --name --model --endpoint --supply
@@ -35,6 +36,8 @@ Provider create flags: --name --model --endpoint --supply
 Public metadata only. Never put an API key in flags, a URL or listing text.
 Provider serving: provider serve NODE_ID --max-output 1024
   Hot listings serve continuously in the foreground; --bounded retains evaluation limits.
+Provider deletion: permanently removes a paused listing after all linked work settles.
+  Receipts and accounting history remain. Deletion cannot restore or republish a listing.
 Private connect: --private-rehearsal --acknowledge-provisional --budget 100 --accept
   Requires the pinned VM runtime and hidden guest-only credential entry.
 Coding: code SESSION_ID --workspace PATH --trust [--mode print|json|rpc] [--prompt TASK] [--resume SAVED_ID]
@@ -122,6 +125,13 @@ export async function run(args, dependencies = {}) {
     else if (sub === 'listings') output(await get('/providers/nodes'));
     else if (sub === 'inspect') output(await get(`/providers/nodes/${requireId(id)}`));
     else if (['publish', 'pause', 'stop'].includes(sub)) output(await post(`/providers/nodes/${requireId(id)}/${sub}`));
+    else if (sub === 'delete') {
+      const nodeId = requireId(id);
+      if (!o['confirm-delete']) throw new ClientError('node_delete_confirmation_required');
+      const result = await post(`/providers/nodes/${nodeId}/delete`, { confirm: true });
+      if (!ProviderNodeDeletion(result) || result.id !== id) throw new ClientError('invalid_network_response');
+      output(result);
+    }
     else if (sub === 'serve') {
       requireId(id);
       if (json && !o['no-key']) throw new ClientError('interactive_terminal_required');

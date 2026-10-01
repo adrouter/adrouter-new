@@ -114,7 +114,7 @@ export class Network {
     const identity = await this.store.withLock(async () => {
       const identity = await this.store.read();
       if (!identity || identity.origin !== this.origin) throw new ClientError('login_required');
-      const cleanup = options.method === 'POST' && /^\/v2\/(?:providers\/nodes\/[^/]+\/(?:pause|stop)|sessions\/[^/]+\/stop|admin\/evaluation-sessions\/[^/]+\/stop|admin\/sessions\/[^/]+\/release-execution)$/.test(path);
+      const cleanup = options.method === 'POST' && /^\/v2\/(?:providers\/nodes\/[^/]+\/(?:pause|stop|delete)|sessions\/[^/]+\/stop|admin\/evaluation-sessions\/[^/]+\/stop|admin\/sessions\/[^/]+\/release-execution)$/.test(path);
       if (cleanup) return identity;
       if (identity.refreshPending) throw new ClientError('refresh_outcome_unknown_reenroll_required');
       if (Date.now() >= identity.expiresAt - 30000) {

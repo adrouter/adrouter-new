@@ -6,7 +6,7 @@ import { spawn } from 'node:child_process';
 import { TerminalCoordinator } from './terminal-coordinator.mjs';
 import { TerminalUI } from './tui-screen.mjs';
 import { AuthStore, Network, ClientError, networkOrigin, safeText } from './network.mjs';
-import { MarketplaceDraft, MarketplaceListing, MarketplaceNetworkConfig } from './generated/validators.mjs';
+import { MarketplaceDraft, MarketplaceListing, MarketplaceNetworkConfig, ProviderNodeDeletion } from './generated/validators.mjs';
 
 export const accountingLines=s=>s?[`State: ${words(s.state)}`,`Reserved ${s.funded} · Charged ${s.charged} · Refunded ${s.refunded} test credits`,`Unresolved liability: ${s.reserved}`,s.state==='settlement_pending'?'Receipt pending: upstream outcome is unresolved.':`Settlement: ${words(s.state)}`]:['Receipt pending: remote stop/accounting could not be confirmed. Inspect My sessions.'];
 const item = (value, label, detail = '', disabled = false) => ({ value, label, detail, disabled });
@@ -15,6 +15,13 @@ const integer = (min, max) => value => /^(0|[1-9][0-9]*)$/.test(value) && Number
 const date = value => typeof value === 'number' ? new Date(value).toLocaleString() : '—';
 const words = value => String(value ?? '—').replaceAll('_', ' ');
 const problems = {
+  node_delete_requires_paused: 'Pause this listing before deleting it. A serving listing cannot be deleted.',
+  node_delete_requires_settlement: 'This listing still has unfinished sessions or accounting. Finish settlement before deleting it; held amounts remain unchanged.',
+  node_deleted: 'This listing has been permanently deleted and cannot be restored or republished.',
+  network_policy_unavailable: 'Network policy is unavailable. Refresh Network and diagnostics, then try again.',
+  private_rehearsal_disabled: 'This network has purchases disabled and private buyer rehearsal is not enabled.',
+  cold_private_rehearsal_unavailable: 'Cold buyer activation is unavailable in private rehearsal. Ask the provider to warm the listing.',
+  quote_policy_changed: 'Network policy or listing capabilities changed while you reviewed the session. Open the listing again and review the current limits.',
   workspace_binary_file_rejected:'Project file: the private snapshot format supports UTF-8 text. Binary assets remain on the host.',
   workspace_directory_inaccessible:'Project directory: enter a readable directory path. Your entered value is retained.',
   workspace_directory_required:'Project directory: choose a directory, rather than a file.',
@@ -64,6 +71,15 @@ export const errorLines = error => {
 export function listingLines(l) {
   return [l.name, `Model: ${l.model}`, `Supply: ${words(l.supplyClass)} · ${l.availability}`, `Availability: ${l.ready ? 'Hot · ready' : l.controlOnline && l.availability === 'cold' ? 'Cold · control online · 120 seconds to activate' : 'Offline'}`, `Input: ${l.inputRate} test credits / 1M tokens`, `Output: ${l.outputRate} test credits / 1M tokens`, 'Test credits have no cash value.', l.evaluation ? `Evaluation: ${l.evaluation.passed ? 'qualified' : 'provisional'} · ${l.evaluation.sampleCount} samples · ${l.evaluation.elapsedMs} ms` : 'Evaluation: not available', `Published: ${date(l.publishedAt)}`];
 }
+export function quoteAccess(config,listing) {
+  if(!config)return {disabled:true,code:'network_policy_unavailable',detail:problems.network_policy_unavailable};
+  if(!config.admissions&&!config.privateRehearsal)return {disabled:true,code:'private_rehearsal_disabled',detail:problems.private_rehearsal_disabled};
+  if(listing.ready)return {disabled:false,detail:'Review exact limits before reserving.'};
+  if(listing.availability==='cold'&&config.privateRehearsal&&!config.admissions)return {disabled:true,code:'cold_private_rehearsal_unavailable',detail:problems.cold_private_rehearsal_unavailable};
+  if(config.admissions&&listing.availability==='cold'&&listing.controlOnline)return {disabled:false,detail:'Review activation and session limits before reserving.'};
+  return {disabled:true,code:'provider_offline',detail:'The provider must start its VM and authenticated relay before you can reserve compute.'};
+}
+
 export const providerFields = [
   { name: 'name', label: 'Listing name', validate: required, help: 'A public name that helps buyers identify your compute.' },
   { name: 'model', label: 'Request model ID', validate: required, help: 'Exact upstream request ID. Defaults come from the selected setup preset.' },
@@ -76,7 +92,7 @@ export const providerFields = [
 
 export async function runTui(options = {}, dependencies = {}) {
   const ui = dependencies.ui ?? new TerminalUI(); let store = dependencies.store ?? new AuthStore(undefined, options.profile ?? 'default');
-  let network = dependencies.network; let config; let runtimeConfig; const providersRunning = new Map(); const setupDrafts = new Map(); const limitDrafts = new Map(); let currentProviderId;let verifiedIdentity,identityAt=0;
+  let network = dependencies.network; let config; let runtimeConfig; const providersRunning = new Map(); const setupDrafts = new Map(); const limitDrafts = new Map(); const deletionKeys = new Map(); let currentProviderId;let verifiedIdentity,identityAt=0;
   const display=new MarketplaceDisplay(()=>network,lines=>{ui.sidebar=lines;if(!ui.pending||ui.started)ui.draw?.();});
   const clearIdentity=()=>{verifiedIdentity=undefined;identityAt=0;ui.context=`Signed out · ${store.profile} · ${network.origin}`;};
   const refreshIdentity=async scope=>{
@@ -233,10 +249,32 @@ export async function runTui(options = {}, dependencies = {}) {
         item('launch', node.availability === 'cold' ? 'Start cold control' : 'Launch hot VM', 'Keep this TUI open while providing.', providersRunning.has(node.id)),
         ...(providersRunning.get(node.id)?.status.activation.length ? [item('activate', 'Activate reserved buyer session', 'Launch the VM and enter the key before the 120-second deadline.')] : []),
         item('publish', 'Publish listing', 'Exposes listing metadata as a new immutable revision.', node.suspended),
-        item('pause', 'Pause listing'), item('stop', 'Stop serving and close sessions'), item('refresh', 'Refresh status'), item('back', 'Back'),
+        item('pause', 'Pause listing'), item('stop', 'Stop serving and close sessions'),
+        ...(node.status === 'paused' ? [item('delete', 'Delete paused listing', providersRunning.has(node.id) ? 'Stop serving in this terminal first.' : 'Permanent removal requires finished sessions and settlement. Receipts remain available.', providersRunning.has(node.id))] : []),
+        item('refresh', 'Refresh status'), item('back', 'Back'),
       ], { lines: [`Model: ${node.model}`, `Suspended: ${node.suspended ? 'yes' : 'no'} · Listing: ${node.status}`, `VM: ${providersRunning.get(node.id)?.status.guestReady ? 'ready' : 'not running'}`, `Backend: ${node.ready && Number(node.leaseUntil)>Date.now() && providersRunning.get(node.id)?.status.guestReady && providersRunning.get(node.id)?.status.relayReady ? 'Hot · Ready' : node.availability === 'cold' && Number(node.leaseUntil) > Date.now() ? 'cold · control online' : 'offline'}`, `Activity: ${providersRunning.get(node.id)?.status.calls??0} dispatched requests`, `Remaining upstream authority: ${formatUsd(exposure.remainingMicrousd)}`, `Outstanding exposure: ${formatUsd(exposure.outstandingMicrousd)}`, `Listing reference: ${node.id}`] });
       currentProviderId = undefined; created = false;
       if (!selection || selection === 'back') return;
+      if (selection === 'delete') {
+        if (node.status !== 'paused' || providersRunning.has(node.id)) { await ui.page('Stop serving first', ['Pause the listing and stop its running provider before deletion.']); continue; }
+        const confirmed = await ui.menu('Delete paused listing?', [item(false, 'Cancel'), item(true, 'Delete permanently')], { lines: [node.name, 'This listing will disappear permanently from My provider listings and cannot be republished.', 'Existing receipts and accounting history remain available.', 'Unfinished sessions or settlement block deletion.'] }) === true;
+        if (!confirmed) continue;
+        if (!deletionKeys.has(node.id)) deletionKeys.set(node.id, randomUUID());
+        const deleted = await attempt(async () => {
+          const result = await post(`/providers/nodes/${node.id}/delete`, { confirm: true }, deletionKeys.get(node.id));
+          if (!ProviderNodeDeletion(result) || result.id !== node.id) throw new ClientError('invalid_network_response');
+          return result;
+        });
+        if (deleted) {
+          deletionKeys.delete(node.id); limitDrafts.delete(node.id);
+          await ui.page('Listing deleted', ['The paused listing has been permanently removed. Existing receipts and accounting history are retained.']);
+          return;
+        }
+        // A lost response is never blindly retried. Refresh the provider view;
+        // the retained key is reused only after a new explicit confirmation.
+        if (!(await get('/providers/nodes')).some(value => value.id === node.id)) return;
+        continue;
+      }
       await attempt(async () => {
         if (selection === 'setup') await guidedProvider(node);
         else if (selection === 'launch') await guidedProvider(node);
@@ -256,7 +294,8 @@ export async function runTui(options = {}, dependencies = {}) {
     }
   }
   async function buy(listing) {
-    actor('buyer');
+    actor('buyer');config=await get('/network/config',true);
+    let access=quoteAccess(config,listing);if(access.disabled)throw new ClientError(access.code);
     const coding=!!config?.capabilities?.includes('coding_v1')&&listing.capabilities?.includes('coding_v1');
     const bounds = await ui.form('Choose a bounded test session', [
       { name: 'budget', label: 'Maximum test credits', default: '100', validate: integer(1, 1000000), help: 'The server reserves this ceiling, then refunds known unused credits.' },
@@ -267,6 +306,9 @@ export async function runTui(options = {}, dependencies = {}) {
     const privateMode = !config.admissions && config.privateRehearsal;
     if (privateMode && !await confirm('Private rehearsal · provisional qualification', ['This provider has provisional qualification. This session does not establish full acceptance.', 'Coding quotes disclose your chosen time, output and credit limits. Main prompts, compaction, BTW and subagents share the allowance.'], 'Acknowledge and request private session')) return;
     const mode = privateMode ? { mode: 'private_rehearsal', acknowledgeProvisional: true } : {};
+    config=await get('/network/config',true);listing=await get(`/listings/${listing.id}`,true);
+    access=quoteAccess(config,listing);if(access.disabled)throw new ClientError(access.code);
+    if(privateMode!==(!config.admissions&&config.privateRehearsal)||coding!==(!!config.capabilities?.includes('coding_v1')&&listing.capabilities?.includes('coding_v1')))throw new ClientError('quote_policy_changed');
     const quote = await post('/quotes', { listingId: listing.id, maximumCharge: bounds.budget, maxOutputTokens: Number(bounds.output), durationSeconds: Number(bounds.duration), ...(coding?{protocol:'coding_v1',requestLimit:100}:{}), ...mode });
     if (!await confirm('Review your quote', [...listingLines(listing), '', `Maximum reserved: ${quote.maximumCharge} test credits`, `Output limit: ${quote.maxOutputTokens} tokens`, `Session duration: ${quote.durationSeconds} seconds`, `Shared inference dispatches: ${quote.requestLimit??5}`, `Quote expires: ${date(quote.expiresAt)}`, `Cold activation deadline: ${quote.activationDeadlineSeconds || 0} seconds. Expired activation refunds the reservation.`], 'Accept and reserve test credits')) return;
     const session = await post('/sessions', { quoteId: quote.id, accept: true, ...mode }, `accept_${quote.id}`);
@@ -276,7 +318,7 @@ export async function runTui(options = {}, dependencies = {}) {
     } else await sessionDetail(session.id);
   }
   async function browse() {
-    actor('buyer'); let filters = { model: '', supplyClass: 'any', availability: 'any' }; let cursor;
+    actor('buyer');config=await get('/network/config',true); let filters = { model: '', supplyClass: 'any', availability: 'any' }; let cursor;
     for (;;) {
       const query = new URLSearchParams();
       for (const [key, value] of Object.entries(filters)) if (value && value !== 'any') query.set(key, value);
@@ -289,7 +331,8 @@ export async function runTui(options = {}, dependencies = {}) {
       else if (selection === 'refresh') cursor = undefined;
       else await attempt(async () => {
         const listing = await get(`/listings/${selection}`, true);
-        const action = await ui.menu('Compute details', [item('buy', 'Get a test-credit quote', listing.ready ? 'Review exact limits before reserving.' : listing.availability==='cold'&&config.privateRehearsal?'Cold buyer activation is unavailable in private rehearsal. Ask the provider to warm the listing.':'The provider must start before a quote can be accepted.', !(config?.admissions || config?.privateRehearsal) || !(listing.ready || (config.admissions && listing.availability === 'cold' && listing.controlOnline))), item('back', 'Back')], { lines: listingLines(listing) });
+        config=await get('/network/config',true);const access=quoteAccess(config,listing);
+        const action = await ui.menu('Compute details', [item('buy','Get a test-credit quote',access.detail,access.disabled),item('back','Back')],{lines:listingLines(listing)});
         if (action === 'buy') await buy(listing);
       });
     }
@@ -531,7 +574,7 @@ export async function runTui(options = {}, dependencies = {}) {
           if (action === 'logout' && await confirm('Sign out?', ['Hosted sign-out revokes the installation before clearing local state.'])) {await ui.task('Signing out', () => network.logout());clearIdentity();}
         } else if (selection === 'status') {
           config = await get('/network/config', true);
-          await ui.page('Network and implementation status', [network.origin, `Admissions: ${config.admissions ? 'enabled' : 'disabled'}`, `Private owner evaluation: ${config.privateOwnerEvaluation ? 'enabled for designated owner' : 'disabled'}`, `Relay: ${words(config.relay)}`, `Buyer agent: ${words(config.agentExecution)}`, 'Provider: guest-only key entry; cold activation deadline 120 seconds.', 'Evaluation results remain provisional until every qualification check is verified. Reviewed export preserves host originals.', 'Runtime acceptance and actual provider acceptance are separate gates.']);
+          await ui.page('Network and implementation status', [network.origin, `Public admissions: ${config.admissions ? 'enabled' : 'disabled'}`, `Private buyer rehearsal: ${config.privateRehearsal ? 'enabled · hot listings can be reserved by the approved buyer' : 'disabled'}`, `Private owner evaluation: ${config.privateOwnerEvaluation ? 'enabled for designated owner' : 'disabled'}`, `Relay: ${words(config.relay)}`, `Buyer agent: ${words(config.agentExecution)}`, 'Provider: guest-only key entry; cold activation deadline 120 seconds.', 'Evaluation results remain provisional until every qualification check is verified. Reviewed export preserves host originals.', 'Runtime acceptance and actual provider acceptance are separate gates.']);
         }
       });
     }
