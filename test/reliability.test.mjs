@@ -67,6 +67,8 @@ test('host broker only approves validated completed calls, rejects tampering/reu
  assert.equal((await send('/approval',{name:'write',toolCallId:'blue',args:{path:'index.html',content:'blue'}})).status,200);assert.equal(approve,1);
  assert.equal((await send('/approval',{name:'write',toolCallId:'blue',args:{path:'index.html',content:'blue'}})).status,400);assert.equal(approve,1);
  const first=await buyer.close(),again=await buyer.close();assert.deepEqual(first,again);assert.equal(removes,1);assert.equal(first.firstFailure.code,'network_unavailable_outcome_unknown');
+ buyer=await openCodingBuyer(network,id,{root,files:['index.html'],profile,runtime,intervals:{status:100000,checkpoint:100000,keepalive:100000}});
+ assert.equal((await send('/inference',{})).status,200);const headless=await send('/approval',{name:'write',toolCallId:'blue',args:{path:'index.html',content:'blue'}});assert.equal(headless.status,400);assert.ok(headless.body.includes('action_approval_required'));assert.equal(buyer.lifecycle.approvalRequired,true);assert.equal(approve,1,'headless request never manufactures a review decision');
  }finally{await buyer?.close();await rm(root,{recursive:true,force:true});await rm(join((await import('node:os')).homedir(),'.adr-v2','profiles',profile),{recursive:true,force:true});}
 });
 
