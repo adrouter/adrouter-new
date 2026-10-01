@@ -47,7 +47,7 @@ if (process.argv[2] !== '--worker') {
         seen.add(frame.requestId); if(seen.size>4096)seen.delete(seen.values().next().value); attempted++;
         const timeout = AbortSignal.any([abort.signal, AbortSignal.timeout(Math.max(1, Math.min(120000, frame.deadlineUnixMs - Date.now())))]);
         lastTiming = undefined;
-        const result = await upstreamInference(node, key, frame, timeout, timing => { lastTiming={requestId:frame.requestId,...timing}; });
+        const result = await upstreamInference(node, key, frame, timeout, timing => { lastTiming={requestId:frame.requestId,...timing}; }, event=>controlRequest('/delta',event));
         if(lastTiming)await controlRequest('/timing',lastTiming);
         lastTiming=undefined;
         await controlRequest('/result', result);

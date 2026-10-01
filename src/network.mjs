@@ -1,3 +1,4 @@
+import { readCodingStream } from './coding-wire.mjs';
 import { createHash, createPrivateKey, generateKeyPairSync, randomUUID, sign } from 'node:crypto';
 import { constants } from 'node:fs';
 import { readFile, mkdir, lstat, open, rename, unlink, realpath } from 'node:fs/promises';
@@ -73,12 +74,12 @@ export class Network {
   constructor({ origin, local = false, actor = 'buyer', store = new AuthStore(), fetcher = fetch }) {
     this.origin = networkOrigin(origin, local); this.local = local; this.actor = actor; this.store = store; this.fetcher = fetcher;
   }
-  async send(path, { method = 'GET', body, identity, token, key, signal } = {}) {
+  async send(path, { method = 'GET', body, identity, token, key, signal, onEvent } = {}) {
     if (!path.startsWith('/') || path.startsWith('//')) throw new ClientError('request_path_rejected');
     const bytes = body === undefined ? undefined : JSON.stringify(body);
     let nonce;
     for (let attempt = 0; attempt < 2; attempt++) {
-      const headers = { accept: 'application/json', ...(bytes === undefined ? {} : { 'Content-Type': 'application/json' }), ...(this.local ? { 'X-Adr-Local-Actor': this.actor } : {}), ...(key ? { 'Idempotency-Key': key } : {}) };
+      const headers = { 'X-Adr-Coding-Protocol':'coding_v1', accept: onEvent ? 'application/x-ndjson' : 'application/json', ...(bytes === undefined ? {} : { 'Content-Type': 'application/json' }), ...(this.local ? { 'X-Adr-Local-Actor': this.actor } : {}), ...(key ? { 'Idempotency-Key': key } : {}) };
       if (identity) {
         headers.DPoP = proof(identity, method, this.origin + path, bytes, nonce, token);
         if (bytes !== undefined) headers['Content-Digest'] = `sha-256=:${digest(bytes).toString('base64')}:`;
@@ -87,6 +88,7 @@ export class Network {
       let response;
       try { response = await this.fetcher(this.origin + path, { method, headers, body: bytes, redirect: 'error', signal: signal ? AbortSignal.any([signal, AbortSignal.timeout(135000)]) : AbortSignal.timeout(135000) }); }
       catch { throw new ClientError(signal?.aborted ? 'cancelled' : 'network_unavailable_outcome_unknown'); }
+      if (response.ok && onEvent) return readCodingStream(response,onEvent);
       const reader = response.body?.getReader(); let size = 0; const chunks = [];
       try { if (reader) for (;;) { const { value, done } = await reader.read(); if (done) break; size += value.length; if (size > 1024 * 1024) { await reader.cancel(); throw new ClientError('response_too_large'); } chunks.push(Buffer.from(value)); } }
       finally { reader?.releaseLock(); }

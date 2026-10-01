@@ -2,7 +2,7 @@
   "schemaVersion": 1,
   "repository": "adrouter/adrouter-new",
   "package": "@adrouter/adr-cli",
-  "version": "0.1.0-alpha.1",
+  "version": "0.1.0-alpha.7",
   "candidateChannel": "candidate",
   "finalChannel": "alpha",
   "githubDraftThroughAcceptance": true,
@@ -19,6 +19,9 @@
     "deployed-component-immutable-identities",
     "installed-candidate-darwin-arm64-real-providers",
     "installed-candidate-linux-x64-real-kvm",
-    "anonymous-exact-version-install"
+    "anonymous-exact-version-install",
+    "coding-parity",
+    "streaming-shared-allowance",
+    "reviewed-apply-recovery"
   ]
 }

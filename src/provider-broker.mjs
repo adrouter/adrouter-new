@@ -1,3 +1,4 @@
+import { UpstreamCodingStream } from './coding-wire.mjs';
 import { connect as tlsConnect } from 'node:tls';
 import { Agent, request as httpsRequest } from 'node:https';
 import { request as httpRequest } from 'node:http';
@@ -43,12 +44,12 @@ export function upstreamBody(node, frame) {
   const plainDeepSeek = url.protocol === 'https:' && url.hostname === 'api.deepseek.com';
   return { model: node.model, messages: frame.messages, max_tokens: frame.maxOutputTokens,
     ...(frame.tools?.length ? { tools: frame.tools } : {}),
-    ...(plainDeepSeek ? { thinking: { type: 'disabled' } } : {}), stream: false };
+    ...(plainDeepSeek ? { thinking: { type: frame.thinking ? 'enabled' : 'disabled' } } : {}), stream: frame.protocol === 'coding_v1', ...(frame.protocol === 'coding_v1' ? {stream_options:{include_usage:true}} : {}) };
 }
 // Fixed approved endpoint, model and headers. Neither relay nor guest can choose
 // a URL, header, redirect, tool or arbitrary proxy target. DNS is checked at the
 // connection's lookup, not in an earlier rebindable preflight.
-export function upstreamInference(node, key, frame, signal, onTiming = () => {}) {
+export function upstreamInference(node, key, frame, signal, onTiming = () => {}, onEvent = () => {}) {
   const { url, loopback } = validateBinding(node);
   const authority = frame.upstreamBudget;
   const inputBound = Buffer.byteLength(JSON.stringify({ messages: frame.messages, ...(frame.tools?.length ? { tools: frame.tools } : {}) })) + frame.messages.length * 64 + 1024;
@@ -76,11 +77,14 @@ export function upstreamInference(node, key, frame, signal, onTiming = () => {})
     }, response => {
       statusCode=response.statusCode; headersMs=Date.now()-started;
       if (response.statusCode !== 200) { response.resume(); fail(); return; }
-      const chunks = []; let size = 0;
-      response.on('data', chunk => { size += chunk.length; if (size > 1024 * 1024) { response.destroy(); fail(); } else chunks.push(chunk); });
+      const stream = frame.protocol === 'coding_v1' ? new UpstreamCodingStream(frame.requestId,frame.tools.map(t=>t.function.name),onEvent) : undefined;
+      const chunks = []; let size = 0; let queue=Promise.resolve();
+      response.on('data', chunk => { if(stream){response.pause();queue=queue.then(()=>stream.feed(chunk)).then(()=>response.resume()).catch(()=>{response.destroy();fail();});return;} size += chunk.length; if (size > 1024 * 1024) { response.destroy(); fail(); } else chunks.push(chunk); });
       response.once('error', fail);
-      response.once('end', () => {
+      response.once('end', async () => {
         try {
+          await queue;
+          if(stream){const result=stream.result();if(!Number.isSafeInteger(result.inputTokens)||result.inputTokens<0||result.inputTokens>inputBound||!Number.isSafeInteger(result.outputTokens)||result.outputTokens<0||result.outputTokens>frame.maxOutputTokens||(!frame.thinking&&result.thinking))throw Error('usage_or_capability_invalid');timing('succeeded');resolve({type:'result',requestId:frame.requestId,...result});return;}
           const data = JSON.parse(Buffer.concat(chunks).toString('utf8'));
           const text = data.choices?.[0]?.message?.content ?? '';
           const toolCalls = data.choices?.[0]?.message?.tool_calls ?? [];

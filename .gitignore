@@ -5,3 +5,5 @@ output/
 coverage/
 *.tgz
 .DS_Store
+
+coding-runtime/

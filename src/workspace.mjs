@@ -1,19 +1,19 @@
 import { constants } from 'node:fs';
-import { execFile } from 'node:child_process';
+import { spawn, execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 import { fileURLToPath } from 'node:url';
 const execute = promisify(execFile);
-import { lstat, open, realpath, mkdir, mkdtemp, writeFile, rm } from 'node:fs/promises';
+import { readFile, readdir, lstat, open, realpath, mkdir, mkdtemp, writeFile, rm } from 'node:fs/promises';
 import { createHash, randomUUID } from 'node:crypto';
 import { resolve, relative, dirname, join, isAbsolute } from 'node:path';
 import { tmpdir } from 'node:os';
 
 const MAX_BYTES = 2 * 1024 * 1024;
 const hash = bytes => createHash('sha256').update(bytes).digest('hex');
-const forbidden = /(^\.|credentials?|secrets?|id_rsa|id_ed25519|\.pem$|\.key$|\.p12$|\.pfx$|\.tgz$|\.tar$|\.zip$|\.sqlite$|\.db$)/i;
+const forbidden = /(^auth\.json$|^\.npmrc$|^\.pypirc$|^\.netrc$|^\.|credentials?|secrets?|id_rsa|id_ed25519|\.pem$|\.key$|\.p12$|\.pfx$|\.tgz$|\.tar$|\.zip$|\.sqlite$|\.db$)/i;
 
 function checkRelative(path) {
-  if (typeof path !== 'string' || !path || isAbsolute(path) || path.includes('\\') || path.includes('\0') || path.includes(':') || path.split('/').some(part => part === '..' || part === '.' || !part || forbidden.test(part))) throw new Error('workspace_path_rejected');
+  if (typeof path !== 'string' || !path || isAbsolute(path) || path.includes('\\') || path.includes('\0') || path.includes(':') || path.split('/').some(part => part === '..' || part === '.' || !part || (forbidden.test(part) && !['.gitignore','.editorconfig','.adrouter'].includes(part)))) throw new Error('workspace_path_rejected');
 }
 
 async function safeRead(root, path, identity) {
@@ -28,7 +28,7 @@ async function safeRead(root, path, identity) {
 export async function importWorkspace(root, files) {
   const canonical = await realpath(root);
   if (canonical !== resolve(root)) throw new Error('workspace_root_symlink_rejected');
-  if (!Array.isArray(files) || files.length < 1 || files.length > 100 || new Set(files).size !== files.length) throw new Error('workspace_selection_invalid');
+  if (!Array.isArray(files) || files.length < 1 || files.length > 5000 || new Set(files).size !== files.length) throw new Error('workspace_selection_invalid');
   const rootStat = await lstat(canonical,{bigint:true}); const rootIdentity = {dev:String(rootStat.dev),ino:String(rootStat.ino)};
   const copy = await mkdtemp(join(tmpdir(), 'adrnew-workspace-'));
   const manifest = {};
@@ -37,7 +37,7 @@ export async function importWorkspace(root, files) {
     for (const path of files) {
       const bytes = await safeRead(canonical, path, rootIdentity);
       total += bytes.length;
-      if (total > 8 * MAX_BYTES) throw new Error('workspace_total_limit');
+      if (total > 64 * MAX_BYTES) throw new Error('workspace_total_limit');
       manifest[path] = hash(bytes);
       await mkdir(dirname(join(copy, path)), { recursive: true, mode: 0o700 });
       await writeFile(join(copy, path), bytes, { flag: 'wx', mode: 0o600 });
@@ -54,9 +54,11 @@ export async function proposeExport(workspace, changedFiles) {
     checkRelative(path);
     if (content !== null && (typeof content !== 'string' || Buffer.byteLength(content) > MAX_BYTES)) throw new Error('export_file_rejected');
     const exists = Object.hasOwn(workspace.manifest, path);
+    if(exists && content!==null && hash(content)===workspace.manifest[path])continue;
     const original = exists ? await safeRead(workspace.root, path, workspace.rootIdentity) : null;
     if (!exists && await lstat(resolve(workspace.root, path)).then(() => true, e => { if (e.code === 'ENOENT') return false; throw e; })) throw new Error('export_conflict');
     if (exists && hash(original) !== workspace.manifest[path]) throw new Error('export_conflict');
+    if (exists && content !== null && hash(content) === hash(original)) continue;
     changes.push(Object.freeze({ path, kind: content === null ? 'delete' : exists ? 'modify' : 'add', before: original === null ? null : hash(original), after: content === null ? null : hash(content), content }));
   }
   return Object.freeze({ id: randomUUID(), changes: Object.freeze(changes) });
@@ -96,4 +98,45 @@ export async function exportSnapshot(workspace, finalFiles, approval) {
     await writeFile(join(destination, 'manifest.json'), JSON.stringify({ schemaVersion: 1, changes: proposal.changes.map(({ content, ...entry }) => entry) }, null, 2), { flag: 'wx', mode: 0o600 });
     return { directory: destination, manifest: join(destination, 'manifest.json') };
   } catch (error) { await rm(destination, { recursive: true, force: true }); throw error; }
+}
+
+// Discover paths using Git ignore semantics without opening excluded contents.
+export async function projectManifest(root) {
+  const canonical=await realpath(root);if(canonical!==resolve(root))throw Error('workspace_root_symlink_rejected');
+  let paths;
+  try { paths=(await execute('git',['-C',canonical,'ls-files','-z','--cached','--others','--exclude-standard'],{maxBuffer:8*1024*1024,env:{PATH:'/opt/homebrew/bin:/usr/bin:/bin'}})).stdout.split('\0').filter(Boolean); }
+  catch {
+    paths=[];
+    const walk=async(dir='')=>{for(const e of await readdir(join(canonical,dir),{withFileTypes:true})){const p=dir?`${dir}/${e.name}`:e.name;try{checkRelative(p);}catch{continue;}if(['node_modules','dist','build','coverage','vendor','target','__pycache__'].includes(e.name))continue;if(e.isSymbolicLink())continue;if(e.isDirectory())await walk(p);else if(e.isFile())paths.push(p);if(paths.length>5000)throw Error('workspace_selection_invalid');}};await walk();
+  }
+  const result=[];let total=0;
+  for(const path of [...new Set(paths)].sort()){try{checkRelative(path);}catch{continue;}if(path.split('/').some(p=>['node_modules','dist','build','coverage','target','__pycache__'].includes(p)))continue;const s=await lstat(join(canonical,path));if(s.isSymbolicLink()||!s.isFile()||s.nlink!==1||s.size>MAX_BYTES)continue;total+=s.size;if(total>128*1024*1024)throw Error('workspace_total_limit');result.push({path,bytes:s.size,resource:path==='AGENTS.md'||path.includes('/skills/')||path.includes('/extensions/')||path.endsWith('SKILL.md')});}
+  if(!result.length||result.length>5000)throw Error('workspace_selection_invalid');return {root:canonical,files:result,totalBytes:total};
+}
+
+export async function reviewAndApply(workspace, finalFiles, approve, {journalRoot, recover}={}) {
+  if(!journalRoot||!isAbsolute(journalRoot))throw Error('private_journal_required');
+  const values={...finalFiles};for(const p of Object.keys(workspace.manifest))if(!Object.hasOwn(values,p))values[p]=null;
+  const proposal=recover?.proposal??await proposeExport(workspace,values);
+  if(!/^[a-f0-9-]{36}$/.test(proposal.id))throw Error('apply_operation_invalid');
+  const digest=hash(JSON.stringify(proposal));
+  if(!await approve({...proposal,digest,recovery:!!recover}))throw Error('apply_denied');
+  await mkdir(journalRoot,{recursive:true,mode:0o700});const stat=await lstat(journalRoot);
+  if(!stat.isDirectory()||stat.isSymbolicLink()||stat.uid!==process.getuid()||(stat.mode&0o077))throw Error('private_journal_rejected');
+  const journal=join(journalRoot,`${proposal.id}.json`);
+  const result=await new Promise((resolveResult,reject)=>{
+    const child=spawn('python3',[fileURLToPath(new URL('./workspace-apply.py',import.meta.url))],{env:{PATH:'/opt/homebrew/bin:/usr/bin:/bin'},stdio:['pipe','pipe','ignore']});let output='';
+    child.stdout.on('data',b=>{output+=b;if(output.length>65536)child.kill();});child.once('error',reject);child.once('close',()=>{try{resolveResult(JSON.parse(output));}catch{reject(Error('apply_outcome_unknown'));}});
+    child.stdin.end(JSON.stringify({id:proposal.id,root:workspace.root,identity:workspace.rootIdentity,changes:proposal.changes,journal,recover:!!recover}));
+  });
+  return {...result,journal};
+}
+
+export async function recoverApplication(workspace,journal,approve) {
+  const stat=await lstat(journal);
+  if(!stat.isFile()||stat.isSymbolicLink()||stat.nlink!==1||stat.uid!==process.getuid()||(stat.mode&0o077)||stat.size>32*1024*1024)throw Error('apply_journal_rejected');
+  const state=JSON.parse(await readFile(journal,'utf8'));
+  if(state.root!==workspace.root||state.status!=='interrupted')throw Error('apply_recovery_rejected');
+  const proposal={id:state.operationId,changes:state.changes};
+  return reviewAndApply(workspace,{},approve,{journalRoot:dirname(journal),recover:{proposal}});
 }

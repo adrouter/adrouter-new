@@ -3,5 +3,10 @@
     "reference": "docker.io/library/node@sha256:0a7108bf6c7bf5de370ffb1a3ed6be93d405b43ff159f681a8d18c0e2bc2e402",
     "linux-arm64": "sha256:85cdd100016a2e09927c0776bb7ebebcfefce5cd0af49893ada91cbc4d78ee22",
     "linux-x64": "sha256:2c752226d477b4a886378baa95b9af252be59301b725fdb0b7e15208131505a8"
+  },
+  "coding": {
+    "reference": "docker.io/library/node@sha256:363e1587494626837fa7f9a23bdb453d13b0ff3c67c705c2805cfc69c2d2fad7",
+    "linux-arm64": "sha256:5705a4b5da9077d28001f4ad6293b6ff7fcd4221ec3a05ad599e1d5182c606ef",
+    "linux-x64": "sha256:17b7fd60fd812617654c64b95f9b2dde94f103313073b672bc40fdad6dccbaa2"
   }
 }

@@ -91,7 +91,8 @@ export async function runTui(options = {}, dependencies = {}) {
       const result = await network.login(value => {
         if (value.status === 'approval_required') {
           verification = value.verificationUrl;
-          update(['Approve this installation in your browser.', `Comparison code: ${value.comparisonCode}`, '', verification, '', operator ? 'Check the same code before approving operator access.' : 'Check the same code before approving provider access.', process.platform === 'darwin' ? 'Press O to open native Safari.' : 'Open the link in your browser.', 'Waiting for your approval…']);
+          const permission = operator ? 'operator' : store.profile === 'buyer' ? 'buyer-only' : store.profile === 'provider' ? 'provider' : 'buyer and provider';
+          update(['Approve this installation in your browser.', `Comparison code: ${value.comparisonCode}`, '', verification, '', `Check the same code before approving ${permission} access.`, process.platform === 'darwin' ? 'Press O to open native Safari.' : 'Open the link in your browser.', 'Waiting for your approval…']);
         }
       }, signal, { operator });
       return result;
@@ -128,7 +129,7 @@ export async function runTui(options = {}, dependencies = {}) {
     const bounds = preparedBounds ?? await ui.form(node.availability === 'cold' ? 'Start cold provider control' : 'Start hot provider VM', [
       { name: 'maxCalls', label: 'Maximum requests', default: '5', validate: integer(1, 30) },
       { name: 'maxOutputTokens', label: 'Output tokens / request', default: '1024', validate: integer(1, 8192) },
-    ], savedBounds, 'One concurrent session. VM lifetime: at most nine minutes. Enter your API key only in the VM console.');
+    ], savedBounds, node.availability === 'hot' ? 'One concurrent session. Hot serving continues while this terminal stays open. Enter your API key only in the VM console.' : 'One concurrent session. Cold guests run for at most nine minutes. Enter your API key only in the VM console.');
     if (!bounds) return;
     Object.assign(savedBounds, bounds);
     const { startProvider } = await import('./provider.mjs');
@@ -149,7 +150,7 @@ export async function runTui(options = {}, dependencies = {}) {
     for (;;) {
       const edited = await ui.form('List compute · 2 of 3', providerFields, draft, 'Defaults are editable. Only public listing metadata is submitted.');
       if (!edited) return;
-      Object.assign(draft, edited);
+      Object.assign(draft, edited);draft.capabilities=['coding_v1','streaming_v1','tools_v1'];draft.contextWindowTokens=32768;
       if (!MarketplaceDraft(draft)) { await ui.page('Check listing fields', ['Use printable metadata and integer test-credit prices.']); continue; }
       const decision = await ui.menu('List compute · 3 of 3', [item('edit', 'Edit details'), item('create', 'Create draft and configure provider'), item('cancel', 'Cancel')], { lines: [draft.name, `${draft.model} · ${draft.availability}`, draft.endpoint, `Supply: ${words(draft.supplyClass)}`, `Input ${draft.inputRate} / output ${draft.outputRate} test credits per 1M tokens`, '', 'Publish your listing and qualify its current tariff before your private evaluation.'] });
       if (decision === 'edit') continue;
@@ -194,7 +195,11 @@ export async function runTui(options = {}, dependencies = {}) {
       node = await get(`/providers/nodes/${node.id}`);
     }
     if (!node.tariffQualified) {
-      await ui.page('Qualify the current tariff', ['Publish your listing and qualify its current tariff before your private evaluation.', 'Your listing is published. In the separate operator profile, choose Qualify upstream tariff.', 'Then choose Continue setup from My provider listings.']); return;
+      if(config.capabilities?.includes('coding_v1')) {
+        const tariff=await ui.form('Review upstream tariff',[{name:'version',label:'Tariff version',validate:required},{name:'inputMicrousdPerMillion',label:'Input micro-USD per million tokens (peak/cache miss)',validate:integer(0,999999999999999)},{name:'outputMicrousdPerMillion',label:'Output micro-USD per million tokens',validate:integer(0,999999999999999)},{name:'reviewReference',label:'Official pricing URL or review reference',validate:required}]);
+        if(!tariff||!await confirm('Qualify your supply tariff?',[node.model,node.endpoint,JSON.stringify(tariff,null,2),'Use current conservative rates. Understating a rate does not reduce upstream billing.'],'Confirm reviewed tariff'))return;
+        await post(`/providers/nodes/${node.id}/tariff`,{...tariff,qualifiedUntil:Date.now()+86400000});node=await get(`/providers/nodes/${node.id}`);
+      }else {await ui.page('Qualify the current tariff', ['Your listing is published. In the separate operator profile, choose Qualify upstream tariff.','Then choose Continue setup from My provider listings.']);return;}
     }
     await launch(node, bounds);
   }
@@ -203,13 +208,14 @@ export async function runTui(options = {}, dependencies = {}) {
       const node = await get(`/providers/nodes/${id}`);
       if (providersRunning.get(node.id)?.status.stopped) providersRunning.delete(node.id);
       currentProviderId = node.id;
+      const exposure=await get('/providers/budget');
       const selection = await ui.menu(created ? 'Your listing is drafted' : node.name, [
         item('setup', 'Continue setup', 'Runtime → limits → publication → tariff → guest → relay', providersRunning.has(node.id)),
         item('launch', node.availability === 'cold' ? 'Start cold control' : 'Launch hot VM', 'Keep this TUI open while providing.', providersRunning.has(node.id)),
         ...(providersRunning.get(node.id)?.status.activation.length ? [item('activate', 'Activate reserved buyer session', 'Launch the VM and enter the key before the 120-second deadline.')] : []),
         item('publish', 'Publish listing', 'Exposes listing metadata as a new immutable revision.', node.suspended),
         item('pause', 'Pause listing'), item('stop', 'Stop serving and close sessions'), item('refresh', 'Refresh status'), item('back', 'Back'),
-      ], { lines: [`Model: ${node.model}`, `Suspended: ${node.suspended ? 'yes' : 'no'} · Listing: ${node.status}`, `VM: ${providersRunning.get(node.id)?.status.guestReady ? 'ready' : 'not running'}`, `Backend: ${node.ready ? 'Hot · ready' : node.availability === 'cold' && Number(node.leaseUntil) > Date.now() ? 'cold · control online' : 'offline'}`, `Listing reference: ${node.id}`] });
+      ], { lines: [`Model: ${node.model}`, `Suspended: ${node.suspended ? 'yes' : 'no'} · Listing: ${node.status}`, `VM: ${providersRunning.get(node.id)?.status.guestReady ? 'ready' : 'not running'}`, `Backend: ${node.ready && Number(node.leaseUntil)>Date.now() && providersRunning.get(node.id)?.status.guestReady && providersRunning.get(node.id)?.status.relayReady ? 'Hot · Ready' : node.availability === 'cold' && Number(node.leaseUntil) > Date.now() ? 'cold · control online' : 'offline'}`, `Activity: ${providersRunning.get(node.id)?.status.calls??0} dispatched requests`, `Remaining upstream authority: ${formatUsd(exposure.remainingMicrousd)}`, `Outstanding exposure: ${formatUsd(exposure.outstandingMicrousd)}`, `Listing reference: ${node.id}`] });
       currentProviderId = undefined; created = false;
       if (!selection || selection === 'back') return;
       await attempt(async () => {
@@ -232,17 +238,18 @@ export async function runTui(options = {}, dependencies = {}) {
   }
   async function buy(listing) {
     actor('buyer');
+    const coding=!!config?.capabilities?.includes('coding_v1')&&listing.capabilities?.includes('coding_v1');
     const bounds = await ui.form('Choose a bounded test session', [
       { name: 'budget', label: 'Maximum test credits', default: '100', validate: integer(1, 1000000), help: 'The server reserves this ceiling, then refunds known unused credits.' },
-      { name: 'output', label: 'Maximum output tokens', default: '1024', validate: integer(1, 8192) },
-      { name: 'duration', label: 'Session seconds', default: '300', validate: integer(60, 600) },
+      { name: 'output', label: 'Maximum output tokens', default: String(Math.min(1024,listing.maxOutputTokens??8192)), validate: integer(1,listing.maxOutputTokens??8192) },
+      { name: 'duration', label: 'Session seconds', default: coding?'3600':'300', validate: integer(60,coding?3600:600) },
     ], {}, listing.name);
     if (!bounds) return;
     const privateMode = !config.admissions && config.privateRehearsal;
-    if (privateMode && !await confirm('Private rehearsal · provisional qualification', ['This provider has provisional qualification. This session does not establish full acceptance.', 'Limits: 100 test credits, 300 seconds, five inference requests, at most 1,024 output tokens each.'], 'Acknowledge and request private session')) return;
+    if (privateMode && !await confirm('Private rehearsal · provisional qualification', ['This provider has provisional qualification. This session does not establish full acceptance.', 'Coding quotes disclose your chosen time, output and credit limits. Main prompts, compaction, BTW and subagents share the allowance.'], 'Acknowledge and request private session')) return;
     const mode = privateMode ? { mode: 'private_rehearsal', acknowledgeProvisional: true } : {};
-    const quote = await post('/quotes', { listingId: listing.id, maximumCharge: bounds.budget, maxOutputTokens: Number(bounds.output), durationSeconds: Number(bounds.duration), ...mode });
-    if (!await confirm('Review your quote', [...listingLines(listing), '', `Maximum reserved: ${quote.maximumCharge} test credits`, `Output limit: ${quote.maxOutputTokens} tokens`, `Session duration: ${quote.durationSeconds} seconds`, `Quote expires: ${date(quote.expiresAt)}`, `Cold activation deadline: ${quote.activationDeadlineSeconds || 0} seconds. Expired activation refunds the reservation.`], 'Accept and reserve test credits')) return;
+    const quote = await post('/quotes', { listingId: listing.id, maximumCharge: bounds.budget, maxOutputTokens: Number(bounds.output), durationSeconds: Number(bounds.duration), ...(coding?{protocol:'coding_v1',requestLimit:100}:{}), ...mode });
+    if (!await confirm('Review your quote', [...listingLines(listing), '', `Maximum reserved: ${quote.maximumCharge} test credits`, `Output limit: ${quote.maxOutputTokens} tokens`, `Session duration: ${quote.durationSeconds} seconds`, `Shared inference dispatches: ${quote.requestLimit??5}`, `Quote expires: ${date(quote.expiresAt)}`, `Cold activation deadline: ${quote.activationDeadlineSeconds || 0} seconds. Expired activation refunds the reservation.`], 'Accept and reserve test credits')) return;
     const session = await post('/sessions', { quoteId: quote.id, accept: true, ...mode }, `accept_${quote.id}`);
     if (privateMode) {
       try { const ready = await ui.task('Verify provider guest handshake', signal => network.request(`/v2/sessions/${session.id}/handshake`, { method: 'POST', body: {}, signal }), { cancel: true }); await buyerAgent(ready, listing); }
@@ -269,6 +276,7 @@ export async function runTui(options = {}, dependencies = {}) {
     }
   }
   async function buyerAgent(session, selectedListing) {
+    if(session.protocol==='coding_v1')return codingAgent(session,selectedListing);
     const input = await ui.form('Buyer workspace', [
       { name: 'root', label: 'Workspace directory', default: process.cwd(), validate: required },
       { name: 'files', label: 'Files to import (comma separated)', help: 'Explicit relative paths. No secrets, hidden files, symlinks or archives.', validate: required },
@@ -294,6 +302,33 @@ export async function runTui(options = {}, dependencies = {}) {
         if(choice==='prompt') { const next=await ui.form('Follow-up coding task',[{name:'prompt',label:'Task',maxLength:32000,validate:required}]); if(next)await buyer.prompt(next.prompt); }
       }
     } finally { await buyer.close(); }
+  }
+
+  async function codingAgent(session,listing) {
+    const input=await ui.form('Choose a project',[{name:'root',label:'Project directory',default:process.cwd(),validate:required}]);if(!input)return;
+    const {projectManifest}=await import('./workspace.mjs');
+    const manifest=await ui.task('Prepare reviewed project manifest',()=>projectManifest(input.root));
+    await ui.page('Project import manifest',manifest.files.map(f=>`${f.path} · ${f.bytes} bytes${f.resource?' · instruction or executable resource':''}`));
+    if(!await confirm('Import this project?', [`${manifest.files.length} files · ${manifest.totalBytes} bytes`,'Excluded files and host credentials stay outside the buyer VM.','Every host application of changes gets a separate content review.'],'Import reviewed files'))return;
+    const resources=manifest.files.filter(f=>f.resource);
+    const trusted=resources.length?await confirm('Trust reviewed project resources?',resources.map(f=>f.path),'Trust for this isolated project'):false;
+    const {openCodingBuyer,savedCodingContexts}=await import('./coding-buyer.mjs');
+    const contexts=await savedCodingContexts(store.profile,manifest.root);
+    const resumeId=contexts.length?await ui.menu('Coding context',[item('new','Start a new conversation'),...contexts.map(c=>item(c.id,`Resume ${date(c.savedAt)}`,c.id))],{lines:['This accepted quote supplies new authority. Previous inference and tool actions are not replayed.']}):'new';
+    if(!resumeId)return;
+    const buyer=await ui.task('Start coding development VM',signal=>openCodingBuyer(network,session.id,{root:manifest.root,files:manifest.files.map(f=>f.path),runtimeConfig,signal:undefined,trusted,profile:store.profile,...(resumeId!=='new'?{resumeId}:{})}),{cancel:false});
+    let interrupted;
+    try {
+      for(;;){
+        if(!interrupted)await ui.suspend(()=>buyer.interactive());
+        const saved=await ui.task('Save private coding context and workspace',()=>buyer.save());
+        const action=await ui.menu('Coding workspace',[item('continue','Continue coding'),item('apply','Review and Apply'),item('export','Review and export snapshot'),...(interrupted?[item('recover','Recover interrupted application')]:[]),item('finish','Finish session')],{lines:[`Saved context: ${saved.resumeId}`,'Changes remain inside the VM until you review and apply them.']});
+        if(action==='recover'){const result=await ui.suspend(()=>buyer.recover(interrupted));if(result.status==='applied')interrupted=undefined;await ui.page('Recovery result',[result.status,`Completed: ${(result.completed??[]).join(', ')}`]);}
+        if(action==='apply'){const result=await ui.suspend(()=>buyer.apply());if(result.status==='interrupted')interrupted=result.journal;await ui.page('Application result',[result.status,`Journal: ${result.journal}`,`Completed files: ${(result.completed??[]).join(', ')}`]);}
+        if(action==='export'){const result=await ui.suspend(()=>buyer.export());await ui.page('Reviewed snapshot',[result.directory,result.manifest]);}
+        if(!action||action==='finish')break;
+      }
+    }finally{await buyer.close();}
   }
 
   async function sessionDetail(id) {

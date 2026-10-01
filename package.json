@@ -1,6 +1,6 @@
 {
   "name": "@adrouter/adr-cli",
-  "version": "0.1.0-alpha.6",
+  "version": "0.1.0-alpha.7",
   "private": true,
   "description": "adr-v2 test-credit compute marketplace terminal",
   "type": "module",
@@ -24,12 +24,17 @@
     "README.md",
     "LICENSE",
     "pi-provenance.lock.json",
-    "release-policy.json"
+    "release-policy.json",
+    "coding-runtime/"
   ],
   "scripts": {
     "test": "node --test test/*.test.mjs",
     "check": "node scripts/check-source.mjs && node scripts/verify-provenance.mjs && npm test",
-    "test:runtime": "node scripts/verify-runtime.mjs"
+    "test:runtime": "node scripts/verify-runtime.mjs",
+    "coding:build": "node scripts/build-coding-runtime.mjs ../adrouterCLI --verify",
+    "coding:mac": "node scripts/verify-coding-mac.mjs",
+    "coding:pty": "python3 scripts/verify-coding-pty.py --long",
+    "coding:verify": "node scripts/verify-coding-provenance.mjs"
   },
   "publishConfig": {
     "access": "public",

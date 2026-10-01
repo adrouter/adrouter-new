@@ -5,7 +5,7 @@ import { randomBytes } from 'node:crypto';
 import { readFile, writeFile, mkdtemp, copyFile, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { InferenceRequest, Handshake, HandshakeResult } from './generated/validators.mjs';
+import { CodingInferenceRequest, InferenceRequest, Handshake, HandshakeResult } from './generated/validators.mjs';
 import { SandboxRuntime } from './runtime.mjs';
 import { ClientError } from './network.mjs';
 import { validateBinding, publicAddress } from './provider-broker.mjs';
@@ -14,13 +14,13 @@ export async function configuredRuntime() {
   const config = process.env.ADROUTER_NEW_RUNTIME_EXECUTABLE ? { executable: process.env.ADROUTER_NEW_RUNTIME_EXECUTABLE, library: process.env.ADROUTER_NEW_RUNTIME_LIBRARY, home: process.env.ADROUTER_NEW_RUNTIME_HOME } : await loadRuntimeConfig();
   return new SandboxRuntime(config ?? {});
 }
-export async function createGuest(runtime, hostPorts, copyDirectory, endpoint, { signal, continuous = false } = {}) {
+export async function createGuest(runtime, hostPorts, copyDirectory, endpoint, { signal, continuous = false, kind = 'node' } = {}) {
   const images = JSON.parse(await readFile(new URL('../runtime/guest-images.json', import.meta.url)));
-  const name = await runtime.create({ image: images.node.reference, hostPorts, copyDirectory, endpoint, durationSeconds: 540, continuous, signal });
+  const name = await runtime.create({ image: images[kind].reference, hostPorts, copyDirectory, endpoint, durationSeconds: 540, continuous, signal, ...(kind==='coding'?{memoryMiB:1024,rootDiskGiB:4}:{}) });
   try {
     signal?.throwIfAborted();
     const info = await runtime.inspect(name);
-    if (info.config.manifest_digest !== images.node[`linux-${process.arch}`] || info.config.mounts.length || info.config.network.policy.default_egress !== 'deny') throw new ClientError('guest_identity_or_policy_mismatch');
+    if (info.config.manifest_digest !== images[kind][`linux-${process.arch}`] || info.config.mounts.length || info.config.network.policy.default_egress !== 'deny') throw new ClientError('guest_identity_or_policy_mismatch');
     signal?.throwIfAborted(); return name;
   } catch (error) { await runtime.remove(name); throw error; }
 }
@@ -53,6 +53,9 @@ export async function startProvider(networkInput, nodeId, { maxCalls = 5, maxOut
         const result = JSON.parse(bytes);
         if (!pending || !HandshakeResult(result) || pending.id !== result.challengeId || Object.keys(pending.binding).some(k => k !== 'type' && pending.binding[k] !== result[k])) throw new Error('handshake_binding');
         socket?.send(JSON.stringify(result)); pending = undefined;
+      } else if (req.method === 'POST' && req.url === '/delta') {
+        const e=JSON.parse(bytes); if(!pending || e.requestId!==pending.id || e.type!=='coding_delta' || !Number.isInteger(e.sequence) || e.sequence!==Number(pending.streamSequence??0)+1 || !['text','thinking','tool'].includes(e.kind) || typeof e.text!=='string' || e.text.length>8192)throw Error('delta_rejected');
+        pending.streamSequence=e.sequence;socket?.send(JSON.stringify(e));
       } else if (req.method === 'POST' && req.url === '/timing') {
         const timing = JSON.parse(bytes);
         if (!pending || timing.requestId !== pending.id || timing.phase !== 'upstream' || !['unknown','succeeded'].includes(timing.outcome) || (timing.statusCode !== null && (!Number.isInteger(timing.statusCode) || timing.statusCode < 100 || timing.statusCode > 599)) || !Number.isInteger(timing.totalMs) || timing.totalMs < 0 || timing.totalMs > 135000 || (timing.headersMs !== null && (!Number.isInteger(timing.headersMs) || timing.headersMs < 0 || timing.headersMs > timing.totalMs))) throw new Error('timing_rejected');
@@ -95,7 +98,7 @@ export async function startProvider(networkInput, nodeId, { maxCalls = 5, maxOut
     starting = true;
     try {
       copied = await mkdtemp(join(tmpdir(), 'adr-provider-'));
-      for (const [from, to] of [['guest/provider-console.mjs', 'provider-console.mjs'], ['provider-broker.mjs', 'provider-broker.mjs'], ['provider-setup.mjs', 'provider-setup.mjs']]) await copyFile(new URL(from, import.meta.url), join(copied, to));
+      for (const [from, to] of [['guest/provider-console.mjs', 'provider-console.mjs'], ['provider-broker.mjs', 'provider-broker.mjs'], ['coding-wire.mjs','coding-wire.mjs'], ['provider-setup.mjs', 'provider-setup.mjs']]) await copyFile(new URL(from, import.meta.url), join(copied, to));
       await writeFile(join(copied, 'config.json'), JSON.stringify({ control: `http://host.microsandbox.internal:${broker.address().port}`, capability, noKey, node: binding.loopback ? {...node,localEngine:true,endpoint:node.endpoint.replace(binding.url.hostname,'host.microsandbox.internal')} : {...node,tunnel:{port:broker.address().port,capability}}, maxCalls, maxOutputTokens, continuous }), { mode: 0o600 });
       guest = await createGuest(runtime, [broker.address().port, ...(enginePort ? [enginePort] : [])], copied, undefined, { signal: warmSignal, continuous });
       warmSignal.throwIfAborted();
@@ -136,11 +139,11 @@ export async function startProvider(networkInput, nodeId, { maxCalls = 5, maxOut
       }
       if (!guestReady) return;
       const ticket = await network.request(`/v2/providers/nodes/${nodeId}/relay-ticket`, { method: 'POST', body: {} });
-      if (socket?.readyState === WebSocket.OPEN) socket.send(JSON.stringify({ type: 'authenticate', ticket: ticket.ticket, ready: true }));
+      if (socket?.readyState === WebSocket.OPEN) socket.send(JSON.stringify({ type: 'authenticate', ticket: ticket.ticket, ready: true, maxOutputTokens }));
       else {
         const url = new URL('/v2/relay', network.origin); url.protocol = url.protocol === 'https:' ? 'wss:' : 'ws:';
         socket = new WebSocket(url);
-        socket.addEventListener('open', () => socket.send(JSON.stringify({ type: 'authenticate', ticket: ticket.ticket, ready: true })));
+        socket.addEventListener('open', () => socket.send(JSON.stringify({ type: 'authenticate', ticket: ticket.ticket, ready: true, maxOutputTokens })));
         socket.addEventListener('error', () => void stop());
         socket.addEventListener('close', () => void stop());
         socket.addEventListener('message', event => { void (async () => {
@@ -156,7 +159,7 @@ export async function startProvider(networkInput, nodeId, { maxCalls = 5, maxOut
             if (pending || !Handshake(frame) || frame.bindingRevision !== node.listingId || frame.providerInstallationId !== node.installationId || frame.listingRevision !== node.listingRevision || frame.deadlineUnixMs <= Date.now()) throw new Error('handshake_rejected');
             pending = { id: frame.challengeId, binding: frame, frame }; return;
           }
-          if (pending || !InferenceRequest(frame) || frame.bindingRevision !== node.listingId || frame.maxOutputTokens > maxOutputTokens || (!continuous && calls >= maxCalls)) throw new Error('frame_rejected');
+          if (pending || !(frame.protocol==='coding_v1'?CodingInferenceRequest(frame):InferenceRequest(frame)) || frame.bindingRevision !== node.listingId || frame.maxOutputTokens > maxOutputTokens || (!continuous && calls >= maxCalls)) throw new Error('frame_rejected');
           calls++; pending = { id: frame.requestId, binding: frame, frame };
         })().catch(() => void stop()); });
       }

@@ -164,3 +164,8 @@ allows 135 seconds for outcome and cleanup. Unknown requests are never replayed.
 Operator capacity release requires stopped execution, reviewed guest-teardown evidence,
 cleared readiness and relay disconnection; unresolved liabilities remain reserved.
 Private rehearsal evidence does not establish full provider qualification or public release.
+
+
+## Private live coding
+
+The negotiated VM coding runtime and its exact install/test/recovery procedure are in [the private live coding guide](docs/live-coding-rollout.md). It reuses the pinned legacy harness without requiring a legacy installation. Existing buffered sessions keep their bounds; coding quotes support up to 60 minutes and 100 shared inference dispatches. Public publication and real payment transactions remain gated.

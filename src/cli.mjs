@@ -4,8 +4,8 @@ import { Network, AuthStore, ClientError } from './network.mjs';
 import { ask, choose, render } from './terminal.mjs';
 import { SandboxRuntime } from './runtime.mjs';
 
-const booleanOptions = new Set(['json', 'local', 'accept', 'help', 'no-key', 'operator', 'private-rehearsal', 'acknowledge-provisional', 'bounded']);
-const valueOptions = new Set(['profile', 'network', 'actor', 'name', 'model', 'endpoint', 'supply', 'availability', 'input-rate', 'output-rate', 'budget', 'max-output', 'duration', 'after', 'idempotency-key', 'review', 'user', 'amount', 'max-calls']);
+const booleanOptions = new Set(['json', 'local', 'accept', 'help', 'no-key', 'operator', 'private-rehearsal', 'acknowledge-provisional', 'bounded','coding','trust']);
+const valueOptions = new Set(['profile', 'network', 'actor', 'name', 'model', 'endpoint', 'supply', 'availability', 'input-rate', 'output-rate', 'budget', 'max-output', 'duration', 'after', 'idempotency-key', 'review', 'user', 'amount', 'max-calls','workspace','mode','resume','prompt','context-window']);
 export function parseArgs(args) {
   const options = {}; const words = [];
   for (let i = 0; i < args.length; i++) {
@@ -37,6 +37,8 @@ Provider serving: provider serve NODE_ID --max-output 1024
   Hot listings serve continuously in the foreground; --bounded retains evaluation limits.
 Private connect: --private-rehearsal --acknowledge-provisional --budget 100 --accept
   Requires the pinned VM runtime and hidden guest-only credential entry.
+Coding: code SESSION_ID --workspace PATH --trust [--mode print|json|rpc] [--prompt TASK] [--resume SAVED_ID]
+Connect coding: connect LISTING_ID --coding --duration 3600 --max-calls 100
 Local development: --local --actor buyer|provider|admin
 Local admin: admin nodes | suspend|unsuspend NODE_ID --review REFERENCE | grant --user local-buyer --amount UNITS
 Use --idempotency-key KEY to recover a mutation after an uncertain response.
@@ -49,7 +51,7 @@ async function draft(options, json) {
     else if (json || !process.stdin.isTTY) { if (fallback) values[name] = fallback; else throw new ClientError(`missing_${name.replaceAll('-', '_')}`); }
     else values[name] = await ask(label, fallback);
   }
-  return { name: values.name, model: values.model, endpoint: values.endpoint, supplyClass: values.supply, availability: values.availability, inputRate: values['input-rate'], outputRate: values['output-rate'] };
+  return { name: values.name, model: values.model, endpoint: values.endpoint, supplyClass: values.supply, availability: values.availability, inputRate: values['input-rate'], outputRate: values['output-rate'],...(options.coding?{capabilities:['coding_v1','streaming_v1','tools_v1'],contextWindowTokens:Number(options['context-window']??32768)}:{}) };
 }
 export async function run(args, dependencies = {}) {
   const { words, options: o } = parseArgs(args); const json = !!o.json;
@@ -130,13 +132,19 @@ export async function run(args, dependencies = {}) {
   } else if (command === 'connect') {
     const listingId = requireId(sub);
     const mode = o['private-rehearsal'] ? { mode: 'private_rehearsal', acknowledgeProvisional: !!o['acknowledge-provisional'] } : {};
-    const quote = await post('/quotes', { listingId, maximumCharge: o.budget ?? (o['private-rehearsal'] ? '100' : '1000'), maxOutputTokens: Number(o['max-output'] ?? '1024'), durationSeconds: Number(o.duration ?? '300'), ...mode }); output({ quote });
+    const quote = await post('/quotes', { listingId, maximumCharge: o.budget ?? (o['private-rehearsal'] ? '100' : '1000'), maxOutputTokens: Number(o['max-output'] ?? '1024'), durationSeconds: Number(o.duration ?? (o.coding?'3600':'300')), ...(o.coding?{protocol:'coding_v1',requestLimit:Number(o['max-calls']??100)}:{}), ...mode }); output({ quote });
     let accept = !!o.accept;
     if (!accept && !json && process.stdin.isTTY) accept = await choose('Reserve this bounded test-credit quote?', ['Cancel', 'Accept quote']) === 1;
     if (!accept) { output({ status: 'quote_not_accepted', quoteId: quote.id }); return; }
     const session = await post('/sessions', { quoteId: quote.id, accept: true, ...mode }, `accept_${quote.id}`);
     output(session);
     if(o['private-rehearsal'])output(await post(`/sessions/${session.id}/handshake`));
+  } else if (command === 'code') {
+    const sessionId=requireId(sub),{projectManifest}=await import('./workspace.mjs'),{openCodingBuyer}=await import('./coding-buyer.mjs');
+    if(!o.workspace)throw new ClientError('workspace_required');const manifest=await projectManifest(o.workspace);
+    if(!o.trust)throw new ClientError('reviewed_workspace_trust_required');
+    const buyer=await openCodingBuyer(network,sessionId,{root:manifest.root,files:manifest.files.map(f=>f.path),trusted:true,profile:o.profile??'buyer',resumeId:o.resume});
+    try{await buyer.interactive({prompt:o.prompt??'',mode:o.mode??'interactive'});output(await buyer.save());}finally{await buyer.close();}
   } else if (command === 'sessions') output(await get('/sessions'));
   else if (command === 'session') {
     if (sub === 'stop') output(await post(`/sessions/${requireId(id)}/stop`));
