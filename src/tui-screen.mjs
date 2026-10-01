@@ -1,3 +1,4 @@
+import { spawnSync } from 'node:child_process';
 import { renderBanner } from './brand.mjs';
 import { fuzzyFilter } from './vendor/pi/fuzzy.mjs';
 import readline from 'node:readline';
@@ -18,7 +19,12 @@ export function wrapText(value, width) {
 }
 
 // All untrusted labels and values are plain text. Only this renderer emits ANSI.
-export function renderScreen({ title, subtitle = '', lines = [], focus = 0, footer = '', context = '' }, columns = 80, rows = 24, color = true) {
+export function renderScreen({ title, subtitle = '', lines = [], focus = 0, footer = '', context = '', sidebar = [] }, columns = 80, rows = 24, color = true) {
+  if(sidebar.length && columns>=112 && !title.toLowerCase().includes('approv')) {
+    const sideWidth=30,leftWidth=columns-sideWidth-3;
+    const left=renderScreen({title,subtitle,lines,focus,footer,context},leftWidth,rows,color).split('\r\n');
+    return left.map((line,i)=>{const visible=line.replace(/\x1b\[[0-9;]*m/g,'').length;return line+' '.repeat(Math.max(1,leftWidth-visible))+'│ '+clip(sidebar[i]??'',sideWidth);}).join('\r\n');
+  }
   const width = Math.max(1, columns - 2); const height = Math.max(1, rows - 1);
   const blue = text => color ? `${/truecolor|24bit/.test(process.env.COLORTERM ?? '') ? '\x1b[38;2;63;101;245m' : '\x1b[38;5;63m'}${text}\x1b[0m` : text;
   const result = [];
@@ -46,8 +52,8 @@ export function renderScreen({ title, subtitle = '', lines = [], focus = 0, foot
 }
 
 export class TerminalUI {
-  constructor({ input = process.stdin, output = process.stdout, color = !process.env.NO_COLOR } = {}) {
-    this.input = input; this.output = output; this.color = color && process.env.TERM !== 'dumb'; this.context = '';
+  constructor({ input = process.stdin, output = process.stdout, color = !process.env.NO_COLOR, reducedMotion = process.env.ADR_REDUCED_MOTION === '1' } = {}) {
+    this.input = input; this.output = output; this.color = color && process.env.TERM !== 'dumb'; this.context = '';this.sidebar=[];this.reducedMotion=reducedMotion;
     this.resize = () => this.draw();
     this.onKey = (text, key = {}) => {
       if (key.ctrl && key.name === 'c') { this.pending?.resolve(null); return; }
@@ -55,8 +61,10 @@ export class TerminalUI {
     };
   }
   start() {
+    if(this.started)return;
     if (this.terminated) throw new ClientError('cancelled');
     if (!this.input.isTTY || !this.output.isTTY) throw new ClientError('interactive_terminal_required');
+    if(this.input===process.stdin){const captured=spawnSync('/bin/stty',['-g'],{stdio:[this.input,'pipe','ignore'],encoding:'utf8',timeout:1000});this.terminalState=captured.status===0?captured.stdout.trim():undefined;if(!this.terminalState||!/^[A-Za-z0-9_=;:-]+$/.test(this.terminalState))throw new ClientError('terminal_state_unavailable');}
     this.wasRaw = !!this.input.isRaw; this.wasPaused = this.input.isPaused(); this.wasFlowing = this.input.readableFlowing;
     readline.emitKeypressEvents(this.input); this.input.setRawMode(true); this.input.resume();
     this.input.on('keypress', this.onKey); this.output.on('resize', this.resize);
@@ -66,16 +74,17 @@ export class TerminalUI {
     if (!this.started) return;
     this.pending?.resolve(null);
     this.input.removeListener('keypress', this.onKey); this.output.removeListener('resize', this.resize);
-    this.input.setRawMode(this.wasRaw);
+    let restorationFailure;try{this.input.setRawMode(this.wasRaw);}catch{restorationFailure=new ClientError('terminal_restore_failed');}
+    if(this.terminalState){const restored=spawnSync('/bin/stty',[this.terminalState],{stdio:[this.input,'ignore','ignore'],timeout:1000});if(restored.status!==0)restorationFailure=new ClientError('terminal_restore_failed');}
     // Fresh stdin has readableFlowing=null, not isPaused=true. Leaving it
     // resumed after removing the UI listener keeps an otherwise finished CLI alive.
     if (this.wasPaused || this.wasFlowing !== true) this.input.pause();
-    this.output.write('\x1b[0m\x1b[?25h\x1b[?1049l'); this.started = false;
+    this.output.write('\x1b[0m\x1b[?25h\x1b[?1049l'); this.started = false;if(restorationFailure)throw restorationFailure;
   }
   terminate() { this.terminated = true; this.stop(); }
   draw(screen) {
     if (screen) this.screen = screen;
-    if (this.started && this.screen) this.output.write('\x1b[H\x1b[2J' + renderScreen({ ...this.screen, context: this.context }, this.output.columns ?? 80, this.output.rows ?? 24, this.color));
+    if (this.started && this.screen) this.output.write('\x1b[H\x1b[2J' + renderScreen({ ...this.screen, context: this.context, sidebar:this.sidebar }, this.output.columns || 80, this.output.rows || 24, this.color));
   }
   interact(key, draw) {
     if (this.terminated) return Promise.reject(new ClientError('cancelled'));
@@ -92,7 +101,7 @@ export class TerminalUI {
     const visible = () => fuzzyFilter(items, search, item => clean(`${item.label} ${item.detail ?? ''}`));
     const draw = () => {
       const choices = visible(); selected = Math.min(selected, Math.max(0, choices.length - 1));
-      const body = lines.flatMap(line => wrapText(line, Math.max(10, (this.output.columns ?? 80) - 2)));
+      const body = lines.flatMap(line => wrapText(line, Math.max(10, (this.output.columns || 80) - 2)));
       const start = body.length;
       choices.forEach((item, index) => body.push({ text: `${selected === index ? '›' : ' '} ${item.label}${item.disabled ? ' · unavailable' : ''}`, selected: selected === index }));
       if (!choices.length) body.push('No matching options. Backspace clears the search.');
@@ -131,7 +140,7 @@ export class TerminalUI {
         if (selected < fields.length) { selected++; replace = true; }
         else {
           const invalid = fields.findIndex(f => f.validate && f.validate(values[f.name], values));
-          if (invalid >= 0) { selected = invalid; error = fields[invalid].validate(values[fields[invalid].name], values); replace = true; }
+          if (invalid >= 0) { selected = invalid; error = `${fields[invalid].label}: ${fields[invalid].validate(values[fields[invalid].name], values)}`; replace = true; }
           else { finish(values); return; }
         }
       } else if (field?.choices && (key.name === 'left' || key.name === 'right')) {
@@ -151,7 +160,7 @@ export class TerminalUI {
   }
   async page(title, lines) {
     let offset = 0;
-    const draw = () => this.draw({ title, lines: lines.flatMap(line => wrapText(line, Math.max(10, (this.output.columns ?? 80) - 2))), focus: offset, footer: '↑↓ Scroll  Enter / Esc Back' });
+    const draw = () => this.draw({ title, lines: lines.flatMap(line => wrapText(line, Math.max(10, (this.output.columns || 80) - 2))), focus: offset, footer: '↑↓ Scroll  Enter / Esc Back' });
     return this.interact((_text, key, finish) => {
       if (['return', 'escape'].includes(key.name)) { finish(true); return; }
       if (key.name === 'down' || key.name === 'pagedown') offset += key.name === 'pagedown' ? 10 : 1;
@@ -161,16 +170,21 @@ export class TerminalUI {
   }
   async task(title, work, { lines = [], cancel = false, onKey } = {}) {
     if (this.terminated) throw new ClientError('cancelled');
-    const abort = new AbortController();
+    const abort = new AbortController();let stage=lines,frame=0;const startedAt=Date.now();
+    const redraw=()=>this.draw({title,lines:[...stage,`${this.reducedMotion?'Waiting':['◐','◓','◑','◒'][frame++%4]} · ${Math.floor((Date.now()-startedAt)/1000)} seconds elapsed`],footer:cancel?'Esc / Ctrl+C Cancel':'Running'});
     this.draw({ title, lines, footer: cancel ? 'Esc / Ctrl+C Cancel' : 'Working…' });
     const pending = { resolve: () => { if (cancel) abort.abort(); }, key: (text, key) => { if (key.name === 'escape' && cancel) abort.abort(); else onKey?.(text, key); } };
     if (this.pending) throw new ClientError('terminal_operation_busy');
     this.pending = pending;
-    try { return await work(abort.signal, update => this.draw({ title, lines: update, footer: cancel ? 'Esc / Ctrl+C Cancel' : 'Working…' })); }
-    finally { if (this.pending === pending) this.pending = null; }
+    const timer=setInterval(redraw,this.reducedMotion?1000:200);redraw();
+    try { const result=await work(abort.signal,update=>{stage=update;redraw();});this.draw({title,lines:stage,footer:'Completed'});return result; }
+    catch(e){this.draw({title,lines:stage,footer:abort.signal.aborted?'Cancelled':'Failed'});throw e;}
+    finally {clearInterval(timer);if(this.pending===pending)this.pending=null;}
   }
   async suspend(work) {
     this.stop();
-    try { return await work(); } finally { if (!this.terminated) this.start(); }
+    let result,primary;try{result=await work();}catch(e){primary=e;}
+    if(!this.terminated)try{this.start();}catch(e){if(primary)primary.restorationCode=e.code;else primary=e;}
+    if(primary)throw primary;return result;
   }
 }

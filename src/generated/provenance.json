@@ -1,11 +1,11 @@
 {
   "schemaVersion": 1,
   "repository": "https://github.com/HappyCool121/adrouter-dashboard",
-  "revision": "7a7f182f7e9eaeed8e04e68e7e0f6622235ab0c2",
+  "revision": "ded45c16c9d0588fd2ea79f4eba90e2e42274db6",
   "source": "backend/contracts/marketplace-v2.mjs",
-  "sourceSha256": "f3888d591e6317f6b87e7c08a1b864d0db45d951dce4f71e68b7a354495b9ba7",
+  "sourceSha256": "1f9572293d00a2888c15d772e5ef9250e1870c1df7d315ce0aa84f7624e73f30",
   "generatorRevision": "d8c4eca69519751e7e7b1fca722af89b30864f94",
   "generatorSha256": "9cba846b9695d3ef4266f7b522bdef39f79d750683b86682a483f8f0441cc1fc",
-  "validatorsSha256": "18c22dd1318db96b00e4ac437f73ee0e64c157accb83926c6b58631bc19400ce",
+  "validatorsSha256": "616b3fdace0d4c542e94f81273377057435fd115817f8964e662bb16b5bfce27",
   "contractId": "https://adrouter.co/contracts/marketplace/2.0.0"
 }

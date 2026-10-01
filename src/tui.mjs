@@ -1,16 +1,26 @@
+import { MarketplaceDisplay } from './marketplace-display.mjs';
 import { usdToMicrousd, formatUsd } from './money.mjs';
 import { randomUUID } from 'node:crypto';
 import { spawn } from 'node:child_process';
+import { TerminalCoordinator } from './terminal-coordinator.mjs';
 import { TerminalUI } from './tui-screen.mjs';
 import { AuthStore, Network, ClientError, networkOrigin, safeText } from './network.mjs';
 import { MarketplaceDraft, MarketplaceListing, MarketplaceNetworkConfig } from './generated/validators.mjs';
 
+export const accountingLines=s=>s?[`State: ${words(s.state)}`,`Reserved ${s.funded} · Charged ${s.charged} · Refunded ${s.refunded} test credits`,`Unresolved liability: ${s.reserved}`,s.state==='settlement_pending'?'Receipt pending: upstream outcome is unresolved.':`Settlement: ${words(s.state)}`]:['Receipt pending: remote stop/accounting could not be confirmed. Inspect My sessions.'];
 const item = (value, label, detail = '', disabled = false) => ({ value, label, detail, disabled });
 const required = value => value.trim() ? '' : 'Please enter a value.';
 const integer = (min, max) => value => /^(0|[1-9][0-9]*)$/.test(value) && Number.isSafeInteger(Number(value)) && Number(value) >= min && Number(value) <= max ? '' : `Enter a whole number from ${min} to ${max}.`;
 const date = value => typeof value === 'number' ? new Date(value).toLocaleString() : '—';
 const words = value => String(value ?? '—').replaceAll('_', ' ');
 const problems = {
+  workspace_directory_inaccessible:'Project directory: enter a readable directory path. Your entered value is retained.',
+  workspace_directory_required:'Project directory: choose a directory, rather than a file.',
+  workspace_root_symlink_rejected:'Project directory: use the canonical directory path without symlink components.',
+  workspace_import_empty:'Project directory: no eligible files remain after exclusions. Choose another directory.',
+  workspace_selection_invalid:'Project directory: import between 1 and 5000 eligible files.',
+  workspace_total_limit:'Project directory: eligible files exceed the 128 MiB import limit. Choose a smaller project.',
+  action_approval_required:'This action needs host approval. Headless coding cannot open a native approval dialog.',
   marketplace_owner_only: 'Sign in with the configured owner account. Other accounts cannot use this private marketplace.',
   marketplace_access_disabled: 'Owner access is disabled. Revoke this installation in the dashboard if sign-out cannot refresh it.',
   login_required: 'Sign in to AdRouter to continue.',
@@ -30,7 +40,7 @@ const problems = {
   private_owner_evaluation_required: 'Private acceptance is limited to the configured owner. Use the separately approved operator profile.',
   handshake_failed: 'The provider guest handshake failed. Known unused credits were returned.',
   handshake_required: 'Complete the provider guest handshake before coding.',
-  session_request_limit: 'All five inference requests were dispatched. Finish this session and explicitly accept another.',
+  session_request_limit: 'The session inference allowance is exhausted. Inspect its authoritative dispatch limit before accepting another.',
   marketplace_buyer_scope_only: 'Use the Buyer profile to request buyer permission only.',
   invalid_profile_name: 'Use a lowercase profile name starting with a letter, up to 32 letters, digits, underscores or hyphens.',
   activation_expired: 'Cold activation expired or the session closed. Start a new evaluation only after the provider is available.',
@@ -64,7 +74,14 @@ export const providerFields = [
 
 export async function runTui(options = {}, dependencies = {}) {
   const ui = dependencies.ui ?? new TerminalUI(); let store = dependencies.store ?? new AuthStore(undefined, options.profile ?? 'default');
-  let network = dependencies.network; let config; let runtimeConfig; const providersRunning = new Map(); const setupDrafts = new Map(); const limitDrafts = new Map(); let currentProviderId;
+  let network = dependencies.network; let config; let runtimeConfig; const providersRunning = new Map(); const setupDrafts = new Map(); const limitDrafts = new Map(); let currentProviderId;let verifiedIdentity,identityAt=0;
+  const display=new MarketplaceDisplay(()=>network,lines=>{ui.sidebar=lines;if(!ui.pending||ui.started)ui.draw?.();});
+  const clearIdentity=()=>{verifiedIdentity=undefined;identityAt=0;ui.context=`Signed out · ${store.profile} · ${network.origin}`;};
+  const refreshIdentity=async scope=>{
+    if(network.local){ui.context=`Local identity · ${store.profile} · ${network.origin}`;return;}
+    if(verifiedIdentity&&Date.now()-identityAt<60000)return;
+    try{const value=await network.request(scope.includes("marketplace:operator")?"/v2/admin/me":scope.includes("marketplace:buyer")?"/v2/me":"/v2/providers/me");verifiedIdentity=value;identityAt=Date.now();ui.context=`${value.email??"Email unavailable"} · ${store.profile}/${value.roles.join(",")} · ${network.origin}`;}catch{ui.context=`Identity unavailable · ${store.profile} · ${network.origin}`;}
+  };
   const actor = role => { if (network.local) network.actor = role; };
   const get = async (path, publicAccess = false) => {
     const value = await ui.task('Loading AdRouter', () => network.request(`/v2${path}`, { public: publicAccess }));
@@ -270,7 +287,7 @@ export async function runTui(options = {}, dependencies = {}) {
       else if (selection === 'refresh') cursor = undefined;
       else await attempt(async () => {
         const listing = await get(`/listings/${selection}`, true);
-        const action = await ui.menu('Compute details', [item('buy', 'Get a test-credit quote', listing.ready ? 'Review exact limits before reserving.' : 'The provider must start before a quote can be accepted.', !(config?.admissions || config?.privateRehearsal) || !(listing.ready || (listing.availability === 'cold' && listing.controlOnline))), item('back', 'Back')], { lines: listingLines(listing) });
+        const action = await ui.menu('Compute details', [item('buy', 'Get a test-credit quote', listing.ready ? 'Review exact limits before reserving.' : listing.availability==='cold'&&config.privateRehearsal?'Cold buyer activation is unavailable in private rehearsal. Ask the provider to warm the listing.':'The provider must start before a quote can be accepted.', !(config?.admissions || config?.privateRehearsal) || !(listing.ready || (config.admissions && listing.availability === 'cold' && listing.controlOnline))), item('back', 'Back')], { lines: listingLines(listing) });
         if (action === 'buy') await buy(listing);
       });
     }
@@ -305,32 +322,72 @@ export async function runTui(options = {}, dependencies = {}) {
   }
 
   async function codingAgent(session,listing) {
-    const input=await ui.form('Choose a project',[{name:'root',label:'Project directory',default:process.cwd(),validate:required}]);if(!input)return;
+    const input={root:process.cwd()};let manifest;
+    const cancelReservation=async()=>{
+      const stopped=await post(`/sessions/${session.id}/stop`);
+      await ui.page('Reservation cancelled',[`Refunded: ${stopped.refunded??'pending'} test credits`,`Held: ${stopped.reserved??'unresolved'} test credits`,stopped.state==='settlement_pending'?'Accounting pending: uncertain upstream outcome remains held.':`Status: ${words(stopped.state)}`]);
+    };
     const {projectManifest}=await import('./workspace.mjs');
-    const manifest=await ui.task('Prepare reviewed project manifest',()=>projectManifest(input.root));
-    await ui.page('Project import manifest',manifest.files.map(f=>`${f.path} · ${f.bytes} bytes${f.resource?' · instruction or executable resource':''}`));
-    if(!await confirm('Import this project?', [`${manifest.files.length} files · ${manifest.totalBytes} bytes`,'Excluded files and host credentials stay outside the buyer VM.','Every host application of changes gets a separate content review.'],'Import reviewed files'))return;
+    for(;;){
+      const selected=await ui.form('Choose a project',[{name:'root',label:'Project directory',maxLength:4096,validate:required}],input);
+      if(!selected){await cancelReservation();return;}
+      try{manifest=await ui.task('Prepare reviewed project manifest',()=>projectManifest(input.root));}
+      catch(e){await ui.page('Project directory needs attention',[`Project directory: ${input.root}`,...errorLines(e)]);continue;}
+      const resources=manifest.files.filter(f=>f.resource);
+      const next=await ui.menu('Project import manifest',[item('continue','Continue to import confirmation'),item('back','Choose another directory'),item('cancel','Cancel')],{lines:[`Canonical path: ${manifest.root}`,`Eligible files: ${manifest.files.length} · Total size: ${manifest.totalBytes} bytes`,`Reviewed resources: ${resources.map(f=>f.path).join(', ')||'none'}`,'Exclusions:',...manifest.exclusions.categories,...manifest.files.map(f=>`${f.path} · ${f.bytes} bytes`)]});
+      if(next==='cancel'){await cancelReservation();return;}
+      if(next!=='continue')continue;
+      if(!await confirm('Import this project?',[manifest.root,`${manifest.files.length} files · ${manifest.totalBytes} bytes`,'This permission imports reviewed files. Resource trust, VM launch and host application are separate permissions.'],'Import reviewed files'))continue;
+      break;
+    }
     const resources=manifest.files.filter(f=>f.resource);
     const trusted=resources.length?await confirm('Trust reviewed project resources?',resources.map(f=>f.path),'Trust for this isolated project'):false;
     const {openCodingBuyer,savedCodingContexts,pendingApplications}=await import('./coding-buyer.mjs');
     const contexts=await savedCodingContexts(store.profile,manifest.root);
-    const resumeId=contexts.length?await ui.menu('Coding context',[item('new','Start a new conversation'),...contexts.map(c=>item(c.id,`Resume ${date(c.savedAt)}`,c.id))],{lines:['This accepted quote supplies new authority. Previous inference and tool actions are not replayed.']}):'new';
-    if(!resumeId)return;
-    const buyer=await ui.task('Start coding development VM',signal=>openCodingBuyer(network,session.id,{root:manifest.root,files:manifest.files.map(f=>f.path),runtimeConfig,signal:undefined,trusted,profile:store.profile,...(resumeId!=='new'?{resumeId}:{})}),{cancel:false});
-    const applications=await pendingApplications(store.profile,manifest.root);
-    let interrupted=applications.length?await ui.menu('Interrupted application',[item('skip','Start coding without recovery'),...applications.map(a=>item(a.journal,a.operationId,`${a.completed} files confirmed complete`))],{lines:['Recover only the exact reviewed contents. Changed originals and replacement directories are rejected.']}):undefined;
-    if(interrupted==='skip')interrupted=undefined;
+    const resumeId=contexts.length?await ui.menu('Coding context',[item('new','Start a new conversation'),...contexts.map(c=>item(c.id,`Resume ${date(c.savedAt)}`,c.id))],{lines:['This accepted session supplies new authority. Previous inference and tool actions are not replayed.']}):'new';
+    if(!resumeId||!await confirm('Launch isolated coding VM?',[manifest.root,'The host terminal will review each mutation or command. VM reads are automatic.'],'Launch VM')){await cancelReservation();return;}
+    let buyer,interrupted,location='Changes remain in the VM.',saved,discard=false;
+    const coordinator=new TerminalCoordinator(ui,o=>buyer?.lifecycle.event(o.phase,o));
     try {
+      buyer=await ui.task('Start coding development VM',()=>openCodingBuyer(network,session.id,{root:manifest.root,files:manifest.files.map(f=>f.path),runtimeConfig,trusted,profile:store.profile,coordinator,approve:(a,p)=>coordinator.approve(a,p),...(resumeId!=='new'?{resumeId}:{})}));
+      const applications=await pendingApplications(store.profile,manifest.root);
+      interrupted=applications.length?await ui.menu('Interrupted application',[item('skip','Start coding without recovery'),...applications.map(a=>item(a.journal,a.operationId,`${a.completed} files confirmed complete`))],{lines:['Recover exact reviewed contents. Changed host originals are preserved.']}):undefined;
+      if(interrupted==='skip')interrupted=undefined;
+      let enterCoding=!interrupted;
       for(;;){
-        if(!interrupted)await ui.suspend(()=>buyer.interactive());
-        const saved=await ui.task('Save private coding context and workspace',()=>buyer.save());
-        const action=await ui.menu('Coding workspace',[item('continue','Continue coding'),item('apply','Review and Apply'),item('export','Review and export snapshot'),...(interrupted?[item('recover','Recover interrupted application')]:[]),item('finish','Finish session')],{lines:[`Saved context: ${saved.resumeId}`,'Changes remain inside the VM until you review and apply them.']});
-        if(action==='recover'){const result=await ui.suspend(()=>buyer.recover(interrupted));if(result.status==='applied')interrupted=undefined;await ui.page('Recovery result',[result.status,`Completed: ${(result.completed??[]).join(', ')}`]);}
-        if(action==='apply'){const result=await ui.suspend(()=>buyer.apply());if(result.status==='interrupted')interrupted=result.journal;await ui.page('Application result',[result.status,`Journal: ${result.journal}`,`Completed files: ${(result.completed??[]).join(', ')}`]);}
-        if(action==='export'){const result=await ui.suspend(()=>buyer.export());await ui.page('Reviewed snapshot',[result.directory,result.manifest]);}
-        if(!action||action==='finish')break;
+        if(enterCoding){await ui.suspend(()=>buyer.interactive());enterCoding=false;}
+        try{saved=await ui.task('Save private coding checkpoint',()=>buyer.save());location=`Saved privately: ${saved.resumeId} · ${date(saved.savedAt)}`;}
+        catch(e){await ui.page('Checkpoint could not be updated',[...errorLines(e),'The last successful checkpoint remains available.']);}
+        let current;try{current=await buyer.status();}catch{current=session;}
+        const action=await ui.menu('Coding workspace',[item('continue','Continue coding','Requires current accepted session authority.'),item('apply','Review and Apply'),item('export','Review and export snapshot'),...(interrupted?[item('recover','Recover interrupted application')]:[]),item('finish','Finish session')],{lines:[location,`Remaining time: ${Math.max(0,Math.floor((current.expiresAt-Date.now())/1000))} seconds`,`Dispatches: ${current.requestSequence??0}/${current.requestLimit}`,`Reserved allowance: ${current.funded??'unknown'} · Charged: ${current.charged??'unknown'} test credits`,`Held liability: ${current.reserved??'unknown'} · Refunded: ${current.refunded??'unknown'}`,'Host application requires separate content review.']});
+        if(action==='continue'){enterCoding=true;continue;}
+        if(['apply','recover','export'].includes(action)){
+          try{
+            const result=await buyer[action==='recover'?'recover':action](...(action==='recover'?[interrupted]:[]));
+            if(result.status==='interrupted'){interrupted=result.journal;location='Host application encountered a conflict; saved VM work is preserved.';}
+            if(result.status==='applied'){interrupted=undefined;location='Reviewed changes applied to the host; checkpoint saved privately.';}
+            await ui.page('Workspace result',[result.status??'exported',location,...(result.directory?[result.directory]:[]),...(result.completed??[])]);
+          }catch(e){await ui.page('Workspace remains available',[...errorLines(e),location]);}
+          continue;
+        }
+        if(!action||action==='finish'){
+          let changes;try{changes=await buyer.changes();}catch(e){await ui.page('Changes could not be inspected',errorLines(e));continue;}
+          const finish=await ui.menu('Finish with saved work',[item('apply','Review and Apply'),item('save','Save and finish'),item('discard','Discard VM work and finish'),item('back','Back')],{lines:[location,`Unapplied changes: ${changes.changes.length}`,...changes.changes.map(c=>`${c.kind}: ${c.path}`)]});
+          if(finish==='apply'){try{const result=await buyer.apply();location=words(result.status);if(result.status==='interrupted')interrupted=result.journal;}catch(e){await ui.page('Application not completed',errorLines(e));}continue;}
+          if(finish==='save'){try{await buyer.save();break;}catch(e){await ui.page('Save failed; session remains open',errorLines(e));continue;}}
+          if(finish==='discard'&&await confirm('Discard private VM work?',['This deletes this session checkpoint. Previously saved contexts and host files are preserved.'],'Discard and finish')){discard=true;break;}
+        }
       }
-    }finally{await buyer.close();}
+    }finally{
+      if(buyer){if(discard)await buyer.discard();const result=await buyer.close();await ui.page('Session completion',[`Cleanup: ${words(result.status)}`,...result.outcomes.map(o=>`${words(o.phase)}: ${o.status}`),...accountingLines(result.outcomes.find(o=>o.phase==='remote_stop')?.session)]);}
+    }
+  }
+
+  async function savedWork(){
+    const {savedCodingContexts,pendingApplications}=await import('./coding-buyer.mjs');
+    const contexts=await savedCodingContexts(store.profile),journals=await pendingApplications(store.profile);
+    const choice=await ui.menu('Saved coding work',[...contexts.map(c=>item(c.id,`Checkpoint ${date(c.savedAt)}`,c.root)),item('back','Back')],{lines:[`${journals.length} interrupted application journals`,...journals.map(j=>`${j.operationId}: ${j.completed} confirmed files · ${j.root}`),'To resume coding or recover an application, accept a new valid session and select the same project. Inference and tools are never replayed.']});
+    if(choice&&choice!=='back')await sessionDetail(choice);
   }
 
   async function sessionDetail(id) {
@@ -416,7 +473,7 @@ export async function runTui(options = {}, dependencies = {}) {
     if (chosen === 'custom') { const value = await ui.form('New or existing profile', [{ name: 'profile', label: 'Profile name', validate: value => /^[a-z][a-z0-9_-]{0,31}$/.test(value) ? '' : 'Use up to 32 lowercase letters, digits, underscores or hyphens.' }]); if (!value) return; profile = value.profile; }
     const next = new AuthStore(store.home, profile);
     const origin = (await next.read())?.origin ?? network.origin;
-    store = next; network = new Network({ origin, local: network.local, actor: options.actor ?? 'buyer', store });
+    clearIdentity();store = next; network = new Network({ origin, local: network.local, actor: options.actor ?? 'buyer', store });
     config = await get('/network/config', true);
     ui.context = `${store.profile} · ${network.local ? 'LOCAL · test credits' : network.origin}`;
   }
@@ -438,10 +495,10 @@ export async function runTui(options = {}, dependencies = {}) {
       network = new Network({ origin, local, actor: options.actor ?? 'buyer', store });
     }
     ui.context = `${store.profile ?? 'default'} · ${network.local ? 'LOCAL · test credits' : network.origin}`;
-    config = await attempt(() => get('/network/config', true));
+    config = await attempt(() => get('/network/config', true));display.start();
     for (;;) {
       if (terminating) return;
-      if (!network.local && !(await store.read())) {
+      if (!network.local && !(await store.read())) {clearIdentity();
         const selection = await ui.menu('Sign in to AdRouter', [item('login', store.profile === 'operator' ? 'Approve operator in browser' : 'Continue in browser', 'Approve this profile with the comparison code.'), ...(store.profile === 'operator' ? [] : [item('operatorLogin', 'Sign in as operator', 'Separate approval; current owner/operator role required.')]), item('profiles', 'Choose profile'), item('diagnostics', 'Network status'), item('exit', 'Exit')], { subtitle: config?.admissions === false ? (config.privateOwnerEvaluation ? config.privateRehearsal ? 'Private two-account rehearsal and owner evaluation. Ordinary purchases are disabled.' : 'Private owner evaluation only. Ordinary purchases are disabled.' : 'This network has marketplace admissions disabled.') : 'Your installation is separate from other AdRouter clients.' });
         if (!selection || selection === 'exit') return;
         if (selection === 'profiles') await attempt(selectProfile);
@@ -451,10 +508,11 @@ export async function runTui(options = {}, dependencies = {}) {
         continue;
       }
       const scope = network.local ? ['marketplace:buyer', 'marketplace:provider', 'marketplace:operator'] : String((await store.read())?.scope ?? '').split(' ');
+      await refreshIdentity(scope);
       const selection = await ui.menu('What would you like to do?', [
         item('browse', 'Browse compute', 'Find listings, compare prices and reserve bounded test-credit access.'),
         ...(scope.includes('marketplace:provider') ? [item('create', 'List compute', 'Guided publication and hot/cold provider operation.'), item('providers', 'My provider listings'), item('budget', 'Provider spending budget')] : []),
-        ...(scope.includes('marketplace:buyer') ? [item('sessions', 'My sessions'), item('receipts', 'Receipts')] : []), item('account', 'Account and sign-in'), item('profiles', 'Choose profile'), item('runtime', 'Runtime setup'), item('status', 'Network and diagnostics'),
+        ...(scope.includes('marketplace:buyer') ? [item('sessions', 'My sessions'),item('saved','Saved coding work'), item('receipts', 'Receipts')] : []), item('account', 'Account and sign-in'), item('profiles', 'Choose profile'), item('runtime', 'Runtime setup'), item('status', 'Network and diagnostics'),
         ...(scope.includes('marketplace:operator') ? [item('admin', network.local ? 'Local test operator' : 'Marketplace operator')] : []), item('exit', 'Exit'),
       ], { subtitle: `${network.local ? 'Local development identity · ' : ''}Test credits have no cash value.` });
       if (!selection || selection === 'exit') return;
@@ -463,12 +521,12 @@ export async function runTui(options = {}, dependencies = {}) {
         else if (selection === 'budget') await spendingBudget();
         else if (selection === 'browse') await browse(); else if (selection === 'create') await createListing();
         else if (selection === 'providers') await providers(); else if (selection === 'sessions') await sessions();
-        else if (selection === 'receipts') await receipts(); else if (selection === 'runtime') await runtimeSetup();
+        else if(selection==='saved')await savedWork();else if (selection === 'receipts') await receipts(); else if (selection === 'runtime') await runtimeSetup();
         else if (selection === 'admin') await admin();
         else if (selection === 'account') {
           actor('buyer'); const operator = !network.local && (await store.read())?.scope?.includes('marketplace:operator'); const profile = await get(operator ? '/admin/me' : scope.includes('marketplace:buyer') ? '/me' : '/providers/me');
           const action = await ui.menu('Account', [item('logout', network.local ? 'Return to welcome' : 'Sign out and revoke installation'), item('back', 'Back')], { lines: [`Account: ${profile.userId}`, `Permissions: ${profile.roles.join(', ')}`, `Available: ${profile.account.available} · Held: ${profile.account.held} · Earned: ${profile.account.earned}`, 'All balances are test credits with no cash value.'] });
-          if (action === 'logout' && await confirm('Sign out?', ['Hosted sign-out revokes the installation before clearing local state.'])) await ui.task('Signing out', () => network.logout());
+          if (action === 'logout' && await confirm('Sign out?', ['Hosted sign-out revokes the installation before clearing local state.'])) {await ui.task('Signing out', () => network.logout());clearIdentity();}
         } else if (selection === 'status') {
           config = await get('/network/config', true);
           await ui.page('Network and implementation status', [network.origin, `Admissions: ${config.admissions ? 'enabled' : 'disabled'}`, `Private owner evaluation: ${config.privateOwnerEvaluation ? 'enabled for designated owner' : 'disabled'}`, `Relay: ${words(config.relay)}`, `Buyer agent: ${words(config.agentExecution)}`, 'Provider: guest-only key entry; cold activation deadline 120 seconds.', 'Evaluation results remain provisional until every qualification check is verified. Reviewed export preserves host originals.', 'Runtime acceptance and actual provider acceptance are separate gates.']);
@@ -476,7 +534,7 @@ export async function runTui(options = {}, dependencies = {}) {
       });
     }
   } finally {
-    process.removeListener('SIGTERM', terminate); process.removeListener('SIGINT', terminate);
+    display.stop();process.removeListener('SIGTERM', terminate); process.removeListener('SIGINT', terminate);
     const cleanup = await Promise.allSettled([...providersRunning.values()].map(p => p.stop())); ui.stop();
     if (cleanup.some(r => r.status === 'rejected' || r.value?.status === 'cleanup_required')) throw new ClientError('provider_cleanup_required');
   }

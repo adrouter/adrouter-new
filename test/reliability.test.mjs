@@ -1,0 +1,76 @@
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import { mkdtemp, rm } from 'node:fs/promises';
+import { join } from 'node:path';
+import { tmpdir } from 'node:os';
+import { generateKeyPairSync, randomUUID } from 'node:crypto';
+import { AuthStore, Network } from '../src/network.mjs';
+import { BuyerLifecycle, backgroundOperation } from '../src/buyer-lifecycle.mjs';
+import { SandboxRuntime, RuntimeError } from '../src/runtime.mjs';
+import { ActionApproval } from '../src/buyer.mjs';
+import { summaryLines, MarketplaceDisplay } from '../src/marketplace-display.mjs';
+import { PassThrough } from 'node:stream';
+import { TerminalUI, renderScreen } from '../src/tui-screen.mjs';
+import { TerminalCoordinator } from '../src/terminal-coordinator.mjs';
+const delay=ms=>new Promise(r=>setTimeout(r,ms));
+test('independent loops continue while a slow status operation waits without overlapping itself',async()=>{
+ let resolve,active=0,max=0,touches=0;const status=backgroundOperation(async()=>{active++;max=Math.max(max,active);await new Promise(r=>resolve=r);active--;},5,()=>{}),keepalive=backgroundOperation(async()=>{touches++;},5,()=>{});
+ try{await delay(40);assert.equal(max,1);assert.ok(touches>=3);status.stop();resolve();await status.pending;}finally{status.stop();keepalive.stop();}
+});
+test('first failure and cleanup results retain only sanitized metadata',()=>{
+ const l=new BuyerLifecycle();l.event('console',{code:'guest_console_failed',exitCode:1,signal:'SIGTERM',privatePrompt:'synthetic private content'});l.event('cleanup',{code:'cleanup_failed'});assert.equal(l.firstFailure.code,'guest_console_failed');assert.equal(JSON.stringify(l).includes('synthetic private content'),false);assert.equal(l.events.length,2);
+});
+test('controller reads preserve owned VM; uncertain effectful execution removes it and keeps first error',async()=>{
+ const runtime=new SandboxRuntime({executable:'/tmp/msb',library:'/tmp/lib',home:'/tmp/state'}),name='adrnew-'+randomUUID();runtime.owned.add(name);let removes=0;
+ runtime.call=async()=>{throw new RuntimeError('runtime_command_failed');};runtime.remove=async()=>{removes++;throw new RuntimeError('cleanup_failed');};
+ await assert.rejects(runtime.readCheckpoint(name,['node','-e','synthetic']),/runtime_command_failed/);assert.equal(removes,0);assert.ok(runtime.owned.has(name));await assert.rejects(runtime.run(name,['node','-e','synthetic']),/runtime_command_failed/);assert.equal(removes,1);
+});
+test('parallel status/profile callers rotate refresh once; cross-process lock wait can be cancelled',async()=>{
+ const home=await mkdtemp(join(tmpdir(),'adr-reliability-auth-'));const store=new AuthStore(home);const keys=generateKeyPairSync('ed25519');let refreshes=0,requests=0;
+ try{await store.write({origin:'https://example.test',privateKey:keys.privateKey.export({format:'jwk'}),publicKey:keys.publicKey.export({format:'jwk'}),expiresAt:1,refresh_token:'synthetic',installation_id:'synthetic'});const n=new Network({origin:'https://example.test',store,fetcher:async url=>{if(url.endsWith('/token')){refreshes++;await delay(30);return Response.json({access_token:'synthetic',refresh_token:'synthetic-rotated',expires_in:3600});}requests++;return Response.json({ok:true});}});await Promise.all(Array.from({length:5},()=>n.request('/v2/me')));assert.equal(refreshes,1);assert.equal(requests,5);
+ let unlock;const locked=store.withLock(()=>new Promise(r=>unlock=r));while(!unlock)await delay(1);const abort=new AbortController();const waiter=new AuthStore(home).withLock(()=>assert.fail('cancelled waiter executed'),{signal:abort.signal});abort.abort();await assert.rejects(waiter,/cancelled/);unlock();await locked;
+ }finally{await rm(home,{recursive:true,force:true});}
+});
+test('one-shot approvals reject altered/reused/expired content and tool identities',()=>{
+ const action={sessionId:'s',toolCallId:'t',name:'write',args:{content:'blue'}};const p=new ActionApproval(action),decision={id:p.id,digest:p.digest,allowOnce:true};assert.throws(()=>p.consume({...action,toolCallId:'other'},decision));p.consume(action,decision);assert.throws(()=>p.consume(action,decision));const expired=new ActionApproval(action);expired.expiresAt=1;assert.throws(()=>expired.consume(action,{id:expired.id,digest:expired.digest,allowOnce:true}));
+});
+test('approval queue defaults to denial, reviews one at a time and offers scrolling details',async()=>{
+ let active=0,max=0;const ui={input:{removeListener(){},on(){},setRawMode(){},resume(){}},menu:async()=>{active++;max=Math.max(max,active);await delay(5);active--;return 'deny';}};const c=new TerminalCoordinator(ui);assert.deepEqual(await Promise.all([c.approve({name:'write',args:{content:'blue'}},{expiresAt:Date.now()+10000}),c.approve({name:'bash',args:{command:'pwd'}},{expiresAt:Date.now()+10000})]),[false,false]);assert.equal(max,1);
+});
+test('unavailable public display retains stale totals; responsive controls outrank sidebar',async()=>{
+ const summary={at:Date.now(),totals:Object.fromEntries(['published','hot','cold','immediateHot','coldControlReady','activeServing','capacityHeld','occupied','qualified'].map(k=>[k,k==='published'?125:0])),listings:[]};let fail=false;const lines=[];const n={origin:'synthetic',request:async()=>{if(fail)throw Error();return summary;}};const d=new MarketplaceDisplay(()=>n,v=>lines.push(v));await d.poll();fail=true;await d.poll();assert.ok(lines[1].includes('Published: 125'));assert.ok(lines[1].some(l=>l.includes('STALE')));d.stop();assert.ok(summaryLines(null).includes('Unavailable'));
+ const narrow=renderScreen({title:'Approve action',lines:[{text:'Allow once',selected:true}],sidebar:['Marketplace availability']},50,10,false);assert.ok(narrow.includes('Allow once'));assert.ok(!narrow.includes('Marketplace availability'));
+});
+test('resized import controls and form validation preserve values and focus',async()=>{
+ const input=new PassThrough(),output=new PassThrough();input.isTTY=true;input.setRawMode=v=>input.isRaw=v;output.isTTY=true;output.columns=40;output.rows=10;let rendered='';output.on('data',b=>rendered+=b);const ui=new TerminalUI({input,output,color:false,reducedMotion:true});ui.start();
+ try{const menu=ui.menu('Project import manifest',[{value:'continue',label:'Continue to import confirmation'},{value:'back',label:'Choose another directory'},{value:'cancel',label:'Cancel'}],{lines:Array(100).fill('fixture metadata')});output.rows=8;output.emit('resize');assert.ok(rendered.includes('Continue to import confirmation'));input.emit('keypress','',{name:'escape'});assert.equal(await menu,null);
+ const values={root:'inaccessible'};const form=ui.form('Project',[{name:'root',label:'Project directory',validate:()=> 'Enter a readable directory.'}],values);input.emit('keypress','',{name:'return'});input.emit('keypress','',{name:'return'});assert.ok(rendered.includes('Project directory:'));input.emit('keypress','',{name:'escape'});await form;assert.equal(values.root,'inaccessible');
+ }finally{ui.stop();}
+});
+
+test('host broker only approves validated completed calls, rejects tampering/reuse and survives transient status',async()=>{
+ const {openCodingBuyer}=await import('../src/coding-buyer.mjs');
+ const {realpath,writeFile}=await import('node:fs/promises');
+ const root=await realpath(await mkdtemp(join(tmpdir(),'adr-broker-fixture-'))),profile='test-'+randomUUID().slice(0,8),id=randomUUID();await writeFile(join(root,'index.html'),'red');
+ const images=JSON.parse(await (await import('node:fs/promises')).readFile(new URL('../runtime/guest-images.json',import.meta.url)));
+ const session={id,protocol:'coding_v1',state:'ready',handshakeStatus:'succeeded',expiresAt:Date.now()+3600000,requestLimit:100,requestSequence:0,maxOutputTokens:100,contextWindowTokens:32768,model:'synthetic',listingId:randomUUID(),listingRevision:1};
+ let configuration,dispatches=0,statusFail=false,approve=0,removes=0;
+ const runtime={owned:new Set(),verify:async()=>{},create:async()=>{const name='adrnew-'+randomUUID();runtime.owned.add(name);return name;},run:async(_n,cmd)=>{const match=cmd[2]?.match(/fs.writeFileSync\('\/tmp\/adr-coding.json',("(?:\\.|[^"\\])*"),\{mode:0o600\}\)/);if(match)configuration=JSON.parse(JSON.parse(match[1]));return '';},readCheckpoint:async()=>'',touch:async()=>{},inspect:async()=>({config:{manifest_digest:images.coding[`linux-${process.arch}`],mounts:[],network:{policy:{default_egress:'deny'}}}}),remove:async name=>{removes++;runtime.owned.delete(name);}};
+ const network={request:async(path)=>{if(path.endsWith('/stop'))return {...session,state:'settled'};if(path.endsWith('/inference')){dispatches++;return {requestId:randomUUID(),text:'',toolCalls:[{id:'blue',type:'function',function:{name:'write',arguments:'{"path":"index.html","content":"blue"}'}}],usage:{}};}if(statusFail)throw Object.assign(Error('synthetic'),{code:'network_unavailable_outcome_unknown'});return {...session};}};
+ let buyer;
+ try{buyer=await openCodingBuyer(network,id,{root,files:['index.html'],profile,runtime,approve:async()=>{approve++;return true;},intervals:{status:100000,checkpoint:100000,keepalive:100000}});
+ const send=async(path,body)=>{const r=await fetch(configuration.control.replace('host.microsandbox.internal','127.0.0.1')+path,{method:'POST',headers:{authorization:'Bearer '+configuration.capability,'content-type':'application/json'},body:JSON.stringify(body)});return {status:r.status,body:await r.text()};};
+ assert.equal((await send('/approval',{name:'write',toolCallId:'invented',args:{path:'index.html',content:'blue'}})).status,400);assert.equal(approve,0);
+ statusFail=true;assert.equal((await send('/inference',{})).status,400);assert.equal(dispatches,0);assert.equal(removes,0);assert.equal(buyer.lifecycle.paused,true);statusFail=false;
+ assert.equal((await send('/inference',{})).status,200);assert.equal(dispatches,1);
+ assert.equal((await send('/approval',{name:'write',toolCallId:'blue',args:{path:'index.html',content:'altered'}})).status,400);assert.equal(approve,0);
+ assert.equal((await send('/approval',{name:'write',toolCallId:'blue',args:{path:'index.html',content:'blue'}})).status,200);assert.equal(approve,1);
+ assert.equal((await send('/approval',{name:'write',toolCallId:'blue',args:{path:'index.html',content:'blue'}})).status,400);assert.equal(approve,1);
+ const first=await buyer.close(),again=await buyer.close();assert.deepEqual(first,again);assert.equal(removes,1);assert.equal(first.firstFailure.code,'network_unavailable_outcome_unknown');
+ }finally{await buyer?.close();await rm(root,{recursive:true,force:true});await rm(join((await import('node:os')).homedir(),'.adr-v2','profiles',profile),{recursive:true,force:true});}
+});
+
+test('terminal restoration and console cleanup never replace the original failure',async()=>{
+ const input=new PassThrough(),output=new PassThrough(),ui=new TerminalUI({input,output});ui.stop=()=>{};ui.start=()=>{throw Object.assign(Error('secondary'),{code:'terminal_restore_failed'});};const first=Object.assign(Error('first'),{code:'guest_console_failed'});await assert.rejects(ui.suspend(async()=>{throw first;}),e=>e===first&&e.restorationCode==='terminal_restore_failed');
+ const runtime=new SandboxRuntime({executable:'/not-an-executable',library:'/tmp/lib',home:'/tmp/state'}),name='adrnew-'+randomUUID(),events=[];runtime.owned.add(name);runtime.remove=async()=>{throw new RuntimeError('cleanup_failed');};await assert.rejects(runtime.attachConsole(name,['node'],{stdio:'ignore',onOutcome:o=>events.push(o)}),/guest_console_failed/);assert.equal(events[0].code,'guest_console_failed');assert.equal(events.find(e=>e.phase==='guest_removal').code,'cleanup_failed');
+});

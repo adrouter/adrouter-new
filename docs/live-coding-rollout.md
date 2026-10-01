@@ -90,3 +90,57 @@ financial reservations, including the historical USD 0.002075 liability; never
 replay its request. Drain the single relay before restoring the receipt's prior
 immutable staging image. Keep migrations, Pages and protected policies intact.
 The receipt records both package and application recovery identities.
+
+## Reliability controls after the first Mac run
+
+Coding tools and operator shell shortcuts use the trusted host terminal review.
+The host owns input and rendering during each queued review; guest output cannot
+write over the panel. Deny is the default. Allow once is bound to the accepted
+session, exact action/tool identity, content digest and expiry. Expand details to
+scroll the complete diff or command. Commands always need approval, including
+commands used to read. Print/JSON/RPC modes report `approval_required` when no
+host reviewer is available; they do not open native dialogs.
+
+The project picker retains the directory when validation or review returns to it.
+The manifest has Continue to import confirmation, Choose another directory, and
+Cancel. Import, executable-resource trust, VM launch, and applying changes to the
+host are independent choices. Cancellation after reservation stops the session
+and displays confirmed refunds, held liability or pending accounting.
+
+Keepalive, authenticated status and checkpoint reads are independent and bounded,
+with no overlapping runs of each operation. Recoverable status failures pause new
+inference and mutations while status is rechecked. A checkpoint read failure keeps
+the VM and last successful snapshot; uncertain effectful execution still requires
+VM teardown. Lifecycle diagnostics retain only sanitized phase/time/error/process
+and cleanup metadata in the private session directory. Cleanup outcomes and pending
+settlement remain separate, and never replace the original failure.
+
+Saved coding work lists checkpoint timestamps and interrupted application journals.
+Resume requires a valid accepted session and the same project. Finish offers
+Review and Apply, Save and finish, or explicit discard. Ordinary denial and host
+conflicts preserve the coding/review interface and operator edits. The interface
+shows server limits and accounting, including pending receipt reasons.
+
+The header uses the authenticated marketplace email when available, profile/role
+and network. The public availability panel obtains full-population totals from
+`GET /v2/listings/summary`; its bounded listing rows are not network totals. Hot
+availability, cold control readiness, qualification, serving activity and unresolved
+execution holds are distinct. Failed display polling retains visibly stale data;
+it never substitutes zero. Cold buyer activation is disabled during private
+rehearsal. Narrow terminals prioritize controls and omit the panel. Set
+`ADR_REDUCED_MOTION=1` to use static waiting indicators with elapsed time.
+
+Local acceptance commands:
+
+```sh
+npm run check
+npm run coding:verify
+node scripts/verify-coding-mac.mjs --idle
+npm run coding:pty
+```
+
+The idle command uses an actual Mac VM for eleven minutes, injects a controller
+read failure, and verifies the blue website, denied mutation, add/delete/command,
+private checkpoint, host application, resume and teardown using synthetic inference.
+The PTY gate uses actual guest coding and host reviews for more than five minutes.
+These gates do not establish real two-account/provider acceptance or paid outcomes.

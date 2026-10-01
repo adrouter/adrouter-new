@@ -203,6 +203,6 @@ export function renderBanner(width, version, context, color = true, mode = 'true
   const arrowWidth = Math.max(...PROMPT_WORDMARK.map(visibleWidth));
   const detailWidth = Math.max(1, width - 30 - arrowWidth - 2);
   const plain = text => [...text].slice(0, detailWidth).join('');
-  const details = ['', '', '', renderBubbleField(detailWidth, 0), renderBubbleField(detailWidth, 1), '', brandText('adr v2'), plain(`v${version}`), plain('Compute marketplace'), plain(context), '', renderBubbleField(detailWidth, 2), renderBubbleField(detailWidth, 3)];
+  const details = ['', '', '', renderBubbleField(detailWidth, 0), renderBubbleField(detailWidth, 1), '', brandText('adr v2'), plain(`v${version}`), plain(context.split(' · ')[0]||'Signed out'), plain(context.split(' · ').slice(1).join(' · ')), '', renderBubbleField(detailWidth, 2), renderBubbleField(detailWidth, 3)];
   return jellyfish.map((line, row) => `${line} ${padStartupLine(arrow[row] ?? '', arrowWidth)} ${details[row] ?? ''}`);
 }
