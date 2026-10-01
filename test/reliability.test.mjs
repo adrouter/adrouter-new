@@ -108,3 +108,23 @@ test('binary assets are excluded before import and never decoded into corrupt ho
  const {projectManifest,importWorkspace}=await import('../src/workspace.mjs'),{realpath,writeFile,readFile}=await import('node:fs/promises');const root=await realpath(await mkdtemp(join(tmpdir(),'adr-binary-fixture-'))),binary=Buffer.from([0x89,0x50,0x4e,0x47,0,0xff]);
  try{await writeFile(join(root,'index.html'),'synthetic UTF-8');await writeFile(join(root,'asset.png'),binary);const manifest=await projectManifest(root);assert.deepEqual(manifest.files.map(f=>f.path),['index.html']);assert.equal(manifest.exclusions.counts.binary,1);await assert.rejects(importWorkspace(root,['asset.png']),/workspace_binary_file_rejected/);assert.deepEqual(await readFile(join(root,'asset.png')),binary);}finally{await rm(root,{recursive:true,force:true});}
 });
+
+test('503 status and interrupted response bodies remain recoverable; confirmed auth errors do not',async()=>{
+ const {recoverableStatusFailure}=await import('../src/buyer-lifecycle.mjs');
+ const service=new Network({origin:'http://127.0.0.1:8790',local:true,fetcher:async()=>Response.json({code:'marketplace_unavailable'},{status:503})});await assert.rejects(service.request('/v2/sessions/synthetic'),e=>e.status===503&&recoverableStatusFailure(e));
+ const interrupted=new Network({origin:'http://127.0.0.1:8790',local:true,fetcher:async()=>new Response(new ReadableStream({start(c){c.error(new DOMException('synthetic','AbortError'));}}))});await assert.rejects(interrupted.request('/v2/sessions/synthetic'),e=>e.code==='network_unavailable_outcome_unknown'&&recoverableStatusFailure(e));
+ const revoked=new Network({origin:'http://127.0.0.1:8790',local:true,fetcher:async()=>Response.json({code:'installation_revoked'},{status:401})});await assert.rejects(revoked.request('/v2/sessions/synthetic'),e=>e.status===401&&!recoverableStatusFailure(e));
+});
+
+test('cancelled late VM creation is awaited and scoped cleanup is retried before startup returns',async()=>{
+ const {openCodingBuyer}=await import('../src/coding-buyer.mjs'),{realpath,writeFile}=await import('node:fs/promises');const root=await realpath(await mkdtemp(join(tmpdir(),'adr-startup-cancel-'))),profile='test-'+randomUUID().slice(0,8),id=randomUUID(),abort=new AbortController();await writeFile(join(root,'index.html'),'synthetic');let release,copy,removes=0,stops=0;
+ const session={id,protocol:'coding_v1',state:'ready',handshakeStatus:'succeeded',expiresAt:Date.now()+3600000,requestLimit:100,requestSequence:0,maxOutputTokens:100,contextWindowTokens:32768,model:'synthetic',listingId:randomUUID(),listingRevision:1};
+ const runtime={owned:new Set(),verify:async()=>{},create:async options=>{copy=options.copyDirectory;const name='adrnew-'+randomUUID();runtime.owned.add(name);await new Promise(r=>release=r);return name;},remove:async name=>{removes++;if(removes===1)throw new RuntimeError('synthetic_cleanup_failure');runtime.owned.delete(name);}};
+ const network={request:async path=>{if(path.endsWith('/stop')){stops++;return {...session,state:'settled'};}return session;}};
+ let rejected;
+ try{const pending=openCodingBuyer(network,id,{root,files:['index.html'],profile,runtime,signal:abort.signal}).catch(e=>{rejected=e;});while(!release)await delay(5);abort.abort();release();await pending;assert.equal(rejected.code,'cancelled');assert.equal(rejected.lifecycleOutcome.firstFailure.code,'cancelled');assert.equal(runtime.owned.size,0);assert.equal(removes,2);assert.equal(stops,1);await assert.rejects((await import('node:fs/promises')).lstat(copy),e=>e.code==='ENOENT');}finally{await rm(root,{recursive:true,force:true});await rm(join((await import('node:os')).homedir(),'.adr-v2','profiles',profile),{recursive:true,force:true});}
+});
+
+test('termination cancels a non-cancellable UI task rather than allowing startup to continue',async()=>{
+ const input=new PassThrough(),output=new PassThrough();input.isTTY=true;input.setRawMode=v=>input.isRaw=v;output.isTTY=true;output.columns=80;output.rows=24;const ui=new TerminalUI({input,output});ui.start();const pending=ui.task('Startup',signal=>new Promise(resolve=>signal.addEventListener('abort',()=>resolve('cancelled'))),{cancel:false});ui.terminate();assert.equal(await pending,'cancelled');assert.equal(input.isRaw,false);
+});

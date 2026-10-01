@@ -50,18 +50,41 @@ export async function openCodingBuyer(network,sessionId,{root,files,runtimeConfi
   if(!/^[a-z][a-z0-9_-]{0,31}$/.test(profile))throw new ClientError('invalid_profile_name');
   if(!/^[a-f0-9-]{36}$/.test(sessionId))throw new ClientError('coding_session_required');
   let guest,workspace,closing,watchdog,statusPoll,expires,checkpoint,saving,snapshot,discarded=false,statusChecking,dependencyApproved=false,dependencyBytes=0;const abort=new AbortController(), queue=new DispatchQueue(),authorities=new Map(),mainCapability=randomBytes(32).toString('base64url');
-  const runtime=provided??(runtimeConfig?new SandboxRuntime(runtimeConfig):await configuredRuntime());
-  const session=await network.request(`/v2/sessions/${sessionId}`,{signal});
-  if(!Number.isSafeInteger(session.expiresAt)||!Number.isInteger(session.requestLimit)||session.requestLimit<1||session.requestLimit>100||session.protocol!=='coding_v1'||!['ready','active'].includes(session.state)||session.handshakeStatus!=='succeeded'||session.expiresAt<=Date.now())throw new ClientError('coding_session_required');
-  let privateRoot=homedir();for(const part of ['.adr-v2','profiles',profile,'coding']){privateRoot=join(privateRoot,part);await mkdir(privateRoot,{recursive:true,mode:0o700});const st=await lstat(privateRoot);if(!st.isDirectory()||st.isSymbolicLink()||st.uid!==process.getuid()||(st.mode&0o077))throw new ClientError('coding_profile_unsafe');}
-  const ps=await lstat(privateRoot);if(!ps.isDirectory()||ps.isSymbolicLink()||(ps.mode&0o077)||ps.uid!==process.getuid())throw new ClientError('coding_profile_unsafe');
+  const startupSignal=signal?AbortSignal.any([signal,abort.signal]):abort.signal;
   const lifecycle=new BuyerLifecycle(value=>{try{progress({status:value.events.at(-1)?.phase,paused:lifecycle.paused});}catch{}});
-  const storage=join(privateRoot,sessionId);await mkdir(storage,{recursive:true,mode:0o700});const ss=await lstat(storage);if(!ss.isDirectory()||ss.isSymbolicLink()||ss.uid!==process.getuid()||(ss.mode&0o077))throw new ClientError('coding_profile_unsafe');
+  let runtime,session,privateRoot,storage,storageValidated=false,requestClose,finishStartup;
+  const startupReady=new Promise(resolve=>{finishStartup=resolve;});
+  const earlySignal=name=>{lifecycle.event('signal',{code:'cancelled',signal:name,status:'cancelled'});if(requestClose)void requestClose().catch(()=>{});else abort.abort();};
+  const signalHandlers=new Map(['SIGINT','SIGTERM','SIGHUP','SIGTSTP'].map(name=>[name,()=>earlySignal(name)]));
+  const onAbort=()=>{lifecycle.event('cancellation',{code:'cancelled'});if(requestClose)void requestClose().catch(()=>{});else abort.abort();};
+  for(const [name,handler] of signalHandlers)process.once(name,handler);
+  signal?.addEventListener('abort',onAbort,{once:true});if(signal?.aborted)onAbort();
+  const persistDiagnostics=async outcomes=>{
+    if(!storageValidated)return;
+    await writeFile(join(storage,'lifecycle.json'),JSON.stringify({firstFailure:lifecycle.firstFailure,events:lifecycle.events,outcomes:outcomes.map(({session,...o})=>({...o,state:typeof session?.state==='string'&&/^[a-z_]{1,80}$/.test(session.state)?session.state:null}))}),{mode:0o600});
+  };
+  try {
+    startupSignal.throwIfAborted();
+    runtime=provided??(runtimeConfig?new SandboxRuntime(runtimeConfig):await configuredRuntime());
+    session=await network.request(`/v2/sessions/${sessionId}`,{signal:startupSignal});
+    if(!Number.isSafeInteger(session.expiresAt)||!Number.isInteger(session.requestLimit)||session.requestLimit<1||session.requestLimit>100||session.protocol!=='coding_v1'||!['ready','active'].includes(session.state)||session.handshakeStatus!=='succeeded'||session.expiresAt<=Date.now())throw new ClientError('coding_session_required');
+    privateRoot=homedir();for(const part of ['.adr-v2','profiles',profile,'coding']){privateRoot=join(privateRoot,part);await mkdir(privateRoot,{recursive:true,mode:0o700});const st=await lstat(privateRoot);if(!st.isDirectory()||st.isSymbolicLink()||st.uid!==process.getuid()||(st.mode&0o077))throw new ClientError('coding_profile_unsafe');}
+    storage=join(privateRoot,sessionId);await mkdir(storage,{recursive:true,mode:0o700});const ss=await lstat(storage);if(!ss.isDirectory()||ss.isSymbolicLink()||ss.uid!==process.getuid()||(ss.mode&0o077))throw new ClientError('coding_profile_unsafe');storageValidated=true;
+    startupSignal.throwIfAborted();
+  }catch(original){
+    const error=startupSignal.aborted&&original.name==='AbortError'?new ClientError('cancelled'):original;
+    lifecycle.event('initial_status',{code:error.code??'coding_startup_failed'});
+    for(const [name,handler] of signalHandlers)process.removeListener(name,handler);signal?.removeEventListener('abort',onAbort);
+    const outcomes=[];try{const stopped=await network.request(`/v2/sessions/${sessionId}/stop`,{method:'POST',body:{},signal:AbortSignal.timeout(30000)});outcomes.push({phase:'remote_stop',status:'succeeded',session:stopped});}catch(e){outcomes.push({phase:'remote_stop',status:'failed',code:e.code??'cleanup_failed'});}
+    await persistDiagnostics(outcomes).catch(()=>{});error.lifecycleOutcome={firstFailure:lifecycle.firstFailure,outcomes};throw error;
+  }
   const close=async()=>{
     if(closing)return closing;lifecycle.closing=true;lifecycle.event('closure',{status:'closing'});
     queue.stop();approvals.stop();for(const [name,handler] of signalHandlers)process.removeListener(name,handler);
     signal?.removeEventListener('abort',onAbort);watchdog?.stop();statusPoll?.stop();checkpoint?.stop();clearTimeout(expires);
     closing=(async()=>{
+      if(!snapshot)abort.abort();
+      await startupReady;
       if(!discarded&&snapshot&&guest&&runtime.owned.has(guest))await snapshot().catch(()=>{});
       abort.abort();
       const operations=[['guest_removal',()=>guest&&runtime.owned.has(guest)?runtime.remove(guest):undefined],
@@ -70,14 +93,10 @@ export async function openCodingBuyer(network,sessionId,{root,files,runtimeConfi
       const outcomes=await Promise.all(operations.map(async([phase,work])=>{try{const value=await work();lifecycle.event(phase,{status:'succeeded'});return {phase,status:'succeeded',...(phase==='remote_stop'?{session:value}:{})};}catch(e){lifecycle.event(phase,{code:e.code??'cleanup_failed',status:'failed'});return {phase,status:'failed',code:e.code??'cleanup_failed'};}}));
       const stopped=outcomes.find(o=>o.phase==='remote_stop');outcomes.push({phase:'settlement',status:['settled','refunded'].includes(stopped?.session?.state)?'succeeded':'pending'});lifecycle.event('settlement',{status:outcomes.at(-1).status});
       server.closeAllConnections();if(server.listening)await new Promise(r=>server.close(r));
-      try{await writeFile(join(storage,'lifecycle.json'),JSON.stringify({firstFailure:lifecycle.firstFailure,events:lifecycle.events,outcomes:outcomes.map(({session,...o})=>({...o,state:typeof session?.state==='string'&&/^[a-z_]{1,80}$/.test(session.state)?session.state:null}))}),{mode:0o600});}catch{outcomes.push({phase:'diagnostic_save',status:'failed',code:'diagnostic_save_failed'});}
+      try{await persistDiagnostics(outcomes);}catch{outcomes.push({phase:'diagnostic_save',status:'failed',code:'diagnostic_save_failed'});}
       return {status:outcomes.some(o=>o.status==='failed')?'cleanup_required':'closed',outcomes,firstFailure:lifecycle.firstFailure};
     })();return closing;
   };
-  const onSignal=name=>{lifecycle.event('signal',{signal:name,status:'cancelled'});void close().catch(()=>{});};
-  const signalHandlers=new Map(['SIGINT','SIGTERM','SIGHUP','SIGTSTP'].map(name=>[name,()=>onSignal(name)]));
-  const onAbort=()=>{lifecycle.event('cancellation',{code:'cancelled'});void close().catch(()=>{});};
-  for(const [name,handler] of signalHandlers)process.once(name,handler);
   const status=async()=>{
     if(closing)throw new ClientError('session_not_active');
     if(statusChecking)return statusChecking;
@@ -140,21 +159,23 @@ export async function openCodingBuyer(network,sessionId,{root,files,runtimeConfi
       res.writeHead(200,{'content-type':'application/json'}).end(JSON.stringify(reply));
     }catch(e){const code=/^[a-z0-9_]{1,80}$/.test(e.code??'')?e.code:'coding_bridge_rejected';if(!res.destroyed){if(res.headersSent)res.end(JSON.stringify({type:'error',code})+'\n');else res.writeHead(400,{'content-type':'application/json'}).end(JSON.stringify({code}));}}
   });
+  requestClose=close;
   try {
-    await runtime.verify({signal});workspace=await importWorkspace(root,files);
+    await runtime.verify({signal:startupSignal});startupSignal.throwIfAborted();workspace=await importWorkspace(root,files);startupSignal.throwIfAborted();
     const payload=new URL('../coding-runtime/',import.meta.url),provenance=JSON.parse(await readFile(new URL('provenance.json',payload)));
     if(provenance.revision!=='be7c53dc0b63fb90b70bd6cb7cad4d5713cc0d1a')throw new ClientError('coding_runtime_provenance_invalid');
     for(const [p,digest] of Object.entries(provenance.files))if(hash(await readFile(new URL(p,payload)))!==digest)throw new ClientError('coding_runtime_digest_mismatch');
-    await cp(payload,join(workspace.copy,'.adr-runtime'),{recursive:true});
+    await cp(payload,join(workspace.copy,'.adr-runtime'),{recursive:true});startupSignal.throwIfAborted();
     await new Promise(r=>server.listen(0,'0.0.0.0',r));
-    guest=await createGuest(runtime,[server.address().port],workspace.copy,undefined,{signal,continuous:true,kind:'coding'});
-    await runtime.run(guest,['node','-e',`const fs=require('node:fs');fs.copyFileSync('/workspace/.adr-runtime/tools/${process.arch}/rg','/usr/local/bin/rg');fs.chmodSync('/usr/local/bin/rg',0o700);const cp=require('node:child_process');for(const p of ['node','python3','git','rg'])if(cp.spawnSync(p,['--version']).status!==0)throw Error('development_image_incomplete');`]);
-    const configuration={control:`http://host.microsandbox.internal:${server.address().port}`,capability:mainCapability,sessionId,model:session.model??(await network.request(`/v2/listings/${session.listingId}`,{public:true})).model,maxOutputTokens:session.maxOutputTokens,contextWindowTokens:session.contextWindowTokens,expiresAt:session.expiresAt,trusted,thinking:session.capabilities?.includes('thinking_v1')??false,resume:!!resumeId};
-    await runtime.run(guest,['node','-e',`const fs=require('node:fs');fs.writeFileSync('/tmp/adr-coding.json',${JSON.stringify(JSON.stringify(configuration))},{mode:0o600});fs.writeFileSync('/tmp/.npmrc',${JSON.stringify(`registry=http://host.microsandbox.internal:${server.address().port}/dependencies/npm/\n//host.microsandbox.internal:${server.address().port}/:_authToken=${mainCapability}\nignore-scripts=true\naudit=false\nfund=false\n`)},{mode:0o600});`],{signal});
+    guest=await createGuest(runtime,[server.address().port],workspace.copy,undefined,{signal:startupSignal,continuous:true,kind:'coding'});
+    await runtime.run(guest,['node','-e',`const fs=require('node:fs');fs.copyFileSync('/workspace/.adr-runtime/tools/${process.arch}/rg','/usr/local/bin/rg');fs.chmodSync('/usr/local/bin/rg',0o700);const cp=require('node:child_process');for(const p of ['node','python3','git','rg'])if(cp.spawnSync(p,['--version']).status!==0)throw Error('development_image_incomplete');`],{signal:startupSignal});
+    const configuration={control:`http://host.microsandbox.internal:${server.address().port}`,capability:mainCapability,sessionId,model:session.model??(await network.request(`/v2/listings/${session.listingId}`,{public:true,signal:startupSignal})).model,maxOutputTokens:session.maxOutputTokens,contextWindowTokens:session.contextWindowTokens,expiresAt:session.expiresAt,trusted,thinking:session.capabilities?.includes('thinking_v1')??false,resume:!!resumeId};
+    await runtime.run(guest,['node','-e',`const fs=require('node:fs');fs.writeFileSync('/tmp/adr-coding.json',${JSON.stringify(JSON.stringify(configuration))},{mode:0o600});fs.writeFileSync('/tmp/.npmrc',${JSON.stringify(`registry=http://host.microsandbox.internal:${server.address().port}/dependencies/npm/\n//host.microsandbox.internal:${server.address().port}/:_authToken=${mainCapability}\nignore-scripts=true\naudit=false\nfund=false\n`)},{mode:0o600});`],{signal:startupSignal});
     if(resumeId){if(!/^[a-f0-9-]{36}$/.test(resumeId))throw new ClientError('resume_id_invalid');const saved=JSON.parse(await readFile(join(privateRoot,resumeId,'state.json'),'utf8'));if(saved.root!==root||Object.keys(saved.manifest).length!==Object.keys(workspace.manifest).length||Object.entries(saved.manifest).some(([p,h])=>!Object.hasOwn(workspace.manifest,p)||workspace.manifest[p]!==h))throw new ClientError('resume_workspace_mismatch');await restoreGuestState(runtime,guest,saved.files,saved.resources,Object.keys(saved.manifest).filter(p=>!Object.hasOwn(saved.files,p)));}
+    startupSignal.throwIfAborted();
     watchdog=backgroundOperation(()=>runtime.touch(guest,{signal:AbortSignal.any([abort.signal,AbortSignal.timeout(10000)])}),intervals.keepalive??20000,e=>{lifecycle.event('keepalive',{code:e.code??'keepalive_failed'});void close();});
     statusPoll=backgroundOperation(status,intervals.status??20000,()=>{});
-    expires=setTimeout(()=>{lifecycle.event('expiry',{code:'session_expired'});void close().catch(()=>{});},Math.max(1,session.expiresAt-Date.now()));signal?.addEventListener('abort',onAbort,{once:true});if(signal?.aborted)onAbort();
+    expires=setTimeout(()=>{lifecycle.event('expiry',{code:'session_expired'});void close().catch(()=>{});},Math.max(1,session.expiresAt-Date.now()));
     const exportFiles=async()=>{const code=`const fs=require('node:fs'),path=require('node:path');const out={};function walk(p=''){for(const e of fs.readdirSync(path.join('/workspace',p),{withFileTypes:true})){if(e.name==='.adr-runtime'||['node_modules','dist','build','coverage','.git'].includes(e.name)||e.name.startsWith('.env')||/credentials?|secrets?|\\.(pem|key|p12|db|sqlite|tgz|zip)$/.test(e.name))continue;const rel=p?p+'/'+e.name:e.name,full=path.join('/workspace',rel),s=fs.lstatSync(full);if(s.isSymbolicLink()||s.nlink!==1&&s.isFile())throw Error('export_link');if(e.isDirectory())walk(rel);else if(e.isFile()){if(s.size>2097152)throw Error('export_limit');const text=new TextDecoder('utf-8',{fatal:true,ignoreBOM:true}).decode(fs.readFileSync(full));if(text.includes(String.fromCharCode(0)))throw Error('export_binary');out[rel]=text;}}}walk();console.log(JSON.stringify(out));`;return JSON.parse(await runtime.readCheckpoint(guest,['node','-e',code],{signal:abort.signal,outputBytes:24*1024*1024}));};
     snapshot=async()=>{
       if(saving)return saving;
@@ -162,6 +183,7 @@ export async function openCodingBuyer(network,sessionId,{root,files,runtimeConfi
       try{return await saving;}catch(e){lifecycle.event('checkpoint',{code:e.code??'checkpoint_failed'});throw e;}finally{saving=undefined;}
     };
     checkpoint=backgroundOperation(snapshot,intervals.checkpoint??30000,()=>{});
+    finishStartup();
     return {status,close,lifecycle,
       async interactive({prompt='',mode='interactive',consoleOptions={}}={}){await status();await runtime.run(guest,['node','-e',`const fs=require('node:fs');const p='/tmp/adr-coding.json';const d=JSON.parse(fs.readFileSync(p));d.prompt=${JSON.stringify(prompt)};d.resume=require('node:fs').existsSync('/tmp/adr-agent/sessions');fs.writeFileSync(p,JSON.stringify(d),{mode:0o600});`]);try{await runtime.attachConsole(guest,['node','/workspace/.adr-runtime/guest/coding-entry.mjs',...(mode==='rpc'?['--mode','rpc']:mode==='json'?['--mode','json','--print']:mode==='print'?['--print']:[])],{...consoleOptions,coordinator,beforeTeardown:()=>snapshot(),onOutcome:o=>lifecycle.event(o.phase,o),signal:abort.signal,timeoutSeconds:Math.min(3600,Math.max(1,Math.floor((session.expiresAt-Date.now())/1000)))});lifecycle.event('console',{status:'completed'});}catch(e){lifecycle.event('console',{code:e.code,exitCode:e.exitCode,signal:e.signal});throw e;}},
       save:snapshot,
@@ -171,5 +193,5 @@ export async function openCodingBuyer(network,sessionId,{root,files,runtimeConfi
       async export(){return exportSnapshot(workspace,await exportFiles(),p=>authorize({name:'export_workspace',changes:p.changes}));},
       async apply(){const files=await exportFiles(),values={...files};for(const p of Object.keys(workspace.manifest))if(!Object.hasOwn(values,p))values[p]=null;const diffs=await changeDiffs(workspace,(await proposeExport(workspace,values)).changes);const result=await reviewAndApply(workspace,files,async p=>authorize({name:'apply_workspace',changes:p.changes.map((c,i)=>({...c,diff:diffs[i]})),digest:p.digest}),{journalRoot:join(privateRoot,'journals')});if(result.status==='applied'){for(const c of result.completed){if(Object.hasOwn(files,c))workspace.manifest[c]=hash(files[c]);else delete workspace.manifest[c];}await snapshot();}return result;},
     };
-  }catch(e){lifecycle.event('startup',{code:e.code??'coding_startup_failed',exitCode:e.exitCode,signal:e.signal});await close().catch(()=>{});throw e;}
+  }catch(original){if(!guest&&/^adrnew-[a-f0-9-]{36}$/.test(original.sandboxName??'')&&runtime.owned.has(original.sandboxName))guest=original.sandboxName;const e=startupSignal.aborted&&original.name==='AbortError'?new ClientError('cancelled'):original;lifecycle.event('startup',{code:e.code??'coding_startup_failed',exitCode:e.exitCode,signal:e.signal});finishStartup();e.lifecycleOutcome=await close().catch(()=>undefined);throw e;}
 }

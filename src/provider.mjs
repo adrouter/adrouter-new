@@ -22,7 +22,7 @@ export async function createGuest(runtime, hostPorts, copyDirectory, endpoint, {
     const info = await runtime.inspect(name);
     if (info.config.manifest_digest !== images[kind][`linux-${process.arch}`] || info.config.mounts.length || info.config.network.policy.default_egress !== 'deny') throw new ClientError('guest_identity_or_policy_mismatch');
     signal?.throwIfAborted(); return name;
-  } catch (error) { await runtime.remove(name).catch(()=>{});throw error; }
+  }catch(error){try{error.sandboxName=name;}catch{}await runtime.remove(name).catch(()=>{});throw error;}
 }
 
 export async function startProvider(networkInput, nodeId, { maxCalls = 5, maxOutputTokens = 1024, runtimeConfig, noKey = false, notify = () => {}, continuous: requestedContinuous, consoleOptions } = {}) {

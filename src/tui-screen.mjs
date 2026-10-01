@@ -173,7 +173,7 @@ export class TerminalUI {
     const abort = new AbortController();let stage=lines,frame=0;const startedAt=Date.now();
     const redraw=()=>this.draw({title,lines:[...stage,`${this.reducedMotion?'Waiting':['◐','◓','◑','◒'][frame++%4]} · ${Math.floor((Date.now()-startedAt)/1000)} seconds elapsed`],footer:cancel?'Esc / Ctrl+C Cancel':'Running'});
     this.draw({ title, lines, footer: cancel ? 'Esc / Ctrl+C Cancel' : 'Working…' });
-    const pending = { resolve: () => { if (cancel) abort.abort(); }, key: (text, key) => { if (key.name === 'escape' && cancel) abort.abort(); else onKey?.(text, key); } };
+    const pending = { resolve: () => { if (cancel||this.terminated) abort.abort(); }, key: (text, key) => { if (key.name === 'escape' && cancel) abort.abort(); else onKey?.(text, key); } };
     if (this.pending) throw new ClientError('terminal_operation_busy');
     this.pending = pending;
     const timer=setInterval(redraw,this.reducedMotion?1000:200);redraw();

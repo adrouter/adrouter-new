@@ -351,7 +351,7 @@ export async function runTui(options = {}, dependencies = {}) {
     let buyer,interrupted,location='Changes remain in the VM.',saved,discard=false;
     const coordinator=new TerminalCoordinator(ui,o=>buyer?.lifecycle.event(o.phase,o));
     try {
-      buyer=await ui.task('Start coding development VM',()=>(dependencies.openCodingBuyer??openCodingBuyer)(network,session.id,{root:manifest.root,files:manifest.files.map(f=>f.path),runtimeConfig,trusted,profile:store.profile,coordinator,approve:(a,p)=>coordinator.approve(a,p),...(resumeId!=='new'?{resumeId}:{})}));
+      buyer=await ui.task('Start coding development VM',signal=>(dependencies.openCodingBuyer??openCodingBuyer)(network,session.id,{signal,root:manifest.root,files:manifest.files.map(f=>f.path),runtimeConfig,trusted,profile:store.profile,coordinator,approve:(a,p)=>coordinator.approve(a,p),...(resumeId!=='new'?{resumeId}:{})}));
       const applications=await (dependencies.pendingApplications??pendingApplications)(store.profile,manifest.root);
       interrupted=applications.length?await ui.menu('Interrupted application',[item('skip','Start coding without recovery'),...applications.map(a=>item(a.journal,a.operationId,`${a.completed} files confirmed complete`))],{lines:['Recover exact reviewed contents. Changed host originals are preserved.']}):undefined;
       if(interrupted==='skip')interrupted=undefined;

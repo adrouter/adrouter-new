@@ -105,7 +105,7 @@ export class SandboxRuntime {
     }
     this.owned.add(name);
     try { await this.call(args, { timeout: 300_000, signal }); }
-    catch (error) { await this.remove(name).catch(() => {}); throw error; }
+    catch(error){try{error.sandboxName=name;}catch{}await this.remove(name).catch(()=>{});throw error;}
     return name;
   }
 

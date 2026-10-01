@@ -24,5 +24,5 @@ export function backgroundOperation(work, interval, onError) {
   const timer = setInterval(() => void run(), interval);
   return { run, stop() { stopped = true; clearInterval(timer); }, get pending() { return pending; } };
 }
-export const recoverableStatusFailure = error => ['network_unavailable_outcome_unknown', 'auth_state_busy', 'invalid_network_response', 'runtime_cancelled', 'cancelled', 'response_too_large'].includes(error?.code);
+export const recoverableStatusFailure = error => (Number.isInteger(error?.status)&&(error.status>=500||error.status===429||error.status===408))||['network_unavailable_outcome_unknown', 'auth_state_busy', 'invalid_network_response', 'cancelled', 'response_too_large'].includes(error?.code);
 export const approvalRequired = async () => { throw new ClientError('action_approval_required'); };
