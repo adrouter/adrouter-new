@@ -103,3 +103,8 @@ test('nested instructions and project-local configuration appear in executable-r
  const {projectManifest}=await import('../src/workspace.mjs'),{realpath,writeFile,mkdir}=await import('node:fs/promises');const root=await realpath(await mkdtemp(join(tmpdir(),'adr-resources-fixture-')));
  try{await mkdir(join(root,'src'));await mkdir(join(root,'.adrouter'));await writeFile(join(root,'src','AGENTS.md'),'Synthetic instructions');await writeFile(join(root,'.adrouter','settings.json'),'{}');await writeFile(join(root,'index.html'),'synthetic');const manifest=await projectManifest(root);assert.deepEqual(manifest.files.filter(f=>f.resource).map(f=>f.path),['.adrouter/settings.json','src/AGENTS.md']);}finally{await rm(root,{recursive:true,force:true});}
 });
+
+test('binary assets are excluded before import and never decoded into corrupt host changes',async()=>{
+ const {projectManifest,importWorkspace}=await import('../src/workspace.mjs'),{realpath,writeFile,readFile}=await import('node:fs/promises');const root=await realpath(await mkdtemp(join(tmpdir(),'adr-binary-fixture-'))),binary=Buffer.from([0x89,0x50,0x4e,0x47,0,0xff]);
+ try{await writeFile(join(root,'index.html'),'synthetic UTF-8');await writeFile(join(root,'asset.png'),binary);const manifest=await projectManifest(root);assert.deepEqual(manifest.files.map(f=>f.path),['index.html']);assert.equal(manifest.exclusions.counts.binary,1);await assert.rejects(importWorkspace(root,['asset.png']),/workspace_binary_file_rejected/);assert.deepEqual(await readFile(join(root,'asset.png')),binary);}finally{await rm(root,{recursive:true,force:true});}
+});

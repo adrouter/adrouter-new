@@ -10,6 +10,7 @@ import { resolve, relative, dirname, join, isAbsolute } from 'node:path';
 import { tmpdir } from 'node:os';
 
 const MAX_BYTES = 2 * 1024 * 1024;
+const utf8 = bytes => { try { const text = new TextDecoder('utf-8',{fatal:true,ignoreBOM:true}).decode(bytes); if(text.includes('\0'))throw Error(); return text; } catch { throw new Error('workspace_binary_file_rejected'); } };
 const hash = bytes => createHash('sha256').update(bytes).digest('hex');
 const forbidden = /(^auth\.json$|^\.npmrc$|^\.pypirc$|^\.netrc$|^\.|credentials?|secrets?|id_rsa|id_ed25519|\.pem$|\.key$|\.p12$|\.pfx$|\.tgz$|\.tar$|\.zip$|\.sqlite$|\.db$)/i;
 
@@ -36,7 +37,7 @@ export async function importWorkspace(root, files) {
   let total = 0;
   try {
     for (const path of files) {
-      const bytes = await safeRead(canonical, path, rootIdentity);
+      const bytes = await safeRead(canonical, path, rootIdentity);utf8(bytes);
       total += bytes.length;
       if (total > 64 * MAX_BYTES) throw new Error('workspace_total_limit');
       manifest[path] = hash(bytes);
@@ -111,7 +112,7 @@ export async function exportSnapshot(workspace, finalFiles, approval) {
 // Discover paths using Git ignore semantics without opening excluded contents.
 export async function projectManifest(root) {
   let canonical;try{canonical=await realpath(root);}catch{throw Error('workspace_directory_inaccessible');}if(canonical!==resolve(root))throw Error('workspace_root_symlink_rejected');if(!(await lstat(canonical)).isDirectory())throw Error('workspace_directory_required');
-  const exclusions={categories:['credentials and hidden/private paths','ignored files','dependencies and generated output','links and nonregular files','files larger than 2 MiB'],counts:{private:0,generated:0,links:0,oversize:0,ignored:0}};
+  const exclusions={categories:['credentials and hidden/private paths','ignored files','dependencies and generated output','links and nonregular files','files larger than 2 MiB','binary or non-UTF-8 assets (host originals retained)'],counts:{private:0,generated:0,links:0,oversize:0,ignored:0,binary:0}};
   let paths;
   try { paths=(await execute('git',['-C',canonical,'ls-files','-z','--cached','--others','--exclude-standard'],{maxBuffer:8*1024*1024,env:{PATH:'/opt/homebrew/bin:/usr/bin:/bin'}})).stdout.split('\0').filter(Boolean); }
   catch {
@@ -128,8 +129,8 @@ export async function projectManifest(root) {
       }
     };await walk();
   }
-  const result=[];let total=0;
-  for(const path of [...new Set(paths)].sort()){try{checkRelative(path);}catch{exclusions.counts.private++;continue;}if(path.split('/').some(p=>['node_modules','dist','build','coverage','target','__pycache__'].includes(p)))continue;const s=await lstat(join(canonical,path));if(s.isSymbolicLink()||!s.isFile()||s.nlink!==1){exclusions.counts.links++;continue;}if(s.size>MAX_BYTES){exclusions.counts.oversize++;continue;}total+=s.size;if(total>128*1024*1024)throw Error('workspace_total_limit');result.push({path,bytes:s.size,resource:path==='package.json'||path.endsWith('.sh')||path==='AGENTS.md'||path.endsWith('/AGENTS.md')||path.startsWith('.adrouter/')||path.includes('/skills/')||path.includes('/extensions/')||path.endsWith('SKILL.md')});}
+  const result=[];let total=0;const identity=await lstat(canonical,{bigint:true}),rootIdentity={dev:String(identity.dev),ino:String(identity.ino)};
+  for(const path of [...new Set(paths)].sort()){try{checkRelative(path);}catch{exclusions.counts.private++;continue;}if(path.split('/').some(p=>['node_modules','dist','build','coverage','target','__pycache__'].includes(p)))continue;const s=await lstat(join(canonical,path));if(s.isSymbolicLink()||!s.isFile()||s.nlink!==1){exclusions.counts.links++;continue;}if(s.size>MAX_BYTES){exclusions.counts.oversize++;continue;}try{utf8(await safeRead(canonical,path,rootIdentity));}catch(e){if(e.message!=='workspace_binary_file_rejected')throw e;exclusions.counts.binary++;continue;}total+=s.size;if(total>128*1024*1024)throw Error('workspace_total_limit');result.push({path,bytes:s.size,resource:path==='package.json'||path.endsWith('.sh')||path==='AGENTS.md'||path.endsWith('/AGENTS.md')||path.startsWith('.adrouter/')||path.includes('/skills/')||path.includes('/extensions/')||path.endsWith('SKILL.md')});}
   if(!result.length)throw Error('workspace_import_empty');if(result.length>5000)throw Error('workspace_selection_invalid');return {root:canonical,files:result,totalBytes:total,exclusions};
 }
 

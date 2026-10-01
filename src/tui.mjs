@@ -15,6 +15,7 @@ const integer = (min, max) => value => /^(0|[1-9][0-9]*)$/.test(value) && Number
 const date = value => typeof value === 'number' ? new Date(value).toLocaleString() : '—';
 const words = value => String(value ?? '—').replaceAll('_', ' ');
 const problems = {
+  workspace_binary_file_rejected:'Project file: the private snapshot format supports UTF-8 text. Binary assets remain on the host.',
   workspace_directory_inaccessible:'Project directory: enter a readable directory path. Your entered value is retained.',
   workspace_directory_required:'Project directory: choose a directory, rather than a file.',
   workspace_root_symlink_rejected:'Project directory: use the canonical directory path without symlink components.',
@@ -356,11 +357,11 @@ export async function runTui(options = {}, dependencies = {}) {
       if(interrupted==='skip')interrupted=undefined;
       let enterCoding=!interrupted;
       for(;;){
-        if(enterCoding){try{await ui.suspend(()=>buyer.interactive());}catch(e){if(!recoverableStatusFailure(e))throw e;await ui.page('Coding paused',[...errorLines(e),'The VM and saved work remain available. New inference and mutations wait for authenticated status.']);}enterCoding=false;}
+        if(enterCoding){try{await ui.suspend(()=>buyer.interactive());}catch(e){if(e.restorationCode)buyer.lifecycle.event('terminal_restoration',{code:e.restorationCode});if(!recoverableStatusFailure(e)||buyer.lifecycle.closing||e.restorationCode)throw e;await ui.page('Coding paused',[...errorLines(e),'The VM and saved work remain available. New inference and mutations wait for authenticated status.']);}enterCoding=false;}
         try{saved=await ui.task('Save private coding checkpoint',()=>buyer.save());location=`Saved privately: ${saved.resumeId} · ${date(saved.savedAt)}`;}
         catch(e){await ui.page('Checkpoint could not be updated',[...errorLines(e),'The last successful checkpoint remains available.']);}
         let current,statusUnavailable=false;try{current=await buyer.status();}catch{current=session;statusUnavailable=true;}
-        const action=await ui.menu('Coding workspace',[item('continue','Continue coding','Requires current accepted session authority.'),item('apply','Review and Apply'),item('export','Review and export snapshot'),...(interrupted?[item('recover','Recover interrupted application')]:[]),item('finish','Finish session')],{lines:[location,...(statusUnavailable?['Session status unavailable · inference and mutations paused.']:[]),`Accepted time remaining: ${Math.max(0,Math.floor((current.expiresAt-Date.now())/1000))} seconds`,`Dispatches: ${statusUnavailable?'unavailable':current.requestSequence??0}/${current.requestLimit}`,`Reserved allowance: ${current.funded??'unknown'} · Charged: ${statusUnavailable?'unavailable':current.charged??'unknown'} test credits`,`Held liability: ${statusUnavailable?'unavailable':current.reserved??'unknown'} · Refunded: ${statusUnavailable?'unavailable':current.refunded??'unknown'}`,'Host application requires separate content review.']});
+        const action=await ui.menu('Coding workspace',[item('continue','Continue coding','Requires current accepted session authority.',!!buyer.lifecycle.closing),item('apply','Review and Apply'),item('export','Review and export snapshot'),...(interrupted?[item('recover','Recover interrupted application')]:[]),item('finish','Finish session')],{lines:[location,...(statusUnavailable?['Session status unavailable · inference and mutations paused.']:[]),`Accepted time remaining: ${Math.max(0,Math.floor((current.expiresAt-Date.now())/1000))} seconds`,`Dispatches: ${statusUnavailable?'unavailable':current.requestSequence??0}/${current.requestLimit}`,`Reserved allowance: ${current.funded??'unknown'} · Charged: ${statusUnavailable?'unavailable':current.charged??'unknown'} test credits`,`Held liability: ${statusUnavailable?'unavailable':current.reserved??'unknown'} · Refunded: ${statusUnavailable?'unavailable':current.refunded??'unknown'}`,'Host application requires separate content review.']});
         if(action==='continue'){enterCoding=true;continue;}
         if(['apply','recover','export'].includes(action)){
           try{
@@ -375,7 +376,7 @@ export async function runTui(options = {}, dependencies = {}) {
           let changes;try{changes=await buyer.changes();}catch(e){await ui.page('Changes could not be inspected',errorLines(e));continue;}
           const finish=await ui.menu('Finish with saved work',[item('apply','Review and Apply'),item('save','Save and finish'),item('discard','Discard VM work and finish'),item('back','Back')],{lines:[location,`Unapplied changes: ${changes.changes.length}`,...changes.changes.map(c=>`${c.kind}: ${c.path}`)]});
           if(finish==='apply'){try{const result=await buyer.apply();location=words(result.status);if(result.status==='interrupted')interrupted=result.journal;}catch(e){await ui.page('Application not completed',errorLines(e));}continue;}
-          if(finish==='save'){try{await buyer.save();break;}catch(e){await ui.page('Save failed; session remains open',errorLines(e));continue;}}
+          if(finish==='save'){try{await buyer.save();break;}catch(e){if(buyer.lifecycle.closing&&saved)break;await ui.page('Save failed; session remains open',errorLines(e));continue;}}
           if(finish==='discard'&&await confirm('Discard private VM work?',['This deletes this session checkpoint. Previously saved contexts and host files are preserved.'],'Discard and finish')){discard=true;break;}
         }
       }
