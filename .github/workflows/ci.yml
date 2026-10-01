@@ -27,6 +27,17 @@ jobs:
           ref: be7c53dc0b63fb90b70bd6cb7cad4d5713cc0d1a
           path: .coding-source
           persist-credentials: false
+      - name: Install fixture verification tools on macOS
+        if: runner.os == 'macOS'
+        run: brew install ripgrep fd
+      - name: Install fixture verification tools on Linux
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y ripgrep fd-find
+          mkdir -p "$RUNNER_TEMP/adr-fixture-tools"
+          ln -s "$(command -v fdfind)" "$RUNNER_TEMP/adr-fixture-tools/fd"
+          echo "$RUNNER_TEMP/adr-fixture-tools" >> "$GITHUB_PATH"
       - name: Build and verify the locked coding fixture
         run: node scripts/build-coding-runtime.mjs .coding-source --verify
       - run: npm run check
