@@ -1,3 +1,4 @@
+import { recoverableStatusFailure } from './buyer-lifecycle.mjs';
 import { MarketplaceDisplay } from './marketplace-display.mjs';
 import { usdToMicrousd, formatUsd } from './money.mjs';
 import { randomUUID } from 'node:crypto';
@@ -343,23 +344,23 @@ export async function runTui(options = {}, dependencies = {}) {
     const resources=manifest.files.filter(f=>f.resource);
     const trusted=resources.length?await confirm('Trust reviewed project resources?',resources.map(f=>f.path),'Trust for this isolated project'):false;
     const {openCodingBuyer,savedCodingContexts,pendingApplications}=await import('./coding-buyer.mjs');
-    const contexts=await savedCodingContexts(store.profile,manifest.root);
+    const contexts=await (dependencies.savedCodingContexts??savedCodingContexts)(store.profile,manifest.root);
     const resumeId=contexts.length?await ui.menu('Coding context',[item('new','Start a new conversation'),...contexts.map(c=>item(c.id,`Resume ${date(c.savedAt)}`,c.id))],{lines:['This accepted session supplies new authority. Previous inference and tool actions are not replayed.']}):'new';
     if(!resumeId||!await confirm('Launch isolated coding VM?',[manifest.root,'The host terminal will review each mutation or command. VM reads are automatic.'],'Launch VM')){await cancelReservation();return;}
     let buyer,interrupted,location='Changes remain in the VM.',saved,discard=false;
     const coordinator=new TerminalCoordinator(ui,o=>buyer?.lifecycle.event(o.phase,o));
     try {
-      buyer=await ui.task('Start coding development VM',()=>openCodingBuyer(network,session.id,{root:manifest.root,files:manifest.files.map(f=>f.path),runtimeConfig,trusted,profile:store.profile,coordinator,approve:(a,p)=>coordinator.approve(a,p),...(resumeId!=='new'?{resumeId}:{})}));
-      const applications=await pendingApplications(store.profile,manifest.root);
+      buyer=await ui.task('Start coding development VM',()=>(dependencies.openCodingBuyer??openCodingBuyer)(network,session.id,{root:manifest.root,files:manifest.files.map(f=>f.path),runtimeConfig,trusted,profile:store.profile,coordinator,approve:(a,p)=>coordinator.approve(a,p),...(resumeId!=='new'?{resumeId}:{})}));
+      const applications=await (dependencies.pendingApplications??pendingApplications)(store.profile,manifest.root);
       interrupted=applications.length?await ui.menu('Interrupted application',[item('skip','Start coding without recovery'),...applications.map(a=>item(a.journal,a.operationId,`${a.completed} files confirmed complete`))],{lines:['Recover exact reviewed contents. Changed host originals are preserved.']}):undefined;
       if(interrupted==='skip')interrupted=undefined;
       let enterCoding=!interrupted;
       for(;;){
-        if(enterCoding){await ui.suspend(()=>buyer.interactive());enterCoding=false;}
+        if(enterCoding){try{await ui.suspend(()=>buyer.interactive());}catch(e){if(!recoverableStatusFailure(e))throw e;await ui.page('Coding paused',[...errorLines(e),'The VM and saved work remain available. New inference and mutations wait for authenticated status.']);}enterCoding=false;}
         try{saved=await ui.task('Save private coding checkpoint',()=>buyer.save());location=`Saved privately: ${saved.resumeId} · ${date(saved.savedAt)}`;}
         catch(e){await ui.page('Checkpoint could not be updated',[...errorLines(e),'The last successful checkpoint remains available.']);}
-        let current;try{current=await buyer.status();}catch{current=session;}
-        const action=await ui.menu('Coding workspace',[item('continue','Continue coding','Requires current accepted session authority.'),item('apply','Review and Apply'),item('export','Review and export snapshot'),...(interrupted?[item('recover','Recover interrupted application')]:[]),item('finish','Finish session')],{lines:[location,`Remaining time: ${Math.max(0,Math.floor((current.expiresAt-Date.now())/1000))} seconds`,`Dispatches: ${current.requestSequence??0}/${current.requestLimit}`,`Reserved allowance: ${current.funded??'unknown'} · Charged: ${current.charged??'unknown'} test credits`,`Held liability: ${current.reserved??'unknown'} · Refunded: ${current.refunded??'unknown'}`,'Host application requires separate content review.']});
+        let current,statusUnavailable=false;try{current=await buyer.status();}catch{current=session;statusUnavailable=true;}
+        const action=await ui.menu('Coding workspace',[item('continue','Continue coding','Requires current accepted session authority.'),item('apply','Review and Apply'),item('export','Review and export snapshot'),...(interrupted?[item('recover','Recover interrupted application')]:[]),item('finish','Finish session')],{lines:[location,...(statusUnavailable?['Session status unavailable · inference and mutations paused.']:[]),`Accepted time remaining: ${Math.max(0,Math.floor((current.expiresAt-Date.now())/1000))} seconds`,`Dispatches: ${statusUnavailable?'unavailable':current.requestSequence??0}/${current.requestLimit}`,`Reserved allowance: ${current.funded??'unknown'} · Charged: ${statusUnavailable?'unavailable':current.charged??'unknown'} test credits`,`Held liability: ${statusUnavailable?'unavailable':current.reserved??'unknown'} · Refunded: ${statusUnavailable?'unavailable':current.refunded??'unknown'}`,'Host application requires separate content review.']});
         if(action==='continue'){enterCoding=true;continue;}
         if(['apply','recover','export'].includes(action)){
           try{

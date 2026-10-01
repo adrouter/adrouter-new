@@ -129,7 +129,7 @@ export async function projectManifest(root) {
     };await walk();
   }
   const result=[];let total=0;
-  for(const path of [...new Set(paths)].sort()){try{checkRelative(path);}catch{exclusions.counts.private++;continue;}if(path.split('/').some(p=>['node_modules','dist','build','coverage','target','__pycache__'].includes(p)))continue;const s=await lstat(join(canonical,path));if(s.isSymbolicLink()||!s.isFile()||s.nlink!==1){exclusions.counts.links++;continue;}if(s.size>MAX_BYTES){exclusions.counts.oversize++;continue;}total+=s.size;if(total>128*1024*1024)throw Error('workspace_total_limit');result.push({path,bytes:s.size,resource:path==='package.json'||path.endsWith('.sh')||path==='AGENTS.md'||path.includes('/skills/')||path.includes('/extensions/')||path.endsWith('SKILL.md')});}
+  for(const path of [...new Set(paths)].sort()){try{checkRelative(path);}catch{exclusions.counts.private++;continue;}if(path.split('/').some(p=>['node_modules','dist','build','coverage','target','__pycache__'].includes(p)))continue;const s=await lstat(join(canonical,path));if(s.isSymbolicLink()||!s.isFile()||s.nlink!==1){exclusions.counts.links++;continue;}if(s.size>MAX_BYTES){exclusions.counts.oversize++;continue;}total+=s.size;if(total>128*1024*1024)throw Error('workspace_total_limit');result.push({path,bytes:s.size,resource:path==='package.json'||path.endsWith('.sh')||path==='AGENTS.md'||path.endsWith('/AGENTS.md')||path.startsWith('.adrouter/')||path.includes('/skills/')||path.includes('/extensions/')||path.endsWith('SKILL.md')});}
   if(!result.length)throw Error('workspace_import_empty');if(result.length>5000)throw Error('workspace_selection_invalid');return {root:canonical,files:result,totalBytes:total,exclusions};
 }
 
