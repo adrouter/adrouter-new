@@ -133,7 +133,10 @@ export class TerminalUI {
       this.draw({ title, subtitle, lines, focus: selected, footer: '↑↓ / Tab Move  ←→ Options  Type Edit  Ctrl+U Clear  Enter Next  Esc Back' });
     };
     const remember = () => Object.assign(initial, values);
-    const result = await this.interact((text, key, finish) => {
+    let result;
+    this.output.write('\x1b[?2004h');
+    try { result = await this.interact((text, key, finish) => {
+      if (key.name === 'paste' && typeof text === 'string') text = text.replace(/[\r\n]+$/, '');
       if (key.name === 'escape') { finish(null); return; }
       const field = fields[selected];
       if (key.name === 'up' || (key.name === 'tab' && key.shift)) { selected = (selected + fields.length) % (fields.length + 1); replace = true; }
@@ -156,8 +159,8 @@ export class TerminalUI {
         }
       }
       draw();
-    }, draw);
-    remember();
+    }, draw); }
+    finally { this.output.write('\x1b[?2004l'); remember(); }
     return result;
   }
   async page(title, lines) {

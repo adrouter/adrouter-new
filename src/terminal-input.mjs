@@ -8,7 +8,7 @@ export function terminalInput(input, onKey) {
   const sequence = raw => {
     if (isKeyRelease(raw)) return;
     const parsed = parseKey(raw);
-    const text = decodePrintableKey(raw);
+    const text = decodePrintableKey(raw) ?? (/^[\x20-\x7e]$/.test(raw) ? raw : undefined);
     // Mouse, color, device and keyboard-negotiation reports are not user text.
     if (!parsed && (text === undefined || raw.startsWith('\x1b'))) return;
     const parts = (parsed ?? '').split('+'), name = parts.pop();

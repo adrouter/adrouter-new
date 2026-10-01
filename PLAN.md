@@ -66,3 +66,29 @@ enhanced host approval keys passes seven reviews and four follow-ups in 33 secon
 using synthetic inference, with terminal restoration. The controlled adversarial
 PTY gate also passes enhanced navigation/default denial and output suppression.
 These checks do not replace the operator's separate real provider/idle acceptance.
+
+## Alpha.16 continuation: project-directory paste
+
+The operator found that plain paste cannot edit project-directory fields. The
+alpha.15 enhanced decoder recognizes legacy keys but did not forward their
+printable text; whole bracketed paste with a trailing newline was rejected by
+the single-line field. Fix legacy text forwarding, permit trailing clipboard
+line endings in single-line pastes without interpreting them as Enter, and enable
+bracketed paste while a form owns the terminal. Preserve internal controls as
+non-executable input, field limits, cancel drafts and approval authority.
+
+Validate actual raw typing, plain/bracketed/fragmented pastes, spaces, newline
+handling, field replacement/append, rejection of multi-line/control payloads and
+real PTY form entry. Re-run full client checks and package/provenance; build one
+immutable private alpha.16 and switch its isolated prefix without disturbing
+running sessions or the provider. No Router change is needed.
+
+### Alpha.16 local validation
+
+Legacy printable characters now reach text fields. Forms temporarily enable
+bracketed paste and strip only trailing CR/LF from clipboard input; internal
+control/multiline input remains rejected and cannot submit a form or approve an
+action. All 95 checks pass. Real PTY plain and fragmented bracketed directory
+paste, spaces, newline handling, numeric fields, default denial and terminal
+restoration pass; enhanced approval PTY still passes. Installation and final
+Ghostty project-path confirmation remain pending.
