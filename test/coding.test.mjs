@@ -3,9 +3,10 @@ import assert from 'node:assert/strict';
 import { mkdtemp, realpath, writeFile, readFile, rm, symlink, mkdir } from 'node:fs/promises';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
+import { createHash, randomUUID } from 'node:crypto';
 import { UpstreamCodingStream, readCodingStream } from '../src/coding-wire.mjs';
 import { DispatchQueue } from '../src/coding-buyer.mjs';
-import { importWorkspace, reviewAndApply, projectManifest } from '../src/workspace.mjs';
+import { importWorkspace, reviewAndApply, projectManifest, recoverApplication, proposeExport } from '../src/workspace.mjs';
 test('SSE parser tolerates every byte boundary and rejects incomplete or malformed calls',async()=>{
  const events=[];const p=new UpstreamCodingStream('request',['read'],e=>events.push(e));
  const chunks=[{choices:[{delta:{content:'é'}}]},{choices:[{delta:{tool_calls:[{index:0,id:'c1',type:'function',function:{name:'read',arguments:'{"path":'}}]}}]},{choices:[{delta:{tool_calls:[{index:0,function:{arguments:'"a"}'}}]},finish_reason:'tool_calls'}]},{choices:[],usage:{prompt_tokens:2,completion_tokens:3}}];
@@ -44,4 +45,14 @@ test('manifest excludes credentials, dependency/generated folders and symlink es
 test('non-Git project manifests honor scoped ignore patterns and negations',async()=>{
  const root=await realpath(await mkdtemp(join(tmpdir(),'adr-ignore-test-')));
  try{await writeFile(join(root,'.gitignore'),'ignored.txt\n*.tmp\n!keep.tmp\n');await writeFile(join(root,'main.py'),'synthetic');await writeFile(join(root,'ignored.txt'),'synthetic excluded');await writeFile(join(root,'scratch.tmp'),'synthetic excluded');await writeFile(join(root,'keep.tmp'),'synthetic retained');const m=await projectManifest(root);assert.deepEqual(m.files.map(f=>f.path),['.gitignore','keep.tmp','main.py']);}finally{await rm(root,{recursive:true,force:true});}
+});
+
+test('interrupted application resumes pending files without replaying confirmed writes',async()=>{
+ const root=await realpath(await mkdtemp(join(tmpdir(),'adr-recover-test-'))),journals=await realpath(await mkdtemp(join(tmpdir(),'adr-recover-journal-')));let workspace;
+ try{await writeFile(join(root,'a.txt'),'before a');await writeFile(join(root,'b.txt'),'before b');workspace=await importWorkspace(root,['a.txt','b.txt']);const proposal=await proposeExport(workspace,{'a.txt':'after a','b.txt':'after b'});await writeFile(join(root,'a.txt'),'after a');const journal=join(journals,proposal.id+'.json');await writeFile(journal,JSON.stringify({schemaVersion:1,operationId:proposal.id,root,identity:workspace.rootIdentity,status:'applying',completed:['a.txt'],changes:proposal.changes}),{mode:0o600});const result=await recoverApplication(workspace,journal,async()=>true);assert.equal(result.status,'applied');assert.deepEqual(result.completed,['a.txt','b.txt']);assert.equal(await readFile(join(root,'a.txt'),'utf8'),'after a');assert.equal(await readFile(join(root,'b.txt'),'utf8'),'after b');}finally{if(workspace)await rm(workspace.copy,{recursive:true,force:true});await rm(root,{recursive:true,force:true});await rm(journals,{recursive:true,force:true});}
+});
+
+test('recovery rejects a different root identity even if original bytes match',async()=>{
+ const root=await realpath(await mkdtemp(join(tmpdir(),'adr-recover-root-'))),journals=await realpath(await mkdtemp(join(tmpdir(),'adr-recover-identity-')));let workspace;
+ try{await writeFile(join(root,'a.txt'),'before');workspace=await importWorkspace(root,['a.txt']);const proposal=await proposeExport(workspace,{'a.txt':'after'}),journal=join(journals,proposal.id+'.json');await writeFile(journal,JSON.stringify({operationId:proposal.id,root,identity:{dev:workspace.rootIdentity.dev,ino:'0'},status:'interrupted',completed:[],changes:proposal.changes}),{mode:0o600});await assert.rejects(recoverApplication(workspace,journal,async()=>true),/recovery_rejected/);assert.equal(await readFile(join(root,'a.txt'),'utf8'),'before');}finally{if(workspace)await rm(workspace.copy,{recursive:true,force:true});await rm(root,{recursive:true,force:true});await rm(journals,{recursive:true,force:true});}
 });

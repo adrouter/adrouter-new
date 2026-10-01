@@ -32,7 +32,7 @@ export async function importWorkspace(root, files) {
   if (!Array.isArray(files) || files.length < 1 || files.length > 5000 || new Set(files).size !== files.length) throw new Error('workspace_selection_invalid');
   const rootStat = await lstat(canonical,{bigint:true}); const rootIdentity = {dev:String(rootStat.dev),ino:String(rootStat.ino)};
   const copy = await mkdtemp(join(tmpdir(), 'adrnew-workspace-'));
-  const manifest = {};
+  const manifest = Object.create(null);
   let total = 0;
   try {
     for (const path of files) {
@@ -137,7 +137,7 @@ export async function reviewAndApply(workspace, finalFiles, approve, {journalRoo
   const journal=join(journalRoot,`${proposal.id}.json`);
   const result=await new Promise((resolveResult,reject)=>{
     const child=spawn('python3',[fileURLToPath(new URL('./workspace-apply.py',import.meta.url))],{env:{PATH:'/opt/homebrew/bin:/usr/bin:/bin'},stdio:['pipe','pipe','ignore']});let output='';
-    child.stdout.on('data',b=>{output+=b;if(output.length>65536)child.kill();});child.once('error',reject);child.once('close',()=>{try{resolveResult(JSON.parse(output));}catch{reject(Error('apply_outcome_unknown'));}});
+    child.stdout.on('data',b=>{output+=b;if(output.length>65536)child.kill();});child.once('error',reject);child.once('close',async()=>{try{resolveResult(JSON.parse(output));}catch{const state=await readFile(journal,'utf8').then(v=>JSON.parse(v)).catch(()=>null);resolveResult({status:'interrupted',code:'apply_outcome_unknown',uncertain:true,completed:state?.completed??[],operationId:proposal.id});}});
     child.stdin.end(JSON.stringify({id:proposal.id,root:workspace.root,identity:workspace.rootIdentity,changes:proposal.changes,journal,recover:!!recover}));
   });
   return {...result,journal};
@@ -147,7 +147,7 @@ export async function recoverApplication(workspace,journal,approve) {
   const stat=await lstat(journal);
   if(!stat.isFile()||stat.isSymbolicLink()||stat.nlink!==1||stat.uid!==process.getuid()||(stat.mode&0o077)||stat.size>32*1024*1024)throw Error('apply_journal_rejected');
   const state=JSON.parse(await readFile(journal,'utf8'));
-  if(state.root!==workspace.root||state.status!=='interrupted')throw Error('apply_recovery_rejected');
+  if(state.root!==workspace.root||JSON.stringify(state.identity)!==JSON.stringify(workspace.rootIdentity)||!['interrupted','applying'].includes(state.status))throw Error('apply_recovery_rejected');
   const proposal={id:state.operationId,changes:state.changes};
   return reviewAndApply(workspace,{},approve,{journalRoot:dirname(journal),recover:{proposal}});
 }

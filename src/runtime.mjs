@@ -55,14 +55,15 @@ export class SandboxRuntime {
     return { platform, version: manifest.version, executableSha256: expected.executableSha256, librarySha256: expected.librarySha256 };
   }
 
-  async call(args, { timeout = 30_000, signal, outputBytes = 1024 * 1024 } = {}) {
+  async call(args, { timeout = 30_000, signal, outputBytes = 1024 * 1024, input } = {}) {
     try {
       const pending = execute(this.executable, args, {
         env: runtimeEnvironment(this.home, this.library), timeout, signal,
         maxBuffer: outputBytes, killSignal: 'SIGKILL', windowsHide: true,
       });
       // Non-interactive msb exec waits for stdin EOF even after guest output.
-      pending.child.stdin.end();
+      if(input!==undefined && (!(typeof input==='string'||Buffer.isBuffer(input))||Buffer.byteLength(input)>32*1024*1024)) {pending.child.kill();throw new RuntimeError('runtime_input_limit');}
+      pending.child.stdin.end(input);
       const result = await pending;
       return result.stdout;
     } catch (error) {
@@ -112,12 +113,12 @@ export class SandboxRuntime {
     if (!ownedName.test(name) || !this.owned.has(name)) throw new RuntimeError('sandbox_not_owned');
   }
 
-  async run(name, command, { timeoutSeconds = 20, signal, outputBytes = 1024 * 1024 } = {}) {
+  async run(name, command, { timeoutSeconds = 20, signal, outputBytes = 1024 * 1024, input } = {}) {
     this.requireOwned(name);
     if (!Number.isSafeInteger(outputBytes) || outputBytes < 1024 || outputBytes > 24 * 1024 * 1024) throw new RuntimeError('output_limit_invalid');
     if (!Array.isArray(command) || command.length === 0 || command.some(x => typeof x !== 'string' || x.includes('\0')) || !Number.isInteger(timeoutSeconds) || timeoutSeconds < 1 || timeoutSeconds > 600) throw new RuntimeError('guest_command_invalid');
     try {
-      return await this.call(['exec', '--no-tty', '--timeout', `${timeoutSeconds}s`, '--rlimit', 'nofile=128', '--rlimit', 'core=0', name, '--', ...command], { timeout: (timeoutSeconds + 5) * 1000, signal, outputBytes });
+      return await this.call(['exec', '--no-tty', '--timeout', `${timeoutSeconds}s`, '--rlimit', 'nofile=128', '--rlimit', 'core=0', name, '--', ...command], { timeout: (timeoutSeconds + 5) * 1000, signal, outputBytes, input });
     } catch (error) {
       // Killing just the client does not prove a guest command stopped. Tear down
       // the whole disposable VM on cancellation or an uncertain command outcome.

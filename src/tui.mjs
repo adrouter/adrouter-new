@@ -312,12 +312,14 @@ export async function runTui(options = {}, dependencies = {}) {
     if(!await confirm('Import this project?', [`${manifest.files.length} files · ${manifest.totalBytes} bytes`,'Excluded files and host credentials stay outside the buyer VM.','Every host application of changes gets a separate content review.'],'Import reviewed files'))return;
     const resources=manifest.files.filter(f=>f.resource);
     const trusted=resources.length?await confirm('Trust reviewed project resources?',resources.map(f=>f.path),'Trust for this isolated project'):false;
-    const {openCodingBuyer,savedCodingContexts}=await import('./coding-buyer.mjs');
+    const {openCodingBuyer,savedCodingContexts,pendingApplications}=await import('./coding-buyer.mjs');
     const contexts=await savedCodingContexts(store.profile,manifest.root);
     const resumeId=contexts.length?await ui.menu('Coding context',[item('new','Start a new conversation'),...contexts.map(c=>item(c.id,`Resume ${date(c.savedAt)}`,c.id))],{lines:['This accepted quote supplies new authority. Previous inference and tool actions are not replayed.']}):'new';
     if(!resumeId)return;
     const buyer=await ui.task('Start coding development VM',signal=>openCodingBuyer(network,session.id,{root:manifest.root,files:manifest.files.map(f=>f.path),runtimeConfig,signal:undefined,trusted,profile:store.profile,...(resumeId!=='new'?{resumeId}:{})}),{cancel:false});
-    let interrupted;
+    const applications=await pendingApplications(store.profile,manifest.root);
+    let interrupted=applications.length?await ui.menu('Interrupted application',[item('skip','Start coding without recovery'),...applications.map(a=>item(a.journal,a.operationId,`${a.completed} files confirmed complete`))],{lines:['Recover only the exact reviewed contents. Changed originals and replacement directories are rejected.']}):undefined;
+    if(interrupted==='skip')interrupted=undefined;
     try {
       for(;;){
         if(!interrupted)await ui.suspend(()=>buyer.interactive());
