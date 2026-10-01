@@ -9,6 +9,10 @@ import { AuthStore, Network, ClientError, networkOrigin, safeText } from './netw
 import { MarketplaceDraft, MarketplaceListing, MarketplaceNetworkConfig, ProviderNodeDeletion } from './generated/validators.mjs';
 
 export const accountingLines=s=>s?[`State: ${words(s.state)}`,`Reserved ${s.funded} · Charged ${s.charged} · Refunded ${s.refunded} test credits`,`Unresolved liability: ${s.reserved}`,s.state==='settlement_pending'?'Receipt pending: upstream outcome is unresolved.':`Settlement: ${words(s.state)}`]:['Receipt pending: remote stop/accounting could not be confirmed. Inspect My sessions.'];
+export const providerStatusLines = (s, now = Date.now()) => [s.stopped ? 'Provider operation has stopped.' : 'Keep this TUI open.',
+  `VM: ${s.stopped ? s.teardownVerified === false ? 'teardown unverified' : s.teardownVerified === true ? 'not running' : 'stopping' : s.guestReady ? 'ready' : 'starting'}`,
+  `Backend: ${s.stopped ? 'offline' : s.relayReady && s.relayLeaseUntil > now ? 'Hot · ready' : s.firstFailure ? 'reconnecting' : 'awaiting relay confirmation'}`,
+  ...(s.stopTrigger ? [`Stopped: ${words(s.stopTrigger.trigger)}`] : ['Refresh the listing to read backend readiness.'])];
 const item = (value, label, detail = '', disabled = false) => ({ value, label, detail, disabled });
 const required = value => value.trim() ? '' : 'Please enter a value.';
 const integer = (min, max) => value => /^(0|[1-9][0-9]*)$/.test(value) && Number.isSafeInteger(Number(value)) && Number(value) >= min && Number(value) <= max ? '' : `Enter a whole number from ${min} to ${max}.`;
@@ -21,6 +25,9 @@ const problems = {
   network_policy_unavailable: 'Network policy is unavailable. Refresh Network and diagnostics, then try again.',
   private_rehearsal_disabled: 'This network has purchases disabled and private buyer rehearsal is not enabled.',
   cold_private_rehearsal_unavailable: 'Cold buyer activation is unavailable in private rehearsal. Ask the provider to warm the listing.',
+  node_already_connected: 'This provider already has a current run. Keep its terminal open; the second start was rejected.',
+  provider_run_contract_required: 'This private provider requires the matching updated Router lifecycle contract.',
+  provider_run_superseded: 'This provider run is obsolete. Its cleanup cannot stop the current run.',
   quote_policy_changed: 'Network policy or listing capabilities changed while you reviewed the session. Open the listing again and review the current limits.',
   workspace_binary_file_rejected:'Project file: the private snapshot format supports UTF-8 text. Binary assets remain on the host.',
   workspace_directory_inaccessible:'Project directory: enter a readable directory path. Your entered value is retained.',
@@ -169,9 +176,17 @@ export async function runTui(options = {}, dependencies = {}) {
     Object.assign(savedBounds, bounds);
     const { startProvider } = await import('./provider.mjs');
     if (!await confirm('Launch this VM?', [node.name, `Endpoint: ${node.endpoint}`, `Model: ${node.model}`, `Maximum requests: ${bounds.maxCalls}`, `Maximum output per request: ${bounds.maxOutputTokens}`, 'Publish your listing and qualify its current tariff before your private evaluation.', 'The terminal will attach directly to the guest. Ctrl+C stops it.'], node.availability === 'cold' ? 'Start cold control' : 'Launch hot VM')) return;
-    const result = await ui.suspend(() => startProvider(network, node.id, { maxCalls: Number(bounds.maxCalls), maxOutputTokens: Number(bounds.maxOutputTokens), runtimeConfig, notify: value => { if (value.status === 'activation_required' && currentProviderId === node.id) ui.pending?.resolve('refresh'); } }));
+    const result = await ui.suspend(() => startProvider(network, node.id, { maxCalls: Number(bounds.maxCalls), maxOutputTokens: Number(bounds.maxOutputTokens), runtimeConfig, notify: value => {
+      if (value.status === 'activation_required' && currentProviderId === node.id) ui.pending?.resolve('refresh');
+      if (ui.screen?.title?.startsWith('Provider operation')) ui.pending?.redraw?.();
+    } }));
     providersRunning.set(node.id, result);
-    await ui.page('Provider operation started', ['Keep this TUI open.', `VM: ${result.status.guestReady ? 'ready' : 'not started'}`, `Backend: ${result.status.relayReady ? 'Hot · ready' : 'awaiting relay confirmation'}`, 'Refresh the listing to read backend readiness.']);
+    void result.done.then(value => {
+      if (providersRunning.get(node.id) === result) providersRunning.delete(node.id);
+      if (currentProviderId === node.id) ui.pending?.resolve('refresh');
+      if (ui.screen?.title?.startsWith('Provider operation')) ui.pending?.redraw?.();
+    });
+    await ui.page(() => result.status.cleanupRequired ? 'Provider operation needs cleanup' : result.status.stopped ? 'Provider operation stopped' : 'Provider operation started', () => providerStatusLines(result.status));
   }
   async function createListing() {
     actor('provider');
@@ -280,7 +295,7 @@ export async function runTui(options = {}, dependencies = {}) {
         else if (selection === 'launch') await guidedProvider(node);
         else if (selection === 'activate') await ui.suspend(() => providersRunning.get(node.id).warm());
         else if (selection === 'stop' && providersRunning.has(node.id)) { await providersRunning.get(node.id).stop(); providersRunning.delete(node.id); }
-        else if (selection !== 'refresh' && await confirm(`${words(selection)} listing?`, [node.name, selection === 'stop' ? 'Known unused credits are released; unknown outcomes remain held.' : 'This changes the public availability of this listing.'])) await post(`/providers/nodes/${node.id}/${selection}`);
+        else if (selection !== 'refresh' && await confirm(`${words(selection)} listing?`, [node.name, selection === 'stop' ? 'Known unused credits are released; unknown outcomes remain held.' : 'This changes the public availability of this listing.'])) await post(`/providers/nodes/${node.id}/${selection}`, selection === 'stop' ? {scope:'node',trigger:'operator_stop'} : {});
       });
     }
   }
@@ -580,7 +595,7 @@ export async function runTui(options = {}, dependencies = {}) {
     }
   } finally {
     display.stop();process.removeListener('SIGTERM', terminate); process.removeListener('SIGINT', terminate);
-    const cleanup = await Promise.allSettled([...providersRunning.values()].map(p => p.stop())); ui.stop();
+    const cleanup = await Promise.allSettled([...providersRunning.values()].map(p => p.stop({trigger:'tui_exit'}))); ui.stop();
     if (cleanup.some(r => r.status === 'rejected' || r.value?.status === 'cleanup_required')) throw new ClientError('provider_cleanup_required');
   }
 }

@@ -155,7 +155,7 @@ proof verification remain required. Ordinary marketplace admissions remain close
 
 Hot listings default to continuous foreground serving. Keep the provider terminal open.
 A 60-second VM idle watchdog is touched every 20 seconds; shutdown, terminal closure,
-suspension, runtime/relay failure or uncertain inference tears down the guest. There
+suspension or an unrecoverable runtime/authentication failure tears down the owned guest. Temporary relay loss keeps the healthy VM running and reconnects with fresh authentication; request cancellation and uncertain inference affect only that request, with unknown charges held. There
 is no continuous-mode lifetime request cutoff. Cold serving and `provider serve --bounded`
 retain evaluation limits. Each separately accepted buyer session permits five dispatched
 inferences, including tool continuations and uncertain outcomes.

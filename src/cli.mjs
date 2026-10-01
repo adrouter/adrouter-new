@@ -124,7 +124,7 @@ export async function run(args, dependencies = {}) {
     if (sub === 'create') output(await post('/providers/nodes', await draft(o, json)));
     else if (sub === 'listings') output(await get('/providers/nodes'));
     else if (sub === 'inspect') output(await get(`/providers/nodes/${requireId(id)}`));
-    else if (['publish', 'pause', 'stop'].includes(sub)) output(await post(`/providers/nodes/${requireId(id)}/${sub}`));
+    else if (['publish', 'pause', 'stop'].includes(sub)) output(await post(`/providers/nodes/${requireId(id)}/${sub}`, sub === 'stop' ? {scope:'node',trigger:'operator_stop'} : {}));
     else if (sub === 'delete') {
       const nodeId = requireId(id);
       if (!o['confirm-delete']) throw new ClientError('node_delete_confirmation_required');

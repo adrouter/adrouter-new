@@ -113,3 +113,25 @@ two sequential synthetic sessions without re-entering a credential, preserve mul
 workspace state, perform approved actions/export, and stop on foreground termination.
 These checks are separate from a live two-account settled response and coding action.
 Live key entry remains guest-only. Stop for required operator authentication.
+
+## Provider lifecycle recovery gate
+
+Run `scripts/verify-provider-lifecycle.py` with explicit `ADR_ACCEPTANCE_CLIENT_ROOT`,
+`ADR_ACCEPTANCE_ROUTER_ROOT` and `ADR_ACCEPTANCE_RUNTIME_PATHS`. Use a new short
+task-owned runtime home; the metadata file contains only pinned executable/library/home
+paths. The gate uses actual Apple Silicon provider and coding guests, a local Router,
+synthetic inference and one hidden synthetic key. It verifies duplicate rejection before
+allocation, eleven-minute idle, checkpoints/continue, authenticated reconnect of the same
+VM, reviewed apply, new-session saved-context resume without replay, explicit provider
+Stop, obsolete cleanup rejection, and request cancellation while unknown liability stays
+held. Its captured terminal bytes stay in memory. `ADR_PROVIDER_LIFECYCLE_QUICK=1` skips
+the idle soak for diagnosis and does not satisfy the eleven-minute gate.
+
+Use paired private client/Router artifacts for lifecycle acceptance. Each launch claims
+its providerRunId before warming; runtime cleanup is run-scoped and explicit owner Stop
+is node-scoped. Legacy empty cleanup cannot stop a fenced run. A second healthy run is
+rejected; takeover is not automatic. Diagnostics in the provider profile contain bounded
+lifecycle metadata, first failure and separate cleanup outcomes, never credentials,
+checkpoint contents, prompts, responses or exception output. Temporary relay failure does
+not extend buyer expiry or replay inference. Definitive policy/runtime failure still closes
+the owned run. Full real two-account acceptance remains a separate operator gate.

@@ -165,13 +165,15 @@ export class TerminalUI {
   }
   async page(title, lines) {
     let offset = 0;
-    const draw = () => this.draw({ title, lines: lines.flatMap(line => wrapText(line, Math.max(10, (this.output.columns || 80) - 2))), focus: offset, footer: '↑↓ Scroll  Enter / Esc Back' });
-    return this.interact((_text, key, finish) => {
+    const draw = () => this.draw({ title: typeof title === 'function' ? title() : title, lines: (typeof lines === 'function' ? lines() : lines).flatMap(line => wrapText(line, Math.max(10, (this.output.columns || 80) - 2))), focus: offset, footer: '↑↓ Scroll  Enter / Esc Back' });
+    const interaction = this.interact((_text, key, finish) => {
       if (['return', 'escape'].includes(key.name)) { finish(true); return; }
       if (key.name === 'down' || key.name === 'pagedown') offset += key.name === 'pagedown' ? 10 : 1;
       if (key.name === 'up' || key.name === 'pageup') offset = Math.max(0, offset - (key.name === 'pageup' ? 10 : 1));
       draw();
     }, draw);
+    if (this.pending) this.pending.redraw = draw;
+    return interaction;
   }
   async task(title, work, { lines = [], cancel = false, onKey } = {}) {
     if (this.terminated) throw new ClientError('cancelled');
