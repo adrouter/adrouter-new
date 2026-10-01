@@ -1,7 +1,7 @@
 import { spawnSync } from 'node:child_process';
 import { renderBanner } from './brand.mjs';
 import { fuzzyFilter } from './vendor/pi/fuzzy.mjs';
-import readline from 'node:readline';
+import { terminalInput } from './terminal-input.mjs';
 import { safeText, ClientError } from './network.mjs';
 import { readFile } from 'node:fs/promises';
 
@@ -66,7 +66,8 @@ export class TerminalUI {
     if (!this.input.isTTY || !this.output.isTTY) throw new ClientError('interactive_terminal_required');
     if(this.input===process.stdin){const captured=spawnSync('/bin/stty',['-g'],{stdio:[this.input,'pipe','ignore'],encoding:'utf8',timeout:1000});this.terminalState=captured.status===0?captured.stdout.trim():undefined;if(!this.terminalState||!/^[A-Za-z0-9_=;:-]+$/.test(this.terminalState))throw new ClientError('terminal_state_unavailable');}
     this.wasRaw = !!this.input.isRaw; this.wasPaused = this.input.isPaused(); this.wasFlowing = this.input.readableFlowing;
-    readline.emitKeypressEvents(this.input); this.input.setRawMode(true); this.input.resume();
+    this.releaseInput = terminalInput(this.input, this.onKey);
+    this.input.setRawMode(true); this.input.resume();
     this.input.on('keypress', this.onKey); this.output.on('resize', this.resize);
     this.output.write('\x1b[?1049h\x1b[?25l'); this.started = true;
   }
@@ -74,6 +75,7 @@ export class TerminalUI {
     if (!this.started) return;
     this.pending?.resolve(null);
     this.input.removeListener('keypress', this.onKey); this.output.removeListener('resize', this.resize);
+    this.releaseInput?.(); this.releaseInput = undefined;
     let restorationFailure;try{this.input.setRawMode(this.wasRaw);}catch{restorationFailure=new ClientError('terminal_restore_failed');}
     if(this.terminalState){const restored=spawnSync('/bin/stty',[this.terminalState],{stdio:[this.input,'ignore','ignore'],timeout:1000});if(restored.status!==0)restorationFailure=new ClientError('terminal_restore_failed');}
     // Fresh stdin has readableFlowing=null, not isPaused=true. Leaving it

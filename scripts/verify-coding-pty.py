@@ -15,7 +15,11 @@ try:
    except OSError: break
    if len(buffer)>2*1024*1024:buffer=buffer[-1024*1024:]
   if b'Approve this action once?' in buffer and b'\xe2\x80\xba Deny' in buffer and time.monotonic()-last_review>.3:
-   reviews+=1;last_review=time.monotonic();os.write(master,b'\r' if b'File: denied.txt' in buffer else b'\x1b[B\r');buffer=b''
+   reviews+=1;last_review=time.monotonic()
+   if '--enhanced' in __import__('sys').argv:
+    sequence=b'\x1b[13;1u' if b'File: denied.txt' in buffer else b'\x1b[1;1:1B\x1b[1;1:3B\x1b[13;1u'
+   else:sequence=b'\r' if b'File: denied.txt' in buffer else b'\x1b[B\r'
+   os.write(master,sequence);buffer=b''
   if b'Synthetic coding complete.' in buffer:
    answers+=1;buffer=b''
    if ready_at is None:ready_at=time.monotonic()
@@ -34,7 +38,7 @@ try:
  pending_retype=bool(after[3] & getattr(termios,'PENDIN',0))
  if pending_retype: os.write(master,b'\n');after=termios.tcgetattr(slave)
  assert before==after,'terminal_modes_not_restored:'+repr([(i,a,b) for i,(a,b) in enumerate(zip(before,after)) if a!=b])
- print(json.dumps({'status':'passed','actualGuestTui':True,'followups':followups,'answers':answers,'elapsedSeconds':round(time.monotonic()-started),'extendedConsole':duration>120,'beyondFiveMinutes':duration>300,'terminalRestored':True,'paidInference':False,'hostInlineReviews':reviews,'pendingInputRetyped':pending_retype}))
+ print(json.dumps({'status':'passed','actualGuestTui':True,'followups':followups,'answers':answers,'elapsedSeconds':round(time.monotonic()-started),'extendedConsole':duration>120,'beyondFiveMinutes':duration>300,'terminalRestored':True,'paidInference':False,'hostInlineReviews':reviews,'pendingInputRetyped':pending_retype,'enhancedKeyboard':'--enhanced' in __import__('sys').argv}))
 finally:
  if p.poll() is None:
   p.terminate()
