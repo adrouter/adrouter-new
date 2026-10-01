@@ -19,9 +19,9 @@ test('default, buyer, provider and operator profiles have independent identities
     assert.equal(await original.directory(), join(await realpath(home), '.adr-v2'));
     assert.notEqual(await provider.directory(), await operator.directory());
     await provider.withLock(() => operator.withLock(() => original.withLock(async () => {
-      await assert.rejects(new AuthStore(home, 'provider').withLock(() => {}), /auth_state_busy/);
+      await assert.rejects(new AuthStore(home, 'provider').withLock(() => {},{timeoutMs:10}), /auth_state_busy/);
     })));
-    await buyer.withLock(()=>provider.withLock(async()=>{await assert.rejects(new AuthStore(home,'buyer').withLock(()=>{}),/auth_state_busy/);}));
+    await buyer.withLock(()=>provider.withLock(async()=>{await assert.rejects(new AuthStore(home,'buyer').withLock(()=>{},{timeoutMs:10}),/auth_state_busy/);}));
     await operator.clear(); assert.equal(await operator.read(), null);
     assert.deepEqual(await buyer.read(),{fixture:'buyer'});
     assert.deepEqual(await provider.read(), { fixture: 'provider' }); assert.deepEqual(await original.read(), { fixture: 'default' });

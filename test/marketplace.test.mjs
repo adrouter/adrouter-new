@@ -65,7 +65,7 @@ test('refresh state lock rejects concurrent rotation without reading or leaking 
     const a = new AuthStore(home); const b = new AuthStore(home); let release;
     const pending = a.withLock(() => new Promise(r => { release = r; }));
     while (!release) await new Promise(r => setTimeout(r, 1));
-    await assert.rejects(b.withLock(() => undefined), /auth_state_busy/); release(); await pending;
+    await assert.rejects(b.withLock(() => undefined,{timeoutMs:10}), /auth_state_busy/); release(); await pending;
     assert.equal(await b.withLock(() => 'released'), 'released');
   } finally { await rm(home, { recursive: true, force: true }); }
 });

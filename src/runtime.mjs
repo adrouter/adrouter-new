@@ -122,34 +122,50 @@ export class SandboxRuntime {
     } catch (error) {
       // Killing just the client does not prove a guest command stopped. Tear down
       // the whole disposable VM on cancellation or an uncertain command outcome.
-      await this.remove(name);
+      await this.remove(name).catch(() => {});
       throw error;
     }
   }
 
-  async attachConsole(name, command, { signal, stdio = 'inherit', timeoutSeconds = 120 } = {}) {
+  // Controller-owned, read-only checkpoint programs have bounded failure without
+  // destroying work. Effectful run() retains uncertain-outcome VM teardown.
+  async readCheckpoint(name, command, { signal, outputBytes = 24 * 1024 * 1024 } = {}) {
     this.requireOwned(name);
-    if(!Number.isInteger(timeoutSeconds)||timeoutSeconds<1||timeoutSeconds>3600)throw new RuntimeError('console_duration_invalid');
+    return this.call(['exec', '--no-tty', '--timeout', '15s', '--rlimit', 'core=0', name, '--', ...command],
+      { timeout: 20000, signal, outputBytes });
+  }
+
+  async attachConsole(name, command, { signal, stdio = 'inherit', timeoutSeconds = 120, coordinator, beforeTeardown, onOutcome = () => {} } = {}) {
+    this.requireOwned(name);
+    if (!Number.isInteger(timeoutSeconds) || timeoutSeconds < 1 || timeoutSeconds > 3600) throw new RuntimeError('console_duration_invalid');
     if (!Array.isArray(command) || command.some(x => typeof x !== 'string' || x.includes('\0'))) throw new RuntimeError('guest_command_invalid');
-    let terminalState;
-    if (process.stdin.isTTY && stdio === 'inherit') {
-      const captured=spawnSync('/bin/stty',['-g'],{stdio:[0,'pipe','ignore'],encoding:'utf8',timeout:1000});
-      terminalState=captured.status===0?captured.stdout.trim():undefined;
-      if(!terminalState || !/^[A-Za-z0-9_=;:-]+$/.test(terminalState))throw new RuntimeError('terminal_state_unavailable');
+    const args = ['exec', '--tty', '--timeout', `${timeoutSeconds}s`, '--rlimit', 'core=0', '--rlimit', 'nofile=128', name, '--', ...command];
+    let terminalState, primary;
+    if (process.stdin.isTTY && stdio === 'inherit' && !coordinator) {
+      const captured = spawnSync('/bin/stty', ['-g'], { stdio: [0, 'pipe', 'ignore'], encoding: 'utf8', timeout: 1000 });
+      terminalState = captured.status === 0 ? captured.stdout.trim() : undefined;
+      if (!terminalState || !/^[A-Za-z0-9_=;:-]+$/.test(terminalState)) throw new RuntimeError('terminal_state_unavailable');
     }
     try {
-      await new Promise((resolve, reject) => {
-        const child = spawn(this.executable, ['exec', '--tty', '--timeout', `${timeoutSeconds}s`, '--rlimit', 'core=0', '--rlimit', 'nofile=128', name, '--', ...command], { env: runtimeEnvironment(this.home, this.library), stdio, signal });
-        child.once('error', () => reject(new RuntimeError('guest_console_failed')));
-        child.once('exit', code => code === 0 ? resolve() : reject(new RuntimeError('guest_console_cancelled')));
+      if (coordinator && stdio === 'inherit') await coordinator.attach(this.executable, args, runtimeEnvironment(this.home, this.library), signal);
+      else await new Promise((resolve, reject) => {
+        const child = spawn(this.executable, args, { env: runtimeEnvironment(this.home, this.library), stdio, signal });
+        child.once('error', error => { const e = new RuntimeError(error.name === 'AbortError' ? 'runtime_cancelled' : 'guest_console_failed'); onOutcome({ phase: 'console', code: e.code }); reject(e); });
+        child.once('exit', (code, exitSignal) => { onOutcome({ phase: 'console', exitCode: code, signal: exitSignal,...(code!==0?{code:'guest_console_cancelled'}:{}) }); if (code === 0) resolve(); else { const e = new RuntimeError('guest_console_cancelled'); e.exitCode = code; e.signal = exitSignal; reject(e); } });
       });
-    } catch (error) { await this.remove(name); throw error; }
-    finally {
-      if(terminalState) {
-        const restored=spawnSync('/bin/stty',[terminalState],{stdio:[0,'ignore','ignore'],timeout:1000});
-        if(restored.status!==0) { if(this.owned.has(name))await this.remove(name);throw new RuntimeError('terminal_restore_failed'); }
+    } catch (error) {
+      primary = error;
+      await beforeTeardown?.().catch(()=>{});
+      try { if (this.owned.has(name)) await this.remove(name); onOutcome({ phase: 'guest_removal', status: 'succeeded' }); }
+      catch (cleanup) { onOutcome({ phase: 'guest_removal', code: cleanup.code }); }
+    } finally {
+      if (terminalState) {
+        const restored = spawnSync('/bin/stty', [terminalState], { stdio: [0, 'ignore', 'ignore'], timeout: 1000 });
+        onOutcome({ phase: 'terminal_restoration', status: restored.status === 0 ? 'succeeded' : 'failed' });
+        if (restored.status !== 0 && !primary) primary = new RuntimeError('terminal_restore_failed');
       }
     }
+    if (primary) throw primary;
   }
 
   async touch(name, { signal } = {}) { this.requireOwned(name); await this.call(['ping', name, '--touch'], { signal }); }

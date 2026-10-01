@@ -53,12 +53,21 @@ export class AuthStore {
       await rename(temporary, destination);
     } finally { await file?.close(); await unlink(temporary).catch(e => { if (e.code !== 'ENOENT') throw e; }); }
   }
-  async withLock(fn) {
+  async withLock(fn, { signal, timeoutMs = 30000 } = {}) {
     const path = join(await this.directory(), 'auth.lock');
+    const deadline = Date.now() + timeoutMs;
     let file;
-    try { file = await open(path, constants.O_WRONLY | constants.O_CREAT | constants.O_EXCL | constants.O_NOFOLLOW, 0o600); }
-    catch { throw new ClientError('auth_state_busy'); }
-    try { return await fn(); }
+    while (!file) {
+      if (signal?.aborted) throw new ClientError('cancelled');
+      try { file = await open(path, constants.O_WRONLY | constants.O_CREAT | constants.O_EXCL | constants.O_NOFOLLOW, 0o600); }
+      catch (error) {
+        if (error.code !== 'EEXIST') throw new ClientError('auth_state_unavailable');
+        if (Date.now() >= deadline) throw new ClientError('auth_state_busy');
+        try { await delay(Math.min(50, Math.max(1, deadline - Date.now())), undefined, { signal }); }
+        catch { throw new ClientError('cancelled'); }
+      }
+    }
+    try { if (signal?.aborted) throw new ClientError('cancelled'); return await fn(); }
     finally { await file.close(); await unlink(path); }
   }
   async clear() { await unlink(join(await this.directory(), 'installation.json')).catch(e => { if (e.code !== 'ENOENT') throw e; }); }
@@ -110,16 +119,16 @@ export class Network {
       if (Date.now() >= identity.expiresAt - 30000) {
         identity.refreshPending = true; await this.store.write(identity);
         // Serialize refresh rotation across processes. Unknown outcomes are not retried.
-        const tokens = await this.send('/v1/oauth/token', { method: 'POST', identity, body: { grant_type: 'refresh_token', refresh_token: identity.refresh_token, installation_id: identity.installation_id } });
+        const tokens = await this.send('/v1/oauth/token', { method: 'POST', identity, body: { grant_type: 'refresh_token', refresh_token: identity.refresh_token, installation_id: identity.installation_id }, signal: options.signal });
         Object.assign(identity, tokens, { refreshPending: false, expiresAt: Date.now() + tokens.expires_in * 1000 }); await this.store.write(identity);
       }
       return identity;
-    });
+    }, { signal: options.signal });
     return this.send(path, { ...options, identity, token: identity.access_token });
   }
   async login(notify, signal, { operator = false } = {}) {
     if (this.local) return { status: 'local_development', actor: this.actor };
-    return this.store.withLock(() => this.enroll(notify, signal, operator));
+    return this.store.withLock(() => this.enroll(notify, signal, operator), { signal });
   }
   async enroll(notify, signal, operator) {
     if (await this.store.read()) throw new ClientError('logout_existing_installation_first');
