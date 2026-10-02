@@ -12,6 +12,7 @@ const {TerminalCoordinator,reviewLines}=await import(entry('terminal-coordinator
 const {connectorCatalog,resolveConnector,connectorHeaders}=await import(entry('connectors.mjs'));
 const {upstreamBody,upstreamInference}=await import(entry('provider-broker.mjs'));
 const {CodingDisplay,codingFooter}=await import(entry('coding-display.mjs'));
+const {providerConnectionLabel}=await import(entry('provider-activity.mjs'));
 const profiles=connectorCatalog.profiles;
 const frame={type:'inference',requestId:'123e4567-e89b-42d3-a456-426614174000',protocol:'coding_v1',messages:[{role:'assistant',content:'',reasoning_content:'synthetic reasoning',tool_calls:[{id:'c',type:'function',function:{name:'read',arguments:'{}'}}]},{role:'tool',content:'synthetic',tool_call_id:'c'}],tools:[{type:'function',function:{name:'read',parameters:{}}}],maxOutputTokens:32,thinking:false,upstreamBudget:{inputBound:10000,reservedMicrousd:'100000',inputMicrousdPerMillion:'1',outputMicrousdPerMillion:'1'}};
 test('DeepSeek, MiMo and generic bodies retain exact model, bounded controls and thinking history',()=>{
@@ -48,4 +49,11 @@ test('cell widths, sidebar details and metadata footer remain safe and readable'
  const rendered=renderScreen({title:'Browse',sidebar:['Marketplace availability','Hot 1'],details:['Context '+Array(30).fill('details').join(' ')],lines:['choice'],footer:'F Full details'},120,24,false);assert.ok(rendered.indexOf('Marketplace availability')<rendered.indexOf('Context'));
  const unsafe=reviewLines({name:'bash',args:{command:'echo \x1b]0;injected\x07'}});assert.ok(unsafe.every(l=>!l.styled.includes('\x1b]')));
  const display=new CodingDisplay({id:'12345678-session',charged:'0'},{name:'Compute',model:'synthetic',inputRate:'1000',outputRate:'2000'});display.complete('one',{inputTokens:10,outputTokens:4});display.complete('one',{inputTokens:10,outputTokens:4});assert.match(codingFooter(display.view(),80),/S 12345678.*Compute\/synthetic.*I 10 O 4/);
+});
+
+test('provider status uses current polled readiness and marks unavailable data without cached lease guesses',()=>{
+ assert.equal(providerConnectionLabel(null),'unavailable · last confirmed');
+ assert.equal(providerConnectionLabel({stale:true,connectionFresh:true}),'unavailable · last confirmed');
+ assert.equal(providerConnectionLabel({connectionFresh:true}),'fresh');
+ assert.equal(providerConnectionLabel({connectionFresh:false}),'offline');
 });

@@ -11,3 +11,8 @@ export class ProviderActivityMonitor {
   async start(){this.stopped=false;this.abort=new AbortController();await this.poll();this.timer=setInterval(()=>void this.poll(),5000);}
   stop(){this.stopped=true;clearInterval(this.timer);this.abort.abort();}
 }
+
+export function providerConnectionLabel(activity) {
+  if(!activity||activity.stale)return 'unavailable · last confirmed';
+  return activity.connectionFresh?'fresh':'offline';
+}

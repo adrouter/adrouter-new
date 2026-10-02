@@ -129,7 +129,7 @@ export class TerminalUI {
       if(fullDetails){if(['escape','return'].includes(key.name)||text==='f')fullDetails=false;else if(['up','pageup'].includes(key.name))detailFocus=Math.max(0,detailFocus-(key.name==='up'?1:5));else if(['down','pagedown'].includes(key.name))detailFocus+=key.name==='down'?1:5;draw();return;}
       if (key.name === 'escape') { finish(null); return; }
       if(key.name==='pageup'||key.name==='pagedown'){const delta=key.name==='pageup'?-5:5;if(fixedActions)previewFocus=Math.max(0,previewFocus+delta);else detailFocus=Math.max(0,detailFocus+delta);}
-      else if(text==='f'&&!fixedActions){fullDetails=!fullDetails;detailFocus=0;}
+      else if(text==='F'&&!fixedActions&&(choices[selected]?.details?.length||choices[selected]?.detail)){fullDetails=!fullDetails;detailFocus=0;}
       else if (key.name === 'up') selected = (selected + choices.length - 1) % Math.max(1, choices.length);
       else if (key.name === 'down' || key.name === 'tab') selected = (selected + 1) % Math.max(1, choices.length);
       else if (key.name === 'return' && choices[selected]) {
