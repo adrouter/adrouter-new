@@ -116,33 +116,33 @@ Use clean isolated source commits and a new private version. Preserve old instal
 
 ## Step A: Scoped implementation
 ### Status
-`review`
+`done`
 ### Tasks
-- [ ] Bundle pinned fd and bound startup/build retrieval.
-- [ ] Share workspace eligibility and contextual action diffs.
-- [ ] Pin selected details; restore guest terminal modes and redraw.
-- [ ] Add provider thinking controls and render-only credit/error displays.
-- [ ] Remove marketplace presence prompts; wire provider stop shortcuts.
+- [x] Bundle pinned fd and bound startup/build retrieval.
+- [x] Share workspace eligibility and contextual action diffs.
+- [x] Pin selected details; restore guest terminal modes and redraw.
+- [x] Add provider thinking controls and render-only credit/error displays.
+- [x] Remove marketplace presence prompts; wire provider stop shortcuts.
 ### Acceptance Criteria
-- [ ] Explicit approvals, accepted session bindings, cancellation and no-replay invariants remain intact.
-- [ ] No unrelated tracked/untracked work enters the release inputs.
+- [x] Explicit approvals, accepted session bindings, cancellation and no-replay invariants remain intact.
+- [x] No unrelated tracked/untracked work enters the release inputs.
 ### Validation Results
-Not run for these changes.
+Owning-project source checks passed; client 112 tests and Router 49 marketplace/6 contract cases, authentication, typecheck/build passed.
 
 ## Step B: Final verification and cleanup
 ### Status
-`todo`
+`review`
 ### Tasks
-- [ ] Run owning-project source, contract, authentication and runtime checks.
-- [ ] Freeze clean commits and verify exact private artifact/provenance and installed native VM/PTY behavior.
-- [ ] Preserve Pages and drain/replace the sole Router staging Machine if required.
+- [x] Run owning-project source, contract, authentication and runtime checks.
+- [x] Freeze clean commits and verify exact private artifact/provenance and installed native VM/PTY behavior.
+- [x] Preserve Pages and drain/replace the sole Router staging Machine if required.
 - [ ] Record individual operator gates; live Review and Apply and thinking qualification remain pending until observed.
 ### Acceptance Criteria
 - [ ] Reviewed host application succeeds; exclusions and conflicts do not damage originals.
 - [ ] Native terminal controls survive approvals, Continue, resume and resize.
 - [ ] Independent cleanup/accounting outcomes remain truthful.
 ### Validation Results
-Not run for these changes.
+Installed 347-second enhanced PTY and 660-second provider lifecycle passed with synthetic inference. Ten serving modules matched; same staging Machine/closed admissions and 28 current Pages records verified. Operator live UI/Review and Apply/thinking rerun remains pending.
 
 ## Follow-up Work
 Operator-only guest key entry and final real-provider Review and Apply/thinking rerun after synthetic preparation.
