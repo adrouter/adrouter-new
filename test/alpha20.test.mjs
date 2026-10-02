@@ -97,3 +97,16 @@ test('Back remains last with one action and with filters that match no actions',
 test('Back is last in confirmations while cancellation stays selected by default',async()=>{
  const f=uiFixture();f.ui.start();try{const pending=f.ui.menu('Confirm',[{value:false,label:'Back'},{value:true,label:'Confirm'}]);assert.equal(f.ui.screen.lines.at(-1).text,'› Back');f.ui.onKey('',{name:'return'});assert.equal(await pending,false);}finally{f.ui.stop();}
 });
+
+
+test('narrow description previews use content rows while details remain scrollable',async()=>{
+ for(const color of [false,true]){
+  const f=uiFixture(color);f.ui.start();try{
+   const pending=f.ui.menu('Choose',[{value:'one',label:'One',details:Array.from({length:20},(_,i)=>'Description '+i)},{value:'back',label:'Back'}]);
+   f.ui.onKey('',{name:'pagedown'});
+   const value=renderScreen(f.ui.screen,80,24,color).replace(/\x1b\[[0-9;]*m/g,'').split('\r\n');
+   assert.ok(value.includes('Description 5'));assert.ok(value.includes('Description 6'));assert.ok(value.includes('Description 7'));assert.ok(!value.some(l=>l==='↑'||l==='↓'));
+   f.ui.onKey('F',{});assert.equal(f.ui.screen.title,'Full details');f.ui.onKey('F',{});assert.equal(f.ui.screen.title,'Choose');f.ui.onKey('',{name:'escape'});await pending;
+  }finally{f.ui.stop();}
+ }
+});

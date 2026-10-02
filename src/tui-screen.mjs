@@ -55,7 +55,9 @@ export function renderScreen({ title, subtitle = '', lines = [], details = [], f
   if(actions.length&&result.at(-1)==='')result.pop();
   while (result.length > Math.max(1, height - Math.max(5,actions.length+3))) result.splice(0, 1);
   const description=details.flatMap(v=>wrapText(v,width));
-  const pinned=scrollRows(description,Math.min(3,Math.max(0,height-result.length-Math.max(5,3+actions.length))),detailFocus);
+  const detailCapacity=Math.min(3,Math.max(0,height-result.length-Math.max(5,3+actions.length)));
+  const detailOffset=Math.max(0,Math.min(detailFocus,description.length-detailCapacity));
+  const pinned=description.slice(detailOffset,detailOffset+detailCapacity);
   const capacity = Math.max(1, height - result.length - 2 - pinned.length - actions.length);
   const offset = Math.max(0, Math.min(Math.max(0, lines.length - capacity), focus - Math.floor(capacity / 2)));
   for (const [index, line] of scrollRows(lines,capacity,offset).entries()) {

@@ -710,3 +710,12 @@ live cause, entitlement and every live qualification gate remain NOT TESTED.
 Private alpha.23 is the new unused delivery version. No hosted source, schemas,
 access gates, public versions, tags or channels are changed. Exact packaging,
 installed acceptance and launcher selection remain pending.
+
+### Private alpha.24 narrow-preview fix forward
+
+Alpha.23 product d4125a6844659b9070a96d0a203d13d98cca1159 and tarball are retained
+immutably. Installed-byte comparison passed 23,531 files. Final inspection found
+that the narrow layout still replaced description text rows with overflow arrows.
+Remove those markers while retaining PageUp/PageDown and Full details. The wide
+layout and approval/list overflow behavior stay separate. New alpha.24 repeats
+exact installed acceptance; the launcher has not changed.
