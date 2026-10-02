@@ -21,7 +21,11 @@ try:
         if completed_at and not returned and time.monotonic() - completed_at > 2:
             os.write(master, b'/workspace\r'); returned = True
         if process.poll() is not None: break
-    assert process.wait(timeout=5) == 0, 'read_only_native_failed'
+    code = process.wait(timeout=5)
+    if code:
+        for line in captured.splitlines():
+            if line.startswith(b'{"nativeAcceptance":'): print(line.decode(), flush=True)
+    assert code == 0, 'read_only_native_failed'
     assert returned and b'"filesUnchanged":true' in captured and b'"automaticReads":4' in captured, 'missing_read_assertions'
     after = termios.tcgetattr(slave)
     if after[3] & getattr(termios, 'PENDIN', 0): os.write(master, b'\n'); after = termios.tcgetattr(slave)
