@@ -368,3 +368,7 @@ Product 04d85dbaf2a49526b986b02453ecec5af3a0a2ae packed once; 23,531 files match
 Final review found that the provider menu combined current activity polling with an old node lease snapshot, which could display offline alongside a fresh connection. Preserve alpha.20 tarball/install/source as an immutable tested predecessor; use new private alpha.21 bytes for the correction. Backend connection labels now derive from polled activity, and active session references come from that same response. Lowercase f retains filter behavior; uppercase F opens available details. Router source/image remains 62c95b216601104b8931b7c4eb90a22ec606fd17. Repeat exact installed acceptance for the new product and record predecessor gates separately.
 
 Plan-only correction: e9dfe574d26bf2219cbc0ca9d52caa08a68ae377 accidentally replaced this file with test text. This follow-up restores every previous plan section and appends the fix-forward decision. PLAN.md is excluded from the immutable package; product bytes are unchanged.
+
+
+### Private alpha.22 short-window fix forward
+A final short-window regression reproduced a hidden selected list row at eight terminal rows: description rows and overflow markers consumed the available viewport. Reserve at least three content rows when space allows, collapse narrow contextual previews, and prioritize selected content over markers when fewer than three rows exist. Retain alpha.20/alpha.21 immutable products. The new alpha.22 product repeats exact installed gates; Router source remains 62c95b216601104b8931b7c4eb90a22ec606fd17.

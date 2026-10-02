@@ -38,7 +38,7 @@ export class TerminalCoordinator {
           this.ui.draw=screen=>{
             if(screen)this.ui.screen=screen;
             if(!this.ui.started||!this.ui.screen)return;
-            const rows=Math.max(2,this.ui.output.rows||24),height=Math.min(rows,Math.max(8,Math.floor(rows*.55)));
+            const rows=Math.max(2,this.ui.output.rows||24),height=Math.min(rows,Math.max(14,Math.floor(rows*.55)));
             const start=Math.min(ownedStart??rows,rows-height+1);ownedStart=start;
             this.ui.output.write('\x1b[0m'+Array.from({length:rows-start+1},(_,i)=>`\x1b[${start+i};1H\x1b[2K`).join('')+`\x1b[${rows-height+1};1H`+renderScreen({...this.ui.screen,context:'Host approval · conversation above',sidebar:[]},this.ui.output.columns||80,height,this.ui.color));
           };

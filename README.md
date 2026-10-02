@@ -199,3 +199,5 @@ Authorized API and Self-hosted are the supply choices. Router-owned generated pr
 Host approvals keep Deny/Allow/Details below the scrollable preview, default to Deny and reset their owned terminal cells on repaint. Page Up/Page Down scroll previews or contextual descriptions; F opens full contextual details. The pinned runtime supplies tool syntax highlighting and cell widths, with monochrome support. Provider activity polls every five seconds while visible, with uptime each second; legacy usage totals show unavailable.
 
 Private alpha.21 fixes forward from the retained alpha.20 artifact: provider connection labels use current owner-scoped activity instead of a cached node lease. Current activity owns active session references. Uppercase F opens details while lowercase f remains available for filtering.
+
+Private alpha.22 also preserves the selected list row on short terminal windows; descriptions collapse first, and action visibility takes precedence when there is insufficient room for both overflow markers.

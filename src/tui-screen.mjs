@@ -13,8 +13,10 @@ export { visibleWidth };
 export function wrapText(value,width) {return safeText(value).split('\n').flatMap(line=>wrapTextWithAnsi(line.replaceAll('\t','    '),Math.max(1,width)).map(v=>truncateToWidth(v,Math.max(1,width),'').replace(/\x1b\[[0-9;]*m/g,'')));}
 const styledWrap=(line,width)=>wrapTextWithAnsi(line.styled,Math.max(1,width)).map(styled=>({...line,text:styled.replace(/\x1b\[[0-9;]*m/g,''),styled}));
 export function scrollRows(lines,capacity,offset) {
+  if(capacity<=0)return [];
   offset=Math.max(0,Math.min(Math.max(0,lines.length-capacity),offset));
   const result=lines.slice(offset,offset+capacity);
+  if(capacity<3)return result;
   if(offset>0&&result.length)result[0]='↑';
   if(offset+capacity<lines.length&&result.length)result[result.length-1]='↓';
   return result;
@@ -32,6 +34,11 @@ export function renderScreen({ title, subtitle = '', lines = [], details = [], f
   const width = Math.max(1, columns - 2); const height = Math.max(1, rows - 1);
   const blue = text => color ? `${/truecolor|24bit/.test(process.env.COLORTERM ?? '') ? '\x1b[38;2;63;101;245m' : '\x1b[38;5;63m'}${text}\x1b[0m` : text;
   const result = [];
+  if(actions.length&&height<actions.length+5){
+    const controls=height>=actions.length?actions:[...actions.filter(a=>a.selected),...actions.filter(a=>!a.selected)].slice(0,height);
+    const capacity=Math.max(0,height-controls.length),preview=scrollRows(lines,capacity,Math.max(0,focus-Math.floor(capacity/2)));
+    return [...preview.map(line=>clip(typeof line==='object'?line.text:line,width)),...controls.map(a=>{const text=clip(a.text,width);return color&&a.selected?'\x1b[7m'+text+' '.repeat(Math.max(0,width-visibleWidth(text)))+'\x1b[0m':text;})].join('\r\n');
+  }
   // The original panel is 16 rows; only show it when navigation still fits.
   if (width >= 68 && height >= 16 + Math.min(lines.length, 10) + 8) {
     result.push(...renderBanner(width, version, clean(context), color,
@@ -44,7 +51,7 @@ export function renderScreen({ title, subtitle = '', lines = [], details = [], f
   if(actions.length&&result.at(-1)==='')result.pop();
   while (result.length > Math.max(1, height - Math.max(5,actions.length+3))) result.splice(0, 1);
   const description=details.flatMap(v=>wrapText(v,width));
-  const pinned=scrollRows(description,Math.min(3,Math.max(0,height-result.length-3-actions.length)),detailFocus);
+  const pinned=scrollRows(description,Math.min(3,Math.max(0,height-result.length-Math.max(5,3+actions.length))),detailFocus);
   const capacity = Math.max(1, height - result.length - 2 - pinned.length - actions.length);
   const offset = Math.max(0, Math.min(Math.max(0, lines.length - capacity), focus - Math.floor(capacity / 2)));
   for (const [index, line] of scrollRows(lines,capacity,offset).entries()) {

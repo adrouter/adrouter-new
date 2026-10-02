@@ -57,3 +57,21 @@ test('provider status uses current polled readiness and marks unavailable data w
  assert.equal(providerConnectionLabel({connectionFresh:true}),'fresh');
  assert.equal(providerConnectionLabel({connectionFresh:false}),'offline');
 });
+
+test('short resized menus retain the selected action instead of replacing it with overflow arrows',()=>{
+ const lines=Array.from({length:100},(_,i)=>({text:`${i===70?'›':' '} session ${i}`,selected:i===70}));
+ for(const rows of [5,6,8,10,12,24])for(const columns of [20,48,120]){
+  const value=renderScreen({title:'Sessions',lines,focus:70,details:['Session: synthetic','Listing: synthetic','Description '.repeat(40)],footer:'Enter Choose'},columns,rows,false);
+  assert.ok(value.includes('› session 70'),`selected action hidden at ${columns}x${rows}`);
+  assert.ok(value.split('\r\n').every(line=>visibleWidth(line)<=columns));
+ }
+});
+
+test('very short approval screens keep the action controls visible',()=>{
+ const actions=[{text:'› Deny',selected:true},{text:'  Allow once'},{text:'  Expand details'}];
+ for(const rows of [5,6,8,12]){
+  const value=renderScreen({title:'Approve',lines:Array.from({length:40},(_,i)=>'preview '+i),actions,focus:20},48,rows,false);
+  for(const action of actions)assert.ok(value.includes(action.text.trim()));
+  assert.ok(value.split('\r\n').length<=rows-1);
+ }
+});
