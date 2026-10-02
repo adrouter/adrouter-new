@@ -380,3 +380,333 @@ Implementation and private preparation/rollout are complete. Final client produc
 The retained provider stopped normally with separately successful guest removal and broker cleanup; no active buyer session was interrupted. The sole staging Machine was relay-disabled/drained, advisory lease released and replaced in place. Thirteen serving modules were verified before relay restoration and again afterward. Exactly one relay lease, private access/closed admissions, Machine resources/ports/idle settings and Pages deployment/assets remain. Session/request digests across 17 sessions and two pending requests match. No schema migration, public publication/promotion, signing, remote-secret change or financial reconciliation occurred. The launcher selects isolated alpha.22; profiles and old saved work/artifacts remain.
 
 Steps A/B: done. Step C implementation, synthetic installed acceptance, private staging rollout and launcher: done; operator DeepSeek/MiMo UI acceptance remains review. Alpha.19 functional Apply/thinking outcomes are operator-reported live PASS with timestamps/session associations unconfirmed; rendering/highlighting remain separately open. Final alpha.22 real-provider gates remain NOT TESTED until operator evidence is supplied. See the appended workspace reliability receipt and outputs/adr-alpha20-2026-10-02 metadata.
+
+
+# Plan: ADRv2 UI, automatic reads and general authorized API gateways — 2 October 2026
+
+## Goal
+
+Complete the requested UI and read-tool repairs, and make the existing custom OpenAI-compatible Chat Completions path usable and verifiable for authorized API gateways beyond GLM. Use GLM-5.3 on the operator's Z.ai API bundle as the first live acceptance case. This continuation supersedes conflicting UI defaults in earlier plan sections while preserving their history.
+
+## Context
+
+- Owning checkout: `/Users/ahmadzuhri/antigravity/3days/.reliability/client-ux`; canonical repository: `https://github.com/adrouter/adrouter-new`; branch: `codex/adrv2-reliability-20261001`. At planning, the clean local commit and freshly queried GitHub branch both resolve to `5eee85cba671fa66d4e7482d2569877fea9e0eac`. Reverify before implementation.
+- The inspected package declares private version `0.1.0-alpha.22`. Its generic version-1 connector already supports custom endpoints/models, four authentication modes, two output-token fields, two usage modes and three thinking-control modes. This plan extends setup, diagnostics and qualification around that existing interface; it does not claim those combinations are already qualified.
+- The read failure was reproduced with a read-only check: the pinned runtime passes `toolCall.name` and validated `args`, but `reviewedRead` expects `toolName` and `arguments`. Converting those fields permits the same allowed project path. The native verifier currently requests reads without checking their returned contents.
+- Confirmed preferences: raise the description pane's top edge to the main horizontal blue divider; keep Back last; match approvals to the embedded coding agent; leave thinking manually controlled. The operator identified the GLM product as a 20-million-credit bundle on Z.ai. Its active entitlement and the live authentication cause remain unverified.
+
+## Research Summary
+
+- Router owns the connector schema/catalog and accepted bindings. The inspected version-1 shape can express the planned generic setup without a Router change. Preserve its generated client projection.
+- [OpenRouter's API reference](https://openrouter.ai/docs/api_reference/overview) supplies a useful gateway compatibility example: namespaced model IDs, SSE comments and a final usage chunk with a nonempty choices array. Use public protocol examples as synthetic fixtures, not evidence of a live-qualified gateway.
+- [OpenRouter error documentation](https://openrouter.ai/docs/api_reference/errors-and-debugging) distinguishes HTTP failures from errors inside an already-started response. Preserve partial-output uncertainty and do not add automatic client retries.
+- [Z.ai configuration guidance](https://zcode.z.ai/en/docs/configuration) routes API resource bundles through the standard API endpoint. [GLM-5.3 documentation](https://docs.z.ai/guides/llm/glm-5.3) requires thinking enabled; [Z.ai errors](https://docs.z.ai/api-reference/api-code) distinguishes credential failures, forbidden access and quota failures. These are separate diagnostic branches, not a proven explanation of the operator's failure.
+- Fresh DeepSeek documentation retrieval timed out. Retain the existing source-backed preset and regression fixtures; recheck official documentation before making a new live compatibility claim. No SDK/library upgrade is planned; use the pinned runtime's source as the library-behavior reference.
+
+## Constraints
+
+- Keep implementation in this client repository. Preserve public routes, Router connector descriptors, generated validators/catalogs, accepted-session bindings and hosted schemas. No new dependency or protocol version is planned.
+- General support means the documented Chat Completions subset below, with no gateway-hostname or model-name allowlist in the custom path. Listing publication and existing tariff/capability qualification remain explicit.
+- Keys are entered only by the operator inside the provider guest. Preserve endpoint validation, destination binding, resource limits, host approvals and separate host Apply. Never forward credentials to diagnostic output or model context.
+- Preserve accepted spending controls, actual usage requirements, unknown liabilities and no client-side inference replay. A gateway's internal routing/retry behavior is separate and must not be described as verified by a single client request.
+- Keep all earlier plan sections and immutable artifacts. Implementation and product validation below are pending; this planning update changes only `PLAN.md`.
+
+## Out of Scope
+
+Responses/Anthropic protocols, arbitrary headers or JSON-body injection, custom executable adapters, automatic model/endpoint fallback, automatic thinking enforcement, subscription-capacity eligibility, legacy-client changes, new model catalogs, public publication/promotion and database or Router deployments. Proprietary reasoning formats requiring additional wire fields are not silently treated as compatible.
+
+## Reversibility
+
+Separate UI/read repairs, generic setup and diagnostics into reviewable commits. Preserve the connector version, pinned legacy source and previous private installations. Generate runtime artifacts through the builder and use a new immutable private version for delivery; never replace alpha.22 bytes.
+
+---
+
+## Step A: UI consistency and automatic project reads
+
+### Status
+
+`todo`
+
+### Objective
+
+Complete the original UI and permission repairs across all providers.
+
+### Tasks
+
+- [ ] Calculate a shared blue-divider row for the main and description panes. Give descriptions the remaining pane height, remove their arrow-only overflow rows, and retain scrolling/Full details. Narrow layouts must keep the selected action and footer visible.
+- [ ] Keep Back visible and last, including single-action menus and filtered results. Exclude it from fuzzy ranking and append it after matching actions.
+- [ ] Use one compact approval card in the existing borrowed lower-screen area: embedded-agent theme/spacing, one tool/path heading, formatted command or contextual diff, Deny selected initially, Allow once and expandable technical details. Preserve expiry, bound actions, input ownership and draft/conversation restoration.
+- [ ] Normalize the real read authorization context into the read guard's expected shape at the guest bridge. Permit built-in read/grep/find/ls within the allowed project; retain containment and protected-path/link checks. Write/edit/bash/operator commands and host Apply still require fresh approval.
+- [ ] Strengthen runtime regression checks to inspect actual read results and verify zero approvals, zero bash calls and unchanged files during a read-only turn.
+
+### Relevant Files
+
+`src/tui-screen.mjs`, `src/tui.mjs`, `src/terminal-coordinator.mjs`, `src/tool-presentation.mjs`, `src/guest/coding-controls.mjs`, `src/guest/coding-read-policy.mjs`, the runtime builder, coding tests and native verifiers.
+
+### Expected Changes
+
+Modify owned render/bridge source and meaningful regressions; regenerate the coding payload through its builder during implementation.
+
+### Do Not Modify
+
+Approval authority, provider lifecycle ownership, original host files, legacy CLI source or generated runtime bytes by hand.
+
+### Commands
+
+```sh
+node --test test/coding-ui.test.mjs test/coding-terminal.test.mjs test/alpha20.test.mjs
+```
+
+### Acceptance Criteria
+
+- [ ] Description alignment, Back ordering, long previews, Unicode, color/monochrome and resizing preserve usable controls.
+- [ ] The real runtime returns expected fixture contents; denied mutations make no changes and approved actions execute once.
+
+### Validation Results
+
+Implementation tests not run. Planning reproduced the authorization argument-shape mismatch without modifying files.
+
+---
+
+## Step B: General gateway setup and compatibility contract
+
+### Status
+
+`todo`
+
+### Objective
+
+Make the existing custom connector a clear, provider-independent setup path.
+
+### Tasks
+
+- [ ] Describe the custom choice as an OpenAI-compatible API gateway. Accept its full Chat Completions URL and preserve the exact model ID, including namespaced IDs; do not guess endpoint suffixes or substitute models.
+- [ ] Explain and validate the existing settings: `bearer`, `api_key`, `x_api_key`, or `none`; `max_tokens` or `max_completion_tokens`; `include_usage` or `native`; `none`, `type`, or `reasoning_effort`; reasoning history on/off. Preserve current generic defaults and named preset values.
+- [ ] Show those public settings with the endpoint/model in the final setup review and retain them when going Back/Edit. Run connector and endpoint validation before creating a draft or launching a VM; no credential entry or inference probe occurs during form validation.
+- [ ] Explain that coding requires text streaming, function tools and trustworthy final token usage. The current reasoning-history dialect is `reasoning_content`; gateways requiring structured/signed reasoning blocks remain unqualified for that feature.
+- [ ] Keep capability selection and thinking manual. Advertise only capabilities verified for the chosen gateway/model, and retain existing explicit publication, accepted revisions and tariff qualification.
+
+### Relevant Files
+
+`src/tui.mjs`, `src/connectors.mjs`, `src/provider-broker.mjs`, `test/provider-setup.test.mjs`, `test/contracts.test.mjs`, `README.md`, `docs/private-mac-acceptance.md`.
+
+### Expected Changes
+
+Modify setup labels/help/review, reuse existing validation, and document the supported protocol subset. No public API/type/schema addition.
+
+### Do Not Modify
+
+`src/generated/`, Router source-owned descriptors/catalogs, existing listing/session revisions or tariff policy.
+
+### Commands
+
+```sh
+node --test test/provider-setup.test.mjs test/contracts.test.mjs test/alpha20.test.mjs
+```
+
+### Acceptance Criteria
+
+- [ ] A non-GLM synthetic gateway with a namespaced model is configured, reviewed and retained accurately without source edits or a provider-specific preset.
+- [ ] Unsupported settings/combinations and unsafe endpoints fail before VM launch; existing DeepSeek/MiMo configurations retain their behavior.
+
+### Validation Results
+
+Not run; source/schema inspection confirms the existing version-1 fields cover this scope.
+
+---
+
+## Step C: Gateway transport coverage and actionable errors
+
+### Status
+
+`todo`
+
+### Objective
+
+Verify observable protocol behavior across connector settings and improve failure diagnosis without widening the Router wire contract.
+
+### Tasks
+
+- [ ] Add a table-driven fake-gateway suite covering every permitted connector combination and rejecting invalid combinations. Assert exact authentication headers, model IDs, output limits, usage controls and thinking/history behavior using synthetic credentials only.
+- [ ] Cover SSE comments/keepalives, split UTF-8 and CRLF boundaries, empty initial deltas, fragmented tool calls, final usage with empty or nonempty choices, supported reasoning continuation, cancellation and output/usage bounds. Fix source parsing defects demonstrated by these fixtures.
+- [ ] Reject incomplete/invalid tool calls, missing or invalid usage, truncated streams and unsupported reasoning envelopes without executing tools or inventing usage. Preserve tool execution only after a validated complete response.
+- [ ] Add clear messages for the existing authentication/access, model, rate/quota, malformed-response, timeout and unknown-outcome codes. Do not infer exact provider reasons from status alone or display raw upstream messages/headers/bodies.
+- [ ] On the provider host, correlate the existing validated `/timing` and `/failed` messages by request ID and expose an in-memory `lastUpstreamFailure` status containing only request ID, nullable HTTP status, existing error code and observation time. Show it in the provider screen with status-appropriate recovery guidance. Do not add Router fields or persist response bodies.
+- [ ] Exercise 400/401/402/403/404/429/5xx, redirects, missing HTTP status, HTML error pages and errors after partial output. Assert one outbound inference request, no automatic endpoint/model switching and unchanged uncertain-accounting behavior.
+
+### Relevant Files
+
+`src/provider-broker.mjs`, `src/coding-wire.mjs`, `src/provider.mjs`, `src/coding-display.mjs`, `src/tui.mjs`, `test/alpha20.test.mjs`, `test/coding.test.mjs`, `test/provider-lifecycle.test.mjs`; add `test/gateway-compatibility.test.mjs` during implementation.
+
+### Expected Changes
+
+Extend source regressions and client-only error/status presentation. The sole new status shape is local to the provider controller; the connector schema, failure-code enum and Router protocol remain unchanged.
+
+### Do Not Modify
+
+Financial settlement, tariffs, transport credentials, accepted targets, failure-code enums or retry policy.
+
+### Commands
+
+```sh
+node --test test/gateway-compatibility.test.mjs test/alpha20.test.mjs test/coding.test.mjs test/provider-lifecycle.test.mjs
+```
+
+### Acceptance Criteria
+
+- [ ] Tests cover a generic gateway independently of GLM and named presets, including actual request headers/body and assembled stream/tool results.
+- [ ] An HTTP 401 and 403 remain distinguishable in provider diagnostics without claiming whether a key is expired or model access is denied.
+- [ ] Missing usage/partial failures remain unresolved, and diagnostic output contains no synthetic secret or workload content.
+
+### Validation Results
+
+Not run. Existing source collapses 401/403 into one error code but already transports validated HTTP-status timing to the provider host.
+
+---
+
+## Step D: Reusable qualification and GLM live setup
+
+### Status
+
+`todo`
+
+### Objective
+
+Make acceptance repeatable for any configured authorized gateway and diagnose the reported GLM failure.
+
+### Tasks
+
+- [ ] Extend the existing private-acceptance guide with a checklist keyed by endpoint, exact model, connector settings, capability set, listing revision and artifact SHA. Record synthetic coverage separately from live outcomes for text, tools, reasoning, usage, approvals and cancellation.
+- [ ] Use GLM-5.3 on the confirmed Z.ai API bundle as the first live row: `https://api.z.ai/api/paas/v4/chat/completions`, bearer authentication, `max_tokens`, native usage, `type` thinking, reasoning history on and manually enabled buyer thinking before inference.
+- [ ] Inspect privacy-safe metadata for the reported failed request. Distinguish rejected credentials from forbidden access, quota and request-parameter failures. The operator verifies entitlement and enters the raw key inside the guest; changing thinking is not presented as a fix for authentication.
+- [ ] Run the same small synthetic-project scenario for each later selected gateway using its existing authorized listing and bounded session. Additional real gateways/credentials are operator-supplied inputs; implementation and synthetic acceptance do not require purchasing or configuring accounts.
+- [ ] Mark additional live combinations NOT TESTED until actually exercised. Documentation examples, a ready guest, successful text generation or another model's success do not qualify a gateway's coding/thinking/usage capabilities.
+
+### Relevant Files
+
+`docs/private-mac-acceptance.md`, `README.md`, existing installed VM/PTY verifiers and privacy-safe acceptance receipts produced during execution.
+
+### Expected Changes
+
+Add a provider-independent acceptance checklist and scoped outcomes, preserving earlier reports. No new registry, model catalog or persistent qualification API.
+
+### Do Not Modify
+
+Keys, bundle accounting, existing tariffs or subscription eligibility. Do not assert that a bundle is free to consume or that the authentication issue is solved before live evidence.
+
+### Acceptance Criteria
+
+- [ ] The procedure can be repeated using any compatible authorized endpoint/model without a GLM-specific executable path.
+- [ ] GLM outcomes distinguish authentication, streaming/tools, reasoning, usage, read-only operation and approved/denied effects. External blockers remain explicitly recorded.
+
+### Validation Results
+
+Not run. The live GLM authentication cause and bundle entitlement remain unverified; other gateways have no new live signoff.
+
+---
+
+## Step E: Final verification and cleanup
+
+### Status
+
+`todo`
+
+### Objective
+
+Deliver verified private client bytes and an honest, reproducible compatibility record.
+
+### Tasks
+
+- [ ] At execution kickoff, before any implementation/build associated with private installation, complete all five platform-authentication checks under the current release procedure. This documentation-only planning update requires no deployment preflight.
+- [ ] Reverify clean canonical input and branch; rebuild the coding runtime from the pinned committed legacy source using the explicit source path below. Preserve its licenses/adaptations/provenance.
+- [ ] Run full client checks and provenance verification, then pack a new unused immutable private version from the clean product commit. Verify exact isolated-install bytes.
+- [ ] Run installed Apple Silicon VM/PTY gates with `ADR_ACCEPTANCE_CLIENT_ROOT` pointing to that installation. Require actual read-content assertions, approval outcomes, final terminal cells and existing lifecycle preservation checks.
+- [ ] Review the final diff, remove temporary debugging, update affected documentation and record any remaining limitations. No Router deployment is needed for this client-only scope; preserve hosted API/Pages/database identities.
+- [ ] Switch the launcher after installed acceptance. Retain previous artifacts, profiles and saved work; loaded processes retain their own version. Complete operator-led live GLM checks separately and keep other gateway claims scoped to evidence.
+
+### Relevant Files
+
+Runtime builder/provenance scripts, client test suite, package/release metadata, installed acceptance verifiers, this plan and existing private-release guidance.
+
+### Expected Changes
+
+Generate a new runtime/private artifact through existing tooling during execution and record source/artifact/install identities separately. No generated file is hand-edited.
+
+### Do Not Modify
+
+Old artifacts/tags/channels, remote secrets, existing release protections, hosted schemas, admissions or unrelated checkouts.
+
+### Commands
+
+Run from the owning client repository after execution preflight:
+
+```sh
+node scripts/build-coding-runtime.mjs /Users/ahmadzuhri/antigravity/3days/adrouter_release/adrouterCLI --verify
+npm run check
+npm run coding:verify
+```
+
+After freezing, packing and byte-verifying the isolated installation, run `npm run coding:mac` and `npm run coding:pty` against that installation with the documented runtime prerequisites. Packaging and launcher replacement follow `docs/adrv2/deployment-workflows.md` in the consolidation workspace.
+
+### Acceptance Criteria
+
+- [ ] Full relevant source, generic-gateway, installed-runtime and terminal checks pass for the exact product.
+- [ ] Original UI/read requests remain covered and existing providers retain their behavior.
+- [ ] Private delivery, synthetic compatibility and individual live outcomes are independently recorded; no blanket gateway-support or live-pass claim.
+
+### Validation Results
+
+Not run; no source implementation, build, package, installation or live inference occurred during this planning update.
+
+## Follow-up Work
+
+Apply the same acceptance checklist to additional operator-selected gateways as they are supplied. Gateways requiring unsupported reasoning, authentication or transport dialects need a separately scoped Router-owned contract extension before advertising that capability. Preserve the prior incomplete DeepSeek/MiMo live outcomes until independently completed.
+
+## Decision Log
+
+| Date | Decision | Rationale | Impact |
+| --- | --- | --- | --- |
+| 2026-10-02 | Broaden the plan to general authorized Chat Completions gateways | Operator explicitly requested the expansion | Generic setup, transport tests, errors and reusable qualification become required work |
+| 2026-10-02 | Reuse the version-1 connector and current public contracts | Existing settings cover the defined compatibility subset | Client-only implementation; no Router/database rollout |
+| 2026-10-02 | GLM is the first live case; other gateways remain individually qualified | Existing Z.ai bundle is the confirmed live input | No claim of universal compatibility or requirement to obtain new credentials for synthetic preparation |
+| 2026-10-02 | Keep thinking manual | Operator chose setup guidance only | No mandatory-thinking capability or automatic toggle |
+| 2026-10-02 | Raise description pane; retain Back last; use embedded approval styling | Explicit clarified UI choices | Supersedes earlier bottom-pinned description and hidden-Back defaults |
+| 2026-10-02 | Repair the read context conversion and test returned contents | Source inspection and read-only reproduction explain the failure | Automatic safe reads restored without weakening mutation approvals |
+
+### Execution kickoff and source progress — 2 October 2026
+
+Latest UI/read/general-gateway continuation is the active scope. Canonical client
+GitHub branch freshly matches 5eee85cba671fa66d4e7482d2569877fea9e0eac; pre-existing
+PLAN.md additions are preserved. Five-platform kickoff checks passed for Fly
+app/Machine/registry, Pages project/deployment/Git integration, active linked
+Supabase SELECT 1 and GitHub push/ref access. npm identity/scope E401 retains the
+explicit private-install waiver; package publication remains disabled. GitHub
+reports no main protection/rulesets; none changed. Fly Machine is stopped and
+preserved; no hosted mutation is required.
+
+Steps A–C source implementation and targeted regressions are in progress. Exact
+runtime build, full validation, private artifact/installation and installed native
+acceptance remain pending. Step D operator live outcomes remain NOT TESTED.
+
+### Source freeze checkpoint — 2 October 2026
+
+UI/read, setup and transport/diagnostics are separate commits 4438745, 3d3d5f8 and
+021c74b. Full client check passes 140 tests; locked runtime build and provenance
+pass 23,471 files. Source actual PTY passes seven host reviews, four follow-ups,
+two same-process Continue cycles, multiline draft retention, resizing and terminal
+restoration. Actual read-only PTY passes four built-in read-content assertions,
+zero approvals/bash and unchanged files. Two non-TTY read-only verifier attempts
+exited with guest_console_cancelled; diagnostic output passed and the dedicated
+actual-PTY gate is the acceptance path. Do not record the failed attempts as passes.
+
+All 80 valid generic connector combinations, invalid settings, exact headers/body,
+byte-fragmented UTF-8/CRLF, tools, final usage shapes, unsupported reasoning,
+partial errors, cancellation and no-replay checks pass. Provider diagnostics retain
+only request ID, nullable HTTP status, existing code and observation time in memory.
+Operator-supplied upstream_authentication_failed alone cannot distinguish 401/403;
+no request ID/status was supplied and no private workload was inspected. GLM's
+live cause, entitlement and every live qualification gate remain NOT TESTED.
+
+Private alpha.23 is the new unused delivery version. No hosted source, schemas,
+access gates, public versions, tags or channels are changed. Exact packaging,
+installed acceptance and launcher selection remain pending.
