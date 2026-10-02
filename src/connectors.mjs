@@ -16,3 +16,8 @@ export function connectorHeaders(profile,key) {
   if(typeof key!=='string'||!key.length||key.length>4096||!/^[\x20-\x7e]+$/.test(key))throw Object.assign(Error('credential_format_invalid'),{code:'credential_format_invalid'});
   return profile.authentication==='bearer'?{authorization:`Bearer ${key}`}:{[profile.authentication==='api_key'?'api-key':'x-api-key']:key};
 }
+
+export function connectorReviewLines(node) {
+  const profile=resolveConnector(node);
+  return [`Authentication: ${profile.authentication}`,`Output limit: ${profile.outputTokenParameter}`,`Final usage: ${profile.streamingUsage}`,`Thinking control: ${profile.thinking}`,`Reasoning history: ${profile.reasoningHistory?'on · reasoning_content':'off'}`];
+}

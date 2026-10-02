@@ -18,6 +18,7 @@ export function validateBinding(node) {
   const url = new URL(node.endpoint);
   const loopback = ['127.0.0.1', '[::1]'].includes(url.hostname) || (node.localEngine === true && url.hostname === 'host.microsandbox.internal');
   if (url.username || url.password || url.search || url.hash || !(url.protocol === 'https:' || (node.supplyClass === 'self_hosted' && loopback && url.protocol === 'http:'))) throw new ClientError('endpoint_not_permitted');
+  if(!loopback && /(^localhost$|\.localhost$|\.local$|^host\.microsandbox\.internal$)/i.test(url.hostname))throw new ClientError('endpoint_address_rejected');
   const address = url.hostname.replace(/^\[|\]$/g, '');
   if (isIP(address) && !publicAddress(address) && !(node.supplyClass === 'self_hosted' && loopback)) throw new ClientError('endpoint_address_rejected');
   return { url, loopback: node.supplyClass === 'self_hosted' && loopback };

@@ -89,3 +89,22 @@ test('DeepSeek guided default submits valid metadata and resumes edits after can
   await runTui({}, {network,ui,store:{profile:'provider'}});
   assert.equal('rightsReference' in posted,false);assert.equal(posted.name,'Edited listing');assert.equal(homeVisits,3);
 });
+
+test('generic gateway retains exact namespaced model and all adapter settings across Back/Edit before creation',async()=>{
+ const {runTui}=await import('../src/tui.mjs');let homeVisits=0,forms=0,reviews=0,posted;const errors=[];
+ const config={protocol:'2.0.0',product:'adr-v2',settlement:'test_credits',cashValue:false,admissions:false,privateRehearsal:false,privateOwnerEvaluation:true,supplyClasses:['authorized_api','self_hosted'],connectorProfile:'inference_connector_v1',maxNodeSessions:1,relay:'wss_single_instance',agentExecution:'buyer_vm_v1',capabilities:['allowance_v1','provider_budget_v1','cold_activation_v1']};
+ const expected={model:'vendor/exact-model:variant',endpoint:'https://gateway.example.test/custom/chat/completions',authentication:'x_api_key',outputTokenParameter:'max_completion_tokens',streamingUsage:'native',connectorThinking:'reasoning_effort',reasoningHistory:'on',thinking:'supported'};
+ const ui={start(){},stop(){},task:(_t,fn)=>fn(new AbortController().signal,()=>{}),page:async(t,lines)=>errors.push(t),
+  menu:async(title,options,settings)=>{
+   if(title==='What would you like to do?')return ++homeVisits<=2?'create':'exit';
+   if(title==='List compute · 1 of 3')return 'authorized_api';if(title==='Choose authorized API'){assert.ok(options.some(o=>o.label==='OpenAI-compatible API gateway'));return 'custom';}
+   if(title==='List compute · 3 of 3'){const text=settings.lines.join('\n');for(const value of ['vendor/exact-model:variant','x_api_key','max_completion_tokens','native','reasoning_effort','reasoning_content'])assert.ok(text.includes(value));return ++reviews===1?'edit':'create';}return null;
+  },form:async(title,fields,initial)=>{
+   if(title!=='List compute · 2 of 3')return null;forms++;
+   if(forms>1)for(const [key,value] of Object.entries(expected))assert.equal(initial[key],value);
+   const values={...Object.fromEntries(fields.map(f=>[f.name,initial[f.name]??f.default??''])),name:'Synthetic gateway',...expected};
+   if(forms===1){Object.assign(initial,values);return null;}return values;
+  }};
+ const network={local:true,origin:'http://127.0.0.1:8790',request:async(path,options)=>{if(path.endsWith('/network/config'))return config;if(path==='/v2/providers/nodes'){posted=options.body;throw Object.assign(Error('fixture stops before runtime'),{code:'synthetic_stop'});}throw Error('unexpected request');}};
+ await runTui({}, {network,ui,store:{profile:'provider'}});assert.equal(forms,3);assert.equal(posted.model,expected.model);assert.equal(posted.endpoint,expected.endpoint);assert.equal(posted.connector.authentication,'x_api_key');assert.equal(posted.connector.reasoningHistory,true);assert.ok(posted.capabilities.includes('thinking_v1'));assert.equal('connectorThinking' in posted,false);
+});

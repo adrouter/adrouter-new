@@ -1,4 +1,5 @@
-import { connectorCatalog, resolveConnector, CONNECTOR_PROTOCOL } from './connectors.mjs';
+import { validateBinding } from './provider-broker.mjs';
+import { connectorCatalog, resolveConnector, connectorReviewLines, CONNECTOR_PROTOCOL } from './connectors.mjs';
 import { ProviderActivityMonitor, providerActivityLines, providerConnectionLabel } from './provider-activity.mjs';
 import { recoverableStatusFailure } from './buyer-lifecycle.mjs';
 import { MarketplaceDisplay } from './marketplace-display.mjs';
@@ -91,8 +92,8 @@ export function quoteAccess(config,listing) {
 
 export const providerFields = [
   { name: 'name', label: 'Listing name', validate: required, help: 'A public name that helps buyers identify your compute.' },
-  { name: 'model', label: 'Request model ID', validate: required, help: 'Exact upstream request ID. Defaults come from the selected setup preset.' },
-  { name: 'endpoint', label: 'API endpoint', maxLength: 2048, validate: value => { try { const u = new URL(value); return u.username || u.password || u.search || u.hash || !['https:', 'http:'].includes(u.protocol) ? 'Use an endpoint URL with no credentials, query or fragment.' : ''; } catch { return 'Enter a valid API endpoint URL.'; } }, help: 'Public endpoint metadata only. Never paste an API key here.' },
+  { name: 'model', label: 'Request model ID', validate: required, help: 'Exact model ID, including any namespace (vendor/model). No model substitution is performed.' },
+  { name: 'endpoint', label: 'API endpoint', maxLength: 2048, validate: value => { try { const u = new URL(value); return u.username || u.password || u.search || u.hash || !['https:', 'http:'].includes(u.protocol) ? 'Use an endpoint URL with no credentials, query or fragment.' : ''; } catch { return 'Enter a valid API endpoint URL.'; } }, help: 'Full Chat Completions URL; no suffix is guessed. Public metadata only, never an API key.' },
   { name: 'supplyClass', label: 'Supply type', choices: ['authorized_api', 'self_hosted'], default: 'authorized_api', help: 'Authorized API capacity or your own inference engine. Subscription supply is excluded.' },
   { name: 'availability', label: 'Availability', choices: ['hot', 'cold'], default: 'hot', help: 'Hot warms a VM now. Cold keeps control online; you have 120 seconds to activate after a reservation.' },
   { name: 'thinking', label: 'Thinking support', choices: ['off','supported'], default:'off', help:'Advertise supported thinking only for a compatible upstream connector. Buyers start with thinking off.' },
@@ -197,31 +198,33 @@ export async function runTui(options = {}, dependencies = {}) {
     const savedDraft = setupDrafts.get(draftKey);
     const supply=savedDraft?'resume':await ui.menu('List compute · 1 of 3',[item('authorized_api','Authorized API','DeepSeek, MiMo or a custom OpenAI-compatible API.'),item('self_hosted','Self-hosted','Your own public endpoint or reviewed loopback inference engine.'),item('back','Back')]);
     if(!supply||supply==='back')return;
-    const preset=savedDraft?'resume':supply==='authorized_api'?await ui.menu('Choose authorized API',[...connectorCatalog.presets.map(p=>item(p.id,p.name)),item('custom','Custom OpenAI-compatible'),item('back','Back')]):'self';
+    const preset=savedDraft?'resume':supply==='authorized_api'?await ui.menu('Choose authorized API',[...connectorCatalog.presets.map(p=>item(p.id,p.name)),item('custom','OpenAI-compatible API gateway','Full Chat Completions URL and exact model ID; streaming, function tools and final token usage are required.'),item('back','Back')]):'self';
     if(!preset||preset==='back')return;
     const selectedPreset=connectorCatalog.presets.find(p=>p.id===preset);
     let draft=savedDraft??{supplyClass:supply,...(selectedPreset?{name:selectedPreset.name+' - hot compute',model:selectedPreset.model,endpoint:selectedPreset.endpoint}:{}),connector:structuredClone(connectorCatalog.profiles.find(p=>p.id===(selectedPreset?.profile??'openai-compatible-v1')))};
-    if(!savedDraft&&['custom','self'].includes(preset)){
-      const options=await ui.form('OpenAI-compatible adapter',[
-        {name:'authentication',label:'Authentication',choices:['bearer','api_key','x_api_key','none'],help:'Header format only. The key is entered inside the provider guest.'},
-        {name:'outputTokenParameter',label:'Output token parameter',choices:['max_tokens','max_completion_tokens']},
-        {name:'streamingUsage',label:'Streaming usage',choices:['include_usage','native'],help:'Validated final usage is required. Missing usage remains unresolved.'},
-        {name:'thinking',label:'Thinking controls',choices:['none','type','reasoning_effort']},
-        {name:'reasoningHistory',label:'Reasoning history',choices:['off','on']},
-      ],{...draft.connector,reasoningHistory:'off'});
-      if(!options)return;Object.assign(draft.connector,options,{reasoningHistory:options.reasoningHistory==='on'});
-      try{resolveConnector(draft);}catch(e){await ui.page('Unsupported adapter',errorLines(e));return;}
-    }
     setupDrafts.set(draftKey, draft);
     for (;;) {
       draft.thinking??=draft.capabilities?.includes('thinking_v1')?'supported':'off';
-      const fields=providerFields.map(f=>f.name==='model'&&selectedPreset?{...f,choices:undefined,help:'Exact editable model ID. Preset choices: '+selectedPreset.models.join(', ')}:f);
-      const edited = await ui.form('List compute · 2 of 3', fields, draft, 'Defaults are editable. Only public listing metadata is submitted.');
+      const adapterFields=draft.connector.id==='openai-compatible-v1'?[
+        {name:'authentication',label:'Authentication',choices:['bearer','api_key','x_api_key','none'],help:'Bearer Authorization, api-key, x-api-key, or no header. Keys are entered only in the provider guest.'},
+        {name:'outputTokenParameter',label:'Output token parameter',choices:['max_tokens','max_completion_tokens'],help:'Use the output limit field documented by your gateway.'},
+        {name:'streamingUsage',label:'Streaming usage',choices:['include_usage','native'],help:'Request include_usage or use native final token counts. Missing usage stays unresolved.'},
+        {name:'connectorThinking',label:'Thinking controls',choices:['none','type','reasoning_effort'],help:'Match the documented wire setting. Provider support and buyer thinking remain manual.'},
+        {name:'reasoningHistory',label:'Reasoning history',choices:['off','on'],help:'Only reasoning_content history is supported. Structured or signed reasoning is not qualified.'},
+      ]:[];
+      const fields=[...providerFields.map(f=>f.name==='model'&&selectedPreset?{...f,choices:undefined,help:'Exact editable model ID. Preset choices: '+selectedPreset.models.join(', ')}:f),...adapterFields];
+      const formDraft={...draft,...draft.connector,thinking:draft.thinking,connectorThinking:draft.connector.thinking,reasoningHistory:draft.connector.reasoningHistory?'on':'off'};
+      const edited = await ui.form('List compute · 2 of 3', fields, formDraft, 'Use verified streaming, function tools and final usage. Exact endpoint/model are retained; no inference probe is sent.');
+      const {thinking,authentication,outputTokenParameter,streamingUsage,connectorThinking,reasoningHistory,...metadata}=edited??formDraft;
+      for(const field of providerFields)if(field.name!=='thinking')draft[field.name]=metadata[field.name];
+      if(adapterFields.length)Object.assign(draft.connector,{authentication,outputTokenParameter,streamingUsage,thinking:connectorThinking,reasoningHistory:reasoningHistory==='on'});
+      draft.thinking=thinking;
       if (!edited) return;
-      const {thinking,...metadata}=edited;delete draft.thinking;Object.assign(draft,metadata);draft.capabilities=['coding_v1','streaming_v1','tools_v1',...(thinking==='supported'?['thinking_v1']:[])];draft.contextWindowTokens=32768;
+      delete draft.thinking;draft.capabilities=['coding_v1','streaming_v1','tools_v1',...(thinking==='supported'?['thinking_v1']:[])];draft.contextWindowTokens=32768;
       if(thinking==='supported'&&draft.connector?.thinking==='none'){await ui.page('Thinking controls required',['Select a compatible thinking control before advertising support.']);return;}
+      try{resolveConnector(draft);validateBinding(draft);}catch(e){await ui.page('Check gateway settings',errorLines(e));continue;}
       if (!MarketplaceDraft(draft)) { await ui.page('Check listing fields', ['Use printable metadata and integer test-credit prices.']); continue; }
-      const decision = await ui.menu('List compute · 3 of 3', [item('edit', 'Edit details'), item('create', 'Create draft and configure provider'), item('cancel', 'Cancel')], { lines: [draft.name, `${draft.model} · ${draft.availability}`, draft.endpoint, `Thinking: ${draft.capabilities.includes('thinking_v1')?'supported (buyer opt-in)':'off'}`, `Supply: ${words(draft.supplyClass)}`, `Input ${draft.inputRate} / output ${draft.outputRate} test credits per 1M tokens`, '', 'Publish your listing and qualify its current tariff before your private evaluation.'] });
+      const decision = await ui.menu('List compute · 3 of 3', [item('edit', 'Edit details'), item('create', 'Create draft and configure provider'), item('cancel', 'Cancel')], { lines: [draft.name, `${draft.model} · ${draft.availability}`, draft.endpoint, ...connectorReviewLines(draft), `Thinking: ${draft.capabilities.includes('thinking_v1')?'supported (buyer opt-in)':'off'}`, `Supply: ${words(draft.supplyClass)}`, `Input ${draft.inputRate} / output ${draft.outputRate} test credits per 1M tokens`, '', 'Publish your listing and qualify its current tariff before your private evaluation.'] });
       if (decision === 'edit') continue;
       if (decision !== 'create') return;
       const node = await post('/providers/nodes', draft);
