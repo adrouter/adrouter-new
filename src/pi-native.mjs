@@ -1,3 +1,4 @@
+import Ajv from 'ajv';
 // Imported only in the isolated provider guest (or synthetic fixture tests).
 import { createModels, InMemoryCredentialStore, clampThinkingLevel } from '@earendil-works/pi-ai';
 import { resolveGoogleThinkingLevel, usesGoogleThinkingLevel, toGoogleThinkingLevel } from '@earendil-works/pi-ai/api/google-shared';
@@ -87,6 +88,7 @@ export async function nativeInference(node,auth,frame,signal,onTiming=()=>{},onE
     if(!frame.thinking)display.thinking='';
     if(usage.input+usage.cacheRead+usage.cacheWrite>authority.inputBound||usage.output>frame.maxOutputTokens)throw fail('upstream_usage_invalid');
     if(display.toolCalls.length>8||display.toolCalls.some(c=>!frame.tools.some(t=>t.function.name===c.function.name)))throw fail('upstream_tool_invalid');
+    for(const call of display.toolCalls){const definition=frame.tools.find(t=>t.function.name===call.function.name);if(!new Ajv({strict:false,validateFormats:false}).compile(definition.function.parameters)(JSON.parse(call.function.arguments)))throw fail('upstream_malformed_response');}
     for(const [index,call]of display.toolCalls.entries())for(let i=0;i<call.function.arguments.length;i+=8192)await onEvent({type:'coding_delta',requestId:frame.requestId,sequence:++sequence,kind:'tool',index,id:call.id,name:call.function.name,text:call.function.arguments.slice(i,i+8192)});
     onTiming({phase:'upstream',outcome:'succeeded',statusCode,headersMs,totalMs:Date.now()-started});
     return {type:'result',requestId:frame.requestId,...display,nativeMessage,nativeUsage:usage,inputTokens:usage.input+usage.cacheRead+usage.cacheWrite,outputTokens:usage.output};

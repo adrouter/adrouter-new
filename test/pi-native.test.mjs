@@ -51,3 +51,10 @@ for(const [provider,api,textEvents]of fixtures)test(`${api}: native tool round t
   const abort=new AbortController();abort.abort();let cancelledCalls=0;await assert.rejects(nativeInference(n,auth,request,abort.signal,()=>{},()=>{},async()=>{cancelledCalls++;throw Error('unexpected');}));assert.equal(cancelledCalls,0);
  }finally{await auth.close();}
 });
+
+
+test('startup qualification rejects a native call that violates the declared tool schema',async()=>{
+ const n=connection('deepseek','openai-completions'),auth=await nativeLogin(n,key),request=frame(n);request.tools=[{type:'function',function:{name:'adr_probe',description:'probe',parameters:{type:'object',properties:{value:{type:'string'}},required:['value']}}}];
+ const malformed=structuredClone(toolCompletion);malformed[0].choices[0].delta.tool_calls[0].function.arguments='{"value":42}';
+ try{await assert.rejects(nativeInference(n,auth,request,AbortSignal.timeout(5000),()=>{},()=>{},async()=>new Response(sse(malformed),{headers:{'content-type':'text/event-stream'}})),/upstream_malformed_response/);}finally{await auth.close();}
+});
