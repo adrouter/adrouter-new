@@ -23,8 +23,8 @@ try:
   if b'Approve this action once?' in buffer and b'\xe2\x80\xba Deny' in buffer and time.monotonic()-last_review>.3:
    reviews+=1;last_review=time.monotonic()
    if '--enhanced' in __import__('sys').argv:
-    sequence=b'\x1b[13;1u' if b'File: denied.txt' in buffer else b'\x1b[1;1:1B\x1b[1;1:3B\x1b[13;1u'
-   else:sequence=b'\r' if b'File: denied.txt' in buffer else b'\x1b[B\r'
+    sequence=b'\x1b[13;1u' if b'write \xc2\xb7 denied.txt' in buffer else b'\x1b[1;1:1B\x1b[1;1:3B\x1b[13;1u'
+   else:sequence=b'\r' if b'write \xc2\xb7 denied.txt' in buffer else b'\x1b[B\r'
    os.write(master,sequence);buffer=b''
   if b'ADR_NATIVE_DRAFT_TEST' in buffer and not draft_sent:
    draft_at=time.monotonic();buffer=b''

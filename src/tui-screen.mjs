@@ -23,12 +23,15 @@ export function scrollRows(lines,capacity,offset) {
 }
 
 // All untrusted labels and values are plain text. Only this renderer emits ANSI.
-export function renderScreen({ title, subtitle = '', lines = [], details = [], focus = 0, footer = '', context = '', sidebar = [],actions=[],detailFocus=0 }, columns = 80, rows = 24, color = true) {
+export function renderScreen({ title, subtitle = '', lines = [], details = [], focus = 0, footer = '', context = '', sidebar = [],actions=[],detailFocus=0,compact=false }, columns = 80, rows = 24, color = true) {
   if(sidebar.length && columns>=112 && !title.toLowerCase().includes('approv')) {
     const sideWidth=30,leftWidth=columns-sideWidth-3;
     const left=renderScreen({title,subtitle,lines,focus,footer,context,actions},leftWidth,rows,color).split('\r\n');
-    const status=sidebar.slice(0,Math.max(0,rows-9)),description=details.flatMap(v=>wrapText(v,sideWidth)),room=Math.max(1,Math.min(8,rows-status.length-3));
-    const side=[...status,...Array(Math.max(0,rows-2-status.length-room)).fill(''),'─'.repeat(sideWidth),...scrollRows(description,room,detailFocus)];
+    // Use the main pane's actual divider after its responsive header is laid out.
+    const divider=left.findIndex(line=>/^─+$/.test(line.replace(/\x1b\[[0-9;]*m/g,'')));
+    const top=Math.max(0,divider),description=details.flatMap(v=>wrapText(v,sideWidth));
+    const room=Math.max(0,left.length-top-1),offset=Math.max(0,Math.min(detailFocus,description.length-room));
+    const side=[...Array.from({length:top},(_,i)=>sidebar[i]??''),'─'.repeat(sideWidth),...description.slice(offset,offset+room)];
     return left.map((line,i)=>{const visible=visibleWidth(line);return line+' '.repeat(Math.max(1,leftWidth-visible))+'│ '+clip(side[i]??'',sideWidth);}).join('\r\n');
   }
   const width = Math.max(1, columns - 2); const height = Math.max(1, rows - 1);
@@ -40,11 +43,12 @@ export function renderScreen({ title, subtitle = '', lines = [], details = [], f
     return [...preview.map(line=>clip(typeof line==='object'?line.text:line,width)),...controls.map(a=>{const text=clip(a.text,width);return color&&a.selected?'\x1b[7m'+text+' '.repeat(Math.max(0,width-visibleWidth(text)))+'\x1b[0m':text;})].join('\r\n');
   }
   // The original panel is 16 rows; only show it when navigation still fits.
-  if (width >= 68 && height >= 16 + Math.min(lines.length, 10) + 8) {
+  if (compact) { result.push(blue(clip(title,width))); }
+  else if (width >= 68 && height >= 16 + Math.min(lines.length, 10) + 8) {
     result.push(...renderBanner(width, version, clean(context), color,
       /truecolor|24bit/.test(process.env.COLORTERM ?? '') ? 'truecolor' : '256color'));
   } else result.push(blue(clip(`adr v2 · v${version}`, width)), clip(context, width));
-  result.push(blue('─'.repeat(width)), clip(title, width));
+  if(!compact)result.push(blue('─'.repeat(width)), clip(title, width));
   if (subtitle) result.push(...wrapText(subtitle, width));
   result.push('');
   // A compact header must leave room to interact even after a terminal resize.
@@ -114,11 +118,13 @@ export class TerminalUI {
       draw();
     });
   }
-  async menu(title, options, { subtitle = '', lines = [], fixedActions=false, tick=false, footer='↑↓ Move  Enter Choose  Type to filter  Esc Back  Ctrl+C Cancel' } = {}) {
+  async menu(title, options, { subtitle = '', lines = [], fixedActions=false, compact=false, tick=false, footer='↑↓ Move  Enter Choose  Type to filter  Esc Back  Ctrl+C Cancel' } = {}) {
     let selected = 0; let search = '',previewFocus=0,detailFocus=0,fullDetails=false;
-    options=options.filter(o=>!(typeof o==='object'&&o.value==='back'&&options.filter(v=>v.value!=='back').length===1));
     const items = options.map((item, index) => typeof item === 'string' ? { label: item, value: index } : item);
-    const visible = () => fuzzyFilter(items, search, item => clean(`${item.label} ${item.detail ?? ''}`));
+    const isBack=item=>item.value==='back'||item.label==='Back';
+    const visible = () => fixedActions?items:[...fuzzyFilter(items.filter(item=>!isBack(item)), search, item => clean(`${item.label} ${item.detail ?? ''}`)),...items.filter(isBack)];
+    // Confirmation menus keep their default cancellation even with Back last.
+    if(items[0]?.value===false&&isBack(items[0]))selected=visible().indexOf(items[0]);
     const draw = () => {
       const choices = visible(); selected = Math.min(selected, Math.max(0, choices.length - 1));
       const bodyWidth=Math.max(1,(this.output.columns||80)-2-(this.sidebar.length&&(this.output.columns||80)>=112&&!fixedActions?33:0));
@@ -129,11 +135,11 @@ export class TerminalUI {
       if(search)body.push(`Filter: ${search}`);
       const details=choices[selected]?.details??(choices[selected]?.detail?[choices[selected].detail]:[]);
       if(fullDetails){this.draw({title:'Full details',lines:details.flatMap(v=>wrapText(v,Math.max(1,(this.output.columns||80)-2))),focus:detailFocus,footer:'↑↓ / PgUp/PgDn Scroll  F / Enter / Esc Close details'});return;}
-      this.draw({title,subtitle,lines:body,actions,focus:fixedActions?previewFocus:start+selected,detailFocus,details:fullDetails?[]:details,footer:footer+(details.length?'  F Full details · PgUp/PgDn Details':'')});
+      this.draw({title,subtitle,compact,lines:body,actions,focus:fixedActions?previewFocus:start+selected,detailFocus,details:fullDetails?[]:details,footer:footer+(details.length?'  F Full details · PgUp/PgDn Details':'')});
     };
     const interaction=this.interact((text, key, finish) => {
       const choices = visible();
-      if(fullDetails){if(['escape','return'].includes(key.name)||text==='f')fullDetails=false;else if(['up','pageup'].includes(key.name))detailFocus=Math.max(0,detailFocus-(key.name==='up'?1:5));else if(['down','pagedown'].includes(key.name))detailFocus+=key.name==='down'?1:5;draw();return;}
+      if(fullDetails){if(['escape','return'].includes(key.name)||text==='F')fullDetails=false;else if(['up','pageup'].includes(key.name))detailFocus=Math.max(0,detailFocus-(key.name==='up'?1:5));else if(['down','pagedown'].includes(key.name))detailFocus+=key.name==='down'?1:5;draw();return;}
       if (key.name === 'escape') { finish(null); return; }
       if(key.name==='pageup'||key.name==='pagedown'){const delta=key.name==='pageup'?-5:5;if(fixedActions)previewFocus=Math.max(0,previewFocus+delta);else detailFocus=Math.max(0,detailFocus+delta);}
       else if(text==='F'&&!fixedActions&&(choices[selected]?.details?.length||choices[selected]?.detail)){fullDetails=!fullDetails;detailFocus=0;}
@@ -143,7 +149,7 @@ export class TerminalUI {
         if (!choices[selected].disabled) { finish(choices[selected].value); return; }
       } else if (key.name === 'backspace') { search = search.slice(0, -1); selected = 0; }
       else if (key.ctrl && key.name === 'u') { search = ''; selected = 0; }
-      else if (text && !key.ctrl && !key.meta && /^[\x20-\x7e]+$/.test(text)) { search = (search + text).slice(0, 80); selected = 0; }
+      else if (!fixedActions && text && !key.ctrl && !key.meta && /^[\x20-\x7e]+$/.test(text)) { search = (search + text).slice(0, 80); selected = 0; }
       draw();
     }, draw);
     if(this.pending)this.pending.redraw=draw;const timer=tick?setInterval(draw,1000):undefined;

@@ -19,4 +19,4 @@ globalThis.__adrCodingAuthorize=authorize;
 const nativeFetch=globalThis.fetch;
 globalThis.fetch=async(input,options={})=>{const url=new URL(typeof input==='string'?input:input.url??input);if(url.origin===new URL(configuration.control).origin)return nativeFetch(input,options);if(options.method&&options.method!=='GET'||options.headers && [...new Headers(options.headers)].some(([name])=>!['accept','user-agent','content-type'].includes(name.toLowerCase())))throw Error('credential_forwarding_rejected');const r=await bridge('/web',{url:url.href},options.signal);return new Response(Buffer.from(r.base64,'base64'),{status:r.status,headers:{'content-type':r.contentType}});};
 
-globalThis.__adrCodingRead=reviewedRead;
+globalThis.__adrCodingRead=context=>reviewedRead({toolName:context.toolCall?.name,arguments:context.args});

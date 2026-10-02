@@ -75,3 +75,25 @@ test('very short approval screens keep the action controls visible',()=>{
   assert.ok(value.split('\r\n').length<=rows-1);
  }
 });
+
+test('description starts at the shared divider and never consumes rows with arrow-only markers',()=>{
+ for(const rows of [8,24,48])for(const color of [false,true]){
+  const rendered=renderScreen({title:'Browse',sidebar:['Status','Hot 1'],details:Array.from({length:100},(_,i)=>'Description '+i),lines:[{text:'› Choose',selected:true}],footer:'Enter Choose',detailFocus:3},120,rows,color).replace(/\x1b\[[0-9;]*m/g,'').split('\r\n');
+  const divider=rendered.findIndex(l=>l.startsWith('─'));
+  assert.ok(divider>=0);assert.match(rendered[divider],/│ ─+$/);assert.match(rendered[divider+1],/│ Description 3$/);
+  assert.ok(rendered.every(l=>!/[│] [↑↓]$/.test(l)));assert.ok(rendered.some(l=>l.includes('› Choose')));assert.ok(rendered.some(l=>l.includes('Enter Choose')));
+ }
+});
+test('Back remains last with one action and with filters that match no actions',async()=>{
+ const f=uiFixture();f.ui.start();try{
+  for(const options of [[{value:'back',label:'Back'},{value:'start',label:'Start'}],[{value:'one',label:'One'},{value:'back',label:'Back'},{value:'two',label:'Two'}]]){
+   const pending=f.ui.menu('Actions',options);assert.match(f.ui.screen.lines.at(-1).text,/Back$/);
+   f.ui.onKey('zzzz',{});assert.equal(f.ui.screen.lines.filter(l=>l.text?.includes('Back')).length,1);
+   f.ui.onKey('',{name:'return'});assert.equal(await pending,'back');
+  }
+ }finally{f.ui.stop();}
+});
+
+test('Back is last in confirmations while cancellation stays selected by default',async()=>{
+ const f=uiFixture();f.ui.start();try{const pending=f.ui.menu('Confirm',[{value:false,label:'Back'},{value:true,label:'Confirm'}]);assert.equal(f.ui.screen.lines.at(-1).text,'› Back');f.ui.onKey('',{name:'return'});assert.equal(await pending,false);}finally{f.ui.stop();}
+});

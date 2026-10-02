@@ -8,7 +8,7 @@ export function approvalLines(action) {
   const args = action.args ?? {};
   if (action.name === 'bash' || action.name === 'operator_command') return ['┌─ Command ─',...String(args.command??'').split('\n').map(line=>'│ '+line.replaceAll('\t','    ')), '└────────────', 'Working directory: /workspace', `Timeout: ${args.timeout ?? 120} seconds`];
   if (action.changes) return action.changes.flatMap(c => [`${c.kind}: ${c.path}`, ...(c.diff ?? (c.content === null ? ['- File deleted'] : String(c.content).split('\n').map(l => `+ ${l}`)))]);
-  if (['write', 'edit'].includes(action.name)) return [`File: ${args.path}`, ...(action.diff ?? [`- ${args.oldText ?? ''}`, `+ ${args.newText ?? args.content ?? ''}`])];
+  if (['write', 'edit'].includes(action.name)) return [`${action.name} · ${args.path}`, ...(action.diff ?? [`- ${args.oldText ?? ''}`, `+ ${args.newText ?? args.content ?? ''}`])];
   return [action.name, ...JSON.stringify(args, null, 2).split('\n')];
 }
 export const reviewLines=action=>approvalLines(action).map((text,index)=>presentToolLine(text,{kind:text.startsWith('+')?'added':text.startsWith('-')?'removed':text.startsWith('@@')?'heading':undefined,path:action.args?.path,command:['bash','operator_command'].includes(action.name)&&text.startsWith('│ '),title:index===0}));
@@ -47,7 +47,7 @@ export class TerminalCoordinator {
         for(;;){
           const choice=await this.ui.menu('Approve this action once?',[
             {value:'deny',label:'Deny'},{value:'allow',label:'Allow once'},{value:'details',label:details?'Collapse details':'Expand details'},
-          ],{fixedActions:true,footer:'↑↓ / Tab Action  Enter Choose  PgUp/PgDn Preview  Esc Deny',lines:[presentToolLine(action.name,{title:true}),...reviewLines(action),...(details?[`Project: ${action.root??'/workspace'}`,`Snapshot: ${action.snapshotRevision??'live tool'}`,`Content digest: ${permission.digest}`]:[])]});
+          ],{fixedActions:true,compact:true,footer:'↑↓ / Tab Action  Enter Choose  PgUp/PgDn Preview  Esc Deny',lines:[...reviewLines(action),...(details?[`Project: ${action.root??'/workspace'}`,`Snapshot: ${action.snapshotRevision??'live tool'}`,`Content digest: ${permission.digest}`]:[])]});
           if(choice==='details'){details=!details;continue;}
           return choice==='allow'&&Date.now()<permission.expiresAt;
         }
