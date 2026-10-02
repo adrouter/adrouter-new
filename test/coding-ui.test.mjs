@@ -60,3 +60,17 @@ test('automatic coding reads reject outside roots and links while reviewed files
  assert.equal((await reviewedRead({toolName:'ls',arguments:{}},root)).allow,true);
  }finally{await rm(root,{recursive:true,force:true});}
 });
+
+test('the discovered-read guard rejects private descendants and hard links synchronously',async()=>{
+ const {reviewedRead}=await import('../src/guest/coding-read-policy.mjs');const {link}=await import('node:fs/promises');
+ const root=await realpath(await mkdtemp(join(tmpdir(),'adr-read-discovery-')));
+ try{
+  await mkdir(join(root,'.adr-runtime'));await writeFile(join(root,'.adr-runtime','runtime.txt'),'synthetic');
+  await mkdir(join(root,'.private-fixture'));await writeFile(join(root,'.private-fixture','hidden.txt'),'synthetic');await link(join(root,'.private-fixture','hidden.txt'),join(root,'hard-link'));
+  await writeFile(join(root,'main.txt'),'project');
+  for(const name of ['read','grep','find','ls']){
+   assert.equal(reviewedRead({toolName:name,arguments:{path:join(root,'main.txt')}},root).allow,true);
+   for(const path of ['.adr-runtime/runtime.txt','.private-fixture/hidden.txt','hard-link'])assert.equal(reviewedRead({toolName:name,arguments:{path:join(root,path)}},root).allow,false);
+  }
+ }finally{await rm(root,{recursive:true,force:true});}
+});

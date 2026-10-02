@@ -719,3 +719,25 @@ that the narrow layout still replaced description text rows with overflow arrows
 Remove those markers while retaining PageUp/PageDown and Full details. The wide
 layout and approval/list overflow behavior stay separate. New alpha.24 repeats
 exact installed acceptance; the launcher has not changed.
+
+### Private alpha.25 recursive-read correction
+
+Alpha.24 artifact and its successful 660-second lifecycle, installed read-only,
+final-cell/adversarial checks and green macOS/Ubuntu CI remain predecessor evidence.
+Long/short coding controls exposed a real read defect: grep searched the embedded
+runtime and filled its match limit before finding the synthetic project file.
+The same broad search sometimes passed because traversal order differed. Those
+stalled/failed controls runs are not acceptance evidence.
+
+The pinned builder now excludes .adr-runtime from recursive grep/find and applies
+the same synchronous path/link guard to each grep/find/ls result. Direct read
+policy is unchanged; no legacy source or generated runtime is edited by hand.
+Native fixtures check actual project contents plus exclusion of synthetic private
+files, symlinks and hard links. The verifier reports fixed assertion/error metadata
+and fails immediately on a synthetic inference error instead of waiting silently.
+Raw diagnostic fixture output was removed from the verifier.
+
+Locked runtime build/provenance and 142 client checks pass. Corrected source PTY
+has reached nine dispatches/seven approvals and repeated Continue; final completion
+and exact alpha.25 installation/acceptance remain pending. Old artifacts remain
+unselected and immutable. No hosted change or real inference occurred.

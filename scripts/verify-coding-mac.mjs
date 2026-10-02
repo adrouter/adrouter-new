@@ -29,12 +29,15 @@ const network={request:async(path,options={})=>{
   if(path.endsWith('/inference')){
     dispatches++;nativePhase='inference_'+dispatches;session.requestSequence++;if(process.env.ADR_NATIVE_PROGRESS_FILE)await writeFile(process.env.ADR_NATIVE_PROGRESS_FILE,JSON.stringify({dispatches}),{mode:0o600});
     if(dispatches===2){
+      try {
       const results=new Map(options.body.messages.filter(m=>m.role==='tool').map(m=>[m.tool_call_id,m.content]));
       assert.match(results.get('read1')??'',/print\("before"\)/,'read returns fixture content');
-      for(const name of ['ls1','find1','grep1'])assert.match(results.get(name)??'',/main\.py/,'built-in read returns actual results');
+      for(const name of ['ls1','find1','grep1']){assert.match(results.get(name)??'',/main\.py/,'built-in '+name+' returns actual results');assert.doesNotMatch(results.get(name)??'',/\.adr-runtime|private-fixture|escape-link|hard-link/,'built-in results respect protected paths');}
       assert.equal(approvals,0,'safe reads do not ask approval');
       assert.equal(await readFile(join(root,'main.py'),'utf8'),'print("before")\n');
       readsVerified=true;nativePhase='read_contents_verified';
+      await runtime.run([...runtime.owned][0],['node','-e',`const fs=require('node:fs');for(const p of ['.private-fixture','escape-link','hard-link'])fs.rmSync('/workspace/'+p,{recursive:true,force:true});`]);
+      }catch(error){console.error(JSON.stringify({nativeReadCheck:'failed',assertion:error.message.split('\n')[0],approvals}));throw error;}
     }
     const toolCalls=dispatches===1?[call('read1','read',{path:'main.py'}),call('ls1','ls',{path:'.'}),call('find1','find',{path:'.',pattern:'*.py'}),call('grep1','grep',{path:'.',pattern:'before'})]:!readOnly&&dispatches===2?[call('deny1','write',{path:'denied.txt',content:'denied change'}),call('blue1','write',{path:'index.html',content:'<body style="background:blue">synthetic website</body>\n'}),call('write1','write',{path:'main.py',content:'print("after")\n'}),call('write2','write',{path:'added.py',content:'assert 2 + 2 == 4\n'}),call('bash1','bash',{command:'if true; then\n  rm remove.txt\n  python3 added.py\nfi\ngit --version\nrg after main.py',timeout:120})]:[];
     return {requestId:options.body.requestId,text:toolCalls.length?'':'Synthetic coding complete.',thinking:'',toolCalls,usage:{inputTokens:8,outputTokens:8}};
@@ -45,6 +48,7 @@ const {SandboxRuntime}=await import(entry('runtime.mjs'));
 let buyer;const runtime=process.env.ADR_ACCEPTANCE_RUNTIME_PATHS?new SandboxRuntime(JSON.parse(await readFile(process.env.ADR_ACCEPTANCE_RUNTIME_PATHS,'utf8'))):await configuredRuntime();
 try{
   buyer=await openCodingBuyer(network,id,{root,files:['main.py','remove.txt','large.txt','index.html','denied.txt','bom.txt'],runtime,trusted:true,profile,coordinator,approve:async(a,p)=>{approvals++;if(!coordinator&&a.name==='write'&&a.args?.path==='denied.txt')return false;return coordinator?coordinator.approve(a,p):true;}});
+  const fixtureGuest=[...runtime.owned][0];await runtime.run(fixtureGuest,['node','-e',`const fs=require('node:fs');fs.mkdirSync('/workspace/.private-fixture');fs.writeFileSync('/workspace/.private-fixture/hidden.py','before');fs.symlinkSync('/tmp','/workspace/escape-link');fs.linkSync('/workspace/.private-fixture/hidden.py','/workspace/hard-link');`]);
   if(ui)ui.start();const coding=()=>buyer.interactive({prompt:'Synthetic test: inspect and update the fixture, add a file, delete remove.txt and run Python, Git and ripgrep.',mode:process.argv.includes('--pty')?'interactive':'print',consoleOptions:process.argv.includes('--pty')?{}:{stdio:['ignore','ignore','inherit']}});if(ui)await ui.suspend(coding);else await coding();
   assert.equal(readsVerified,true,'actual runtime read results verified');
   if(readOnly){

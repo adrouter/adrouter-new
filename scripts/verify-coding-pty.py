@@ -2,7 +2,7 @@
 
 Captures only synthetic fixture content in memory. Evidence is aggregate metadata.
 """
-import os, pty, termios, subprocess, select, time, json, fcntl, struct, tempfile, shutil
+import re, os, pty, termios, subprocess, select, time, json, fcntl, struct, tempfile, shutil
 if '--color' in __import__('sys').argv: os.environ.pop('NO_COLOR',None)
 master, slave = pty.openpty();fcntl.ioctl(slave,termios.TIOCSWINSZ,struct.pack('HHHH',32,110,0,0));before=termios.tcgetattr(slave)
 duration = 330 if '--long' in __import__('sys').argv else 5
@@ -52,6 +52,11 @@ try:
     os.write(master,('Synthetic follow-up %d\r'%(followups+1)).encode());followups+=1
   if ready_at is not None and followups==4 and answers>=5 and time.monotonic()-started>=duration and not quit_sent and cycles==0:
    os.write(master,b'/workspace\r');quit_sent=True
+  if b'Inference could not complete' in buffer:
+   plain=re.sub(rb'\x1b\[[0-9;]*m',b'',buffer)
+   for entry in re.findall(rb'\{"nativeReadCheck":.*?\}',plain):print(entry.decode(),flush=True)
+   codes=re.findall(rb'Inference could not complete \(([a-z0-9_]+)\)',plain)
+   raise AssertionError('synthetic_inference_failed:'+','.join(c.decode() for c in codes))
   if p.poll() is not None: break
  assert p.wait(timeout=15)==0, 'actual_guest_tui_failed:'+buffer.decode('utf8','replace')[-6500:]
  assert resized and mouse_exercised,'native_controls_not_exercised'
