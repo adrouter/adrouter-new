@@ -201,3 +201,30 @@ Host approvals keep Deny/Allow/Details below the scrollable preview, default to 
 Private alpha.21 fixes forward from the retained alpha.20 artifact: provider connection labels use current owner-scoped activity instead of a cached node lease. Current activity owns active session references. Uppercase F opens details while lowercase f remains available for filtering.
 
 Private alpha.22 also preserves the selected list row on short terminal windows; descriptions collapse first, and action visibility takes precedence when there is insufficient room for both overflow markers.
+
+### Authorized Chat Completions gateways
+
+Choose **OpenAI-compatible API gateway** and enter the full Chat Completions URL
+and exact model ID (including a namespace such as `vendor/model`). Setup preserves
+both values and reviews the authentication header, output-token field, final-usage
+mode, thinking control and reasoning-history setting before creating a listing.
+Back and Edit retain those settings. Keys are entered only inside the provider VM;
+setup validation does not send an inference request.
+
+The version-1 subset supports `bearer`, `api_key`, `x_api_key` or `none` authentication;
+`max_tokens` or `max_completion_tokens`; `include_usage` or native final usage;
+and `none`, `type` or `reasoning_effort` thinking controls. Coding requires text SSE,
+function tools and actual final input/output token counts. Reasoning history uses
+`reasoning_content`; structured/signed reasoning envelopes are unsupported and fail
+closed. Missing usage, incomplete tools and partial streams never authorize tools
+or invent accounting. The client sends one request, follows no redirects and makes
+no automatic model/endpoint fallback or inference retry. A gateway's own routing
+and retry behavior requires separate evidence.
+
+Capability qualification is specific to the endpoint, exact model and settings.
+Advertise only verified capabilities, publish explicitly and qualify the tariff.
+Thinking stays a manual provider opt-in and starts off for buyers. Provider screens
+show the last request's validated HTTP status and failure code in memory, without
+raw response bodies. Authentication and access errors require checking the key and
+entitlement; changing thinking is not an authentication fix. Use the checklist in
+[private acceptance](docs/private-mac-acceptance.md) before live qualification.

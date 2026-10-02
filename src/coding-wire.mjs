@@ -26,8 +26,9 @@ export async function readCodingStream(response, onEvent = () => {}) {
 // Upstream SSE framing is independent of TCP chunk boundaries. Tool fragments
 // never become executable calls until a final, validated snapshot is received.
 export class UpstreamCodingStream {
-  constructor(requestId, allowed, emit) { this.requestId=requestId; this.allowed=allowed; this.emit=emit; this.decoder=new TextDecoder('utf-8',{fatal:true}); this.pending=''; this.text=''; this.thinking=''; this.calls=new Map(); this.sequence=0; this.done=false; this.finished=false; }
+  constructor(requestId, allowed, emit) { this.requestId=requestId; this.allowed=allowed; this.emit=emit; this.decoder=new TextDecoder('utf-8',{fatal:true}); this.pending=''; this.text=''; this.thinking=''; this.calls=new Map(); this.sequence=0; this.done=false; this.finished=false; this.bytes=0; }
   async feed(chunk) {
+    this.bytes+=chunk.length;if(this.bytes>2*1024*1024)throw Error('upstream_stream_limit');
     this.pending = (this.pending + this.decoder.decode(chunk,{stream:true})).replace(/\r\n/g,'\n');
     if (this.pending.length>262144) throw Error('upstream_stream_limit');
     for (;;) { const end=this.pending.indexOf('\n\n'); if(end<0)break; const frame=this.pending.slice(0,end);this.pending=this.pending.slice(end+2); await this.frame(frame); }
@@ -38,13 +39,25 @@ export class UpstreamCodingStream {
     if(this.done)throw Error('upstream_stream_after_done');
     if(raw==='[DONE]'){this.done=true;return;}
     const data=JSON.parse(raw); if(data.error)throw Error('upstream_stream_error');
-    if(data.usage)this.usage=data.usage;
-    const choice=data.choices?.[0]; if(!choice)return;
+    if(!Array.isArray(data.choices)||data.choices.length>1)throw Error('upstream_choices_invalid');
+    if(data.usage!=null){
+      if(!this.finished&&!data.choices[0]?.finish_reason)throw Error('upstream_usage_not_final');
+      if(this.usage||!Number.isSafeInteger(data.usage.prompt_tokens)||data.usage.prompt_tokens<0||!Number.isSafeInteger(data.usage.completion_tokens)||data.usage.completion_tokens<0)throw Error('upstream_usage_invalid');
+      this.usage=data.usage;
+    }
+    const choice=data.choices[0]; if(!choice)return;
+    if(choice.index!==undefined&&choice.index!==0)throw Error('upstream_choice_invalid');
     const delta=choice.delta??{};
+    if(typeof delta!=='object'||Array.isArray(delta))throw Error('upstream_delta_invalid');
+    if(['reasoning','reasoning_details','thinking','signature'].some(k=>delta[k]!=null))throw Error('upstream_reasoning_unsupported');
+    for(const key of ['content','reasoning_content'])if(delta[key]!=null&&typeof delta[key]!=='string')throw Error('upstream_delta_invalid');
+    if(delta.tool_calls!=null&&!Array.isArray(delta.tool_calls))throw Error('upstream_tool_invalid');
+    if(this.finished&&(delta.content||delta.reasoning_content||delta.tool_calls?.length||choice.finish_reason&&choice.finish_reason!==this.finishReason))throw Error('upstream_after_finish');
     const send=async(kind,text,extra={})=>{if(typeof text!=='string')throw Error('upstream_delta_invalid');for(let i=0;i<text.length;i+=8192)await this.emit({type:'coding_delta',requestId:this.requestId,sequence:++this.sequence,kind,text:text.slice(i,i+8192),...extra});};
     if(delta.content){this.text+=delta.content;await send('text',delta.content);}
     if(delta.reasoning_content){this.thinking+=delta.reasoning_content;await send('thinking',delta.reasoning_content);}
     for(const t of delta.tool_calls??[]) {
+      if(!t||typeof t!=='object'||(t.id!==undefined&&typeof t.id!=='string')||(t.function?.name!==undefined&&typeof t.function.name!=='string')||(t.function?.arguments!==undefined&&typeof t.function.arguments!=='string'))throw Error('upstream_tool_invalid');
       if(!Number.isInteger(t.index)||t.index<0||t.index>7||(t.type && t.type!=='function'))throw Error('upstream_tool_invalid');
       const c=this.calls.get(t.index)??{id:'',name:'',arguments:''};
       if((t.id && c.id && t.id!==c.id)||(t.function?.name && c.name && t.function.name!==c.name))throw Error('upstream_tool_changed');
@@ -54,10 +67,11 @@ export class UpstreamCodingStream {
       if(!t.function?.arguments)await this.emit({type:'coding_delta',requestId:this.requestId,sequence:++this.sequence,kind:'tool',text:'',index:t.index,...(t.id?{id:t.id}:{}),...(t.function?.name?{name:t.function.name}:{})});
     }
     if(Buffer.byteLength(this.text)>131072||Buffer.byteLength(this.thinking)>131072)throw Error('upstream_output_limit');
-    if(choice.finish_reason){if(!['stop','length','tool_calls'].includes(choice.finish_reason))throw Error('upstream_finish_invalid');this.finished=true;}
+    if(choice.finish_reason){if(!['stop','length','tool_calls'].includes(choice.finish_reason))throw Error('upstream_finish_invalid');this.finished=true;this.finishReason=choice.finish_reason;}
   }
   result() {
     this.pending+=this.decoder.decode(); if(!this.done||!this.finished||this.pending.trim())throw Error('upstream_incomplete');
+    if(!this.usage||(this.finishReason==='tool_calls')!==(this.calls.size>0))throw Error('upstream_incomplete');
     const ids=new Set();const toolCalls=[...this.calls.entries()].sort((a,b)=>a[0]-b[0]).map(([,c])=>{
       if(!/^[A-Za-z0-9_-]{1,96}$/.test(c.id)||!this.allowed.includes(c.name)||ids.has(c.id))throw Error('upstream_tool_invalid');ids.add(c.id);
       const args=JSON.parse(c.arguments);if(!args||typeof args!=='object'||Array.isArray(args))throw Error('upstream_tool_invalid');

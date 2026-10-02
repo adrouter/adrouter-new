@@ -48,12 +48,13 @@ export async function startProvider(networkInput, nodeId, { maxCalls = 5, maxOut
   let guest, copied, socket, deadline, pending, guestReady = false, relayReady = false, stopped = false, starting = false, calls = 0;
   let claimed = false, allocation, closing, statusPoll, renewal, keepalive, touchRetry, reconnectTimer, authenticationTimer, leaseTimer;
   let relayGeneration, relayLeaseUntil = 0, socketEpoch = 0, backoff = 0, lastTouch = 0, lastGuestPoll = 0, cleanupRequired = false, teardownVerified;
+  let lastUpstreamFailure;
   const control = [];
   let complete; const done = new Promise(resolve => { complete = resolve; });
   let activation = [];
   const abort = new AbortController();
   const bounded = ms => AbortSignal.any([abort.signal, AbortSignal.timeout(ms)]);
-  const snapshot = () => ({ stopped, guestReady, relayReady, calls, activation, providerRunId, relayGeneration, relayLeaseUntil, cleanupRequired, teardownVerified, firstFailure: lifecycle.firstFailure, stopTrigger: lifecycle.stopTrigger });
+  const snapshot = () => ({ stopped, guestReady, relayReady, calls, activation, providerRunId, relayGeneration, relayLeaseUntil, cleanupRequired, teardownVerified, lastUpstreamFailure:lastUpstreamFailure?{...lastUpstreamFailure}:undefined, firstFailure: lifecycle.firstFailure, stopTrigger: lifecycle.stopTrigger });
   const announce = value => { try { notify({ ...value, ...snapshot() }); } catch {} };
   const failure = (phase, error, fallback) => lifecycle.event(phase, { code: error?.code ?? fallback, signal: error?.signal, exitCode: error?.exitCode });
   const clearReadiness = code => { relayReady = false; relayLeaseUntil = 0; clearTimeout(leaseTimer); lifecycle.event('relay', { code, status: 'reconnecting' }); announce({ status: 'reconnecting' }); };
@@ -83,6 +84,7 @@ export async function startProvider(networkInput, nodeId, { maxCalls = 5, maxOut
       } else if (req.method === 'POST' && req.url === '/timing') {
         const timing = JSON.parse(bytes);
         if (!pending || timing.requestId !== pending.id || timing.phase !== 'upstream' || !['unknown','succeeded'].includes(timing.outcome) || (timing.statusCode !== null && (!Number.isInteger(timing.statusCode) || timing.statusCode < 100 || timing.statusCode > 599)) || !Number.isInteger(timing.totalMs) || timing.totalMs < 0 || timing.totalMs > 135000 || (timing.headersMs !== null && (!Number.isInteger(timing.headersMs) || timing.headersMs < 0 || timing.headersMs > timing.totalMs))) throw new Error('timing_rejected');
+        pending.upstreamStatus=timing.statusCode;
         if (!pending.cancelled && relayReady && pending.socket === socket) socket.send(JSON.stringify({type:'diagnostic',requestId:timing.requestId,phase:'upstream',outcome:timing.outcome,statusCode:timing.statusCode,headersMs:timing.headersMs,totalMs:timing.totalMs}));
       } else if (req.method === 'POST' && req.url === '/result') {
         const result = JSON.parse(bytes);
@@ -97,6 +99,7 @@ export async function startProvider(networkInput, nodeId, { maxCalls = 5, maxOut
         if (result.scope === 'request' && pending && result.requestId === pending.id) {
           const frame = { type: 'request_failed', requestId: pending.id, sessionId: pending.binding.sessionId, bindingRevision: pending.binding.bindingRevision, sequence: pending.binding.sequence, code: upstreamFailureCodes.includes(result.code)?result.code:'provider_outcome_unknown' };
           if (!ProviderRequestFailure(frame)) throw Error('request_failure_binding');
+          lastUpstreamFailure={requestId:pending.id,statusCode:pending.upstreamStatus??null,code:frame.code,observedAt:now()};
           failure('request', { code: frame.code }, 'provider_outcome_unknown');
           if (!pending.cancelled && relayReady && pending.socket === socket) socket.send(JSON.stringify(frame)); pending = undefined;
         } else if (result.scope === 'provider' && ['control_unavailable','handshake_rejected','frame_rejected'].includes(result.code)) void stop({ trigger: 'guest_failed', error: new ClientError(result.code) });

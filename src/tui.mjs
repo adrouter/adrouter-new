@@ -1,4 +1,5 @@
 import { validateBinding } from './provider-broker.mjs';
+import { providerFailureLines } from './coding-display.mjs';
 import { connectorCatalog, resolveConnector, connectorReviewLines, CONNECTOR_PROTOCOL } from './connectors.mjs';
 import { ProviderActivityMonitor, providerActivityLines, providerConnectionLabel } from './provider-activity.mjs';
 import { recoverableStatusFailure } from './buyer-lifecycle.mjs';
@@ -15,6 +16,7 @@ export const accountingLines=s=>s?[`State: ${words(s.state)}`,`Reserved ${s.fund
 export const providerStatusLines = (s, now = Date.now()) => [s.stopped ? 'Provider operation has stopped.' : 'Keep this TUI open.',
   `VM: ${s.stopped ? s.teardownVerified === false ? 'teardown unverified' : s.teardownVerified === true ? 'not running' : 'stopping' : s.guestReady ? 'ready' : 'starting'}`,
   `Backend: ${s.stopped ? 'offline' : s.relayReady && s.relayLeaseUntil > now ? 'Hot · ready' : s.firstFailure ? 'reconnecting' : 'awaiting relay confirmation'}`,
+  ...providerFailureLines(s.lastUpstreamFailure),
   ...(s.stopTrigger ? [`Stopped: ${words(s.stopTrigger.trigger)}`] : ['Refresh the listing to read backend readiness.'])];
 const item = (value, label, detail = '', disabled = false) => ({ value, label, detail:Array.isArray(detail)?detail.join(' '):detail, details:Array.isArray(detail)?detail:undefined, disabled });
 const required = value => value.trim() ? '' : 'Please enter a value.';
@@ -294,7 +296,7 @@ export async function runTui(options = {}, dependencies = {}) {
         item('pause', 'Pause listing'), item('stop', 'Stop serving and close sessions'),
         ...(node.status === 'paused' ? [item('delete', 'Delete paused listing', providersRunning.has(node.id) ? 'Stop serving in this terminal first.' : 'Permanent removal requires finished sessions and settlement. Receipts remain available.', providersRunning.has(node.id))] : []),
         item('refresh', 'Refresh status'), item('back', 'Back'),
-      ], { tick:true,lines:()=>[...providerActivityLines(monitor.view()),`Model: ${node.model}`, `Suspended: ${node.suspended ? 'yes' : 'no'} · Listing: ${node.status}`, `VM: ${providersRunning.get(node.id)?.status.guestReady ? 'ready' : 'not running'}`, `Backend connection: ${providerConnectionLabel(monitor.view())}`, `Activity: ${providersRunning.get(node.id)?.status.calls??0} dispatched requests`, `Remaining upstream authority: ${formatUsd(exposure.remainingMicrousd)}`, `Outstanding exposure: ${formatUsd(exposure.outstandingMicrousd)}`, `Provider: ${node.id}`,`Listing: ${node.listingId??'not published'}`,`Thinking: ${node.capabilities?.includes('thinking_v1')?'supported':'off'}`],footer:providersRunning.has(node.id)?'↑↓ Move  Enter Choose  Esc / Ctrl+C Stop provider VM':'↑↓ Move  Enter Choose  Esc Back' });}finally{monitor.stop();}
+      ], { tick:true,lines:()=>[...providerActivityLines(monitor.view()),...providerFailureLines(providersRunning.get(node.id)?.status.lastUpstreamFailure),`Model: ${node.model}`, `Suspended: ${node.suspended ? 'yes' : 'no'} · Listing: ${node.status}`, `VM: ${providersRunning.get(node.id)?.status.guestReady ? 'ready' : 'not running'}`, `Backend connection: ${providerConnectionLabel(monitor.view())}`, `Activity: ${providersRunning.get(node.id)?.status.calls??0} dispatched requests`, `Remaining upstream authority: ${formatUsd(exposure.remainingMicrousd)}`, `Outstanding exposure: ${formatUsd(exposure.outstandingMicrousd)}`, `Provider: ${node.id}`,`Listing: ${node.listingId??'not published'}`,`Thinking: ${node.capabilities?.includes('thinking_v1')?'supported':'off'}`],footer:providersRunning.has(node.id)?'↑↓ Move  Enter Choose  Esc / Ctrl+C Stop provider VM':'↑↓ Move  Enter Choose  Esc Back' });}finally{monitor.stop();}
       currentProviderId = undefined; created = false;
       if(!selection&&providersRunning.has(node.id)){await providersRunning.get(node.id).stop();providersRunning.delete(node.id);continue;}
       if (!selection || selection === 'back') return;

@@ -135,3 +135,57 @@ lifecycle metadata, first failure and separate cleanup outcomes, never credentia
 checkpoint contents, prompts, responses or exception output. Temporary relay failure does
 not extend buyer expiry or replay inference. Definitive policy/runtime failure still closes
 the owned run. Full real two-account acceptance remains a separate operator gate.
+
+## Generic gateway qualification (2 October 2026)
+
+Record one row for each exact endpoint, model, version-1 connector settings,
+capability set, listing revision, accepted session and immutable artifact SHA.
+Record time, action, steps, expected/actual result and PASS/FAIL/NOT TESTED for
+**each** gate below. Keep synthetic and operator live evidence separate. Never
+record keys, prompts, tool results or raw upstream bodies in receipts.
+
+| Gate | Expected evidence |
+| --- | --- |
+| Authentication/access | Validated HTTP status and failure code; operator checks entitlement and guest-only key entry |
+| Text/stream | Complete UTF-8 SSE response; comments, empty deltas and final usage handled |
+| Function tools | Exact complete calls; actual read/grep/find/ls fixture results, no approval or bash for reads |
+| Reasoning | Manually enabled buyer thinking, supported control and reasoning_content continuation |
+| Usage | Valid final input/output counts within accepted bounds; missing usage remains unresolved |
+| Denied action | Deny selected initially, no mutation or command execution |
+| Allowed action/Apply | Fresh approval, one execution; separately reviewed host application |
+| Cancellation | Bound cancellation and independent cleanup; unknown outcome not replayed or zero-settled |
+| Terminal | Arrows/Tab, details, resize, Unicode, mono/color, draft and same-process Continue |
+
+The generic fake-gateway matrix covers all 80 valid connector combinations and
+invalid combinations using synthetic credentials. It is not live gateway approval.
+A ready VM, successful text response or another model's success does not qualify
+streaming/tools/reasoning/usage for a different row. Unsupported auth/transport or
+reasoning dialects need a separately scoped Router contract change.
+
+### First live row: operator's Z.ai API bundle
+
+- Endpoint: `https://api.z.ai/api/paas/v4/chat/completions`
+- Model: `glm-5.3` (confirm the exact request ID and bundle entitlement with Z.ai)
+- Connector: bearer, max_tokens, native usage, type thinking, reasoning history on
+- Provider thinking: advertise only once verified; publish/qualify the revision
+- Buyer: manually enable thinking before this model's inference
+- Artifact/listing/session: record the actual tested identities at execution
+- Current live outcome: **NOT TESTED**; the reported authentication cause and
+  active bundle entitlement remain unverified. No additional account is required
+  for implementation or synthetic acceptance.
+
+For a 401, verify the entered key; for a 403, verify access/entitlement. These
+statuses do not establish the precise reason by themselves. Check 402/429 quota
+or credits separately and 400 request settings separately. Do not display raw
+upstream errors or claim that changing thinking repairs authentication. The key
+must be entered by the operator inside the guest, never through chat.
+
+Protocol references checked on 2 October 2026:
+[OpenRouter response/usage conventions](https://openrouter.ai/docs/api_reference/overview),
+[stream/error conventions](https://openrouter.ai/docs/api_reference/errors-and-debugging),
+[Z.ai bundle endpoint guidance](https://zcode.z.ai/en/docs/configuration),
+[GLM-5.3 thinking](https://docs.z.ai/guides/llm/glm-5.3),
+[Z.ai HTTP errors](https://docs.z.ai/api-reference/api-code).
+These references inform synthetic fixtures and setup; they are not live acceptance.
+Prior incomplete DeepSeek/MiMo outcomes and all other live combinations stay
+NOT TESTED until individually exercised.

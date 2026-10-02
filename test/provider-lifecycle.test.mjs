@@ -99,3 +99,21 @@ test('existing terminal page repaints after internal stop without operator navig
   input.write('\r');await page;
  }finally{ui.stop();}
 });
+
+test('provider correlates validated timing and failure only for the pending request',async()=>{
+ const f=await fixture();try{
+  const controller=await f.start(),socket=f.state.sockets[0];
+  const base={type:'inference',sessionId:randomUUID(),bindingRevision:f.node.listingId,deadlineUnixMs:Date.now()+30000,messages:[{role:'user',content:'synthetic private marker'}],maxOutputTokens:1024,upstreamBudget:{reservedMicrousd:'1',inputBound:10,tariffVersion:'synthetic',inputMicrousdPerMillion:'1',outputMicrousdPerMillion:'1'},tools:[]};
+  for(const [index,statusCode] of [401,403,null].entries()){
+   const requestId=randomUUID();socket.frame({...base,requestId,sequence:index+1});await until(()=>controller.status.calls===index+1);await f.control('/work');
+   if(statusCode!==null)await f.control('/timing',{requestId,phase:'upstream',outcome:'unknown',statusCode,headersMs:1,totalMs:2});
+   await f.control('/failed',{scope:'request',requestId,code:'upstream_authentication_failed',message:'synthetic private marker'});
+   const failure=controller.status.lastUpstreamFailure;
+   assert.deepEqual(Object.keys(failure).sort(),['code','observedAt','requestId','statusCode']);assert.equal(failure.requestId,requestId);assert.equal(failure.statusCode,statusCode);
+   assert.ok(Number.isSafeInteger(failure.observedAt));assert.equal(JSON.stringify(failure).includes('synthetic private marker'),false);
+   const display=providerStatusLines(controller.status).join('\n');assert.match(display,new RegExp('HTTP '+(statusCode??'unavailable')));assert.doesNotMatch(display,/expired key|synthetic private marker/);
+   await assert.rejects(f.control('/timing',{requestId,phase:'upstream',outcome:'unknown',statusCode:200,headersMs:1,totalMs:2}));assert.deepEqual(controller.status.lastUpstreamFailure,failure);
+  }
+  const persisted=await readFile(controller.lifecycle.path,'utf8');assert.equal(persisted.includes('lastUpstreamFailure'),false);assert.equal(persisted.includes('synthetic private marker'),false);assert.equal(controller.status.stopped,false);
+ }finally{await f.close();}
+});
