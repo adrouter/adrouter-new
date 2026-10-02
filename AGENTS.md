@@ -15,3 +15,7 @@ Runtime tests require actual microVMs; mocks cannot satisfy platform acceptance.
 Package remains private until the release gates are implemented and satisfied.
 Publish immutable candidate first, retain the draft release through acceptance,
 then alpha only. No mainnet and no latest promotion.
+
+## Marketplace coding UI
+
+ADRv2 coding has no presence/“Are you still there?” checkpoint. Preserve host action approvals, accepted session expiry/request limits, spending enforcement and provider keepalive. Thinking is provider opt-in and initially off for buyers. Cost display uses accepted listing test-credit rates; sponsorship and USD settlement never enter model/tool context.

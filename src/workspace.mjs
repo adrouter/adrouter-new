@@ -3,6 +3,8 @@ import { spawn, execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 import { fileURLToPath } from 'node:url';
 import ignore from 'ignore';
+import { checkWorkspacePath } from './workspace-policy.mjs';
+import { actionDiff } from './action-diff.mjs';
 const execute = promisify(execFile);
 import { readFile, readdir, lstat, open, realpath, mkdir, mkdtemp, writeFile, rm } from 'node:fs/promises';
 import { createHash, randomUUID } from 'node:crypto';
@@ -12,11 +14,7 @@ import { tmpdir } from 'node:os';
 const MAX_BYTES = 2 * 1024 * 1024;
 const utf8 = bytes => { try { const text = new TextDecoder('utf-8',{fatal:true,ignoreBOM:true}).decode(bytes); if(text.includes('\0'))throw Error(); return text; } catch { throw new Error('workspace_binary_file_rejected'); } };
 const hash = bytes => createHash('sha256').update(bytes).digest('hex');
-const forbidden = /(^auth\.json$|^\.npmrc$|^\.pypirc$|^\.netrc$|^\.|credentials?|secrets?|id_rsa|id_ed25519|\.pem$|\.key$|\.p12$|\.pfx$|\.tgz$|\.tar$|\.zip$|\.sqlite$|\.db$)/i;
-
-function checkRelative(path) {
-  if (typeof path !== 'string' || !path || isAbsolute(path) || path.includes('\\') || path.includes('\0') || path.includes(':') || path.split('/').some(part => part === '..' || part === '.' || !part || (forbidden.test(part) && !['.gitignore','.ignore','.editorconfig','.adrouter'].includes(part)))) throw new Error('workspace_path_rejected');
-}
+const checkRelative = checkWorkspacePath;
 
 async function safeRead(root, path, identity) {
   checkRelative(path);
@@ -69,7 +67,7 @@ export async function proposeExport(workspace, changedFiles) {
 export async function changeDiffs(workspace,changes) {
   return Promise.all(changes.map(async c=>{
     const before=c.before===null?'':(await safeRead(workspace.root,c.path,workspace.rootIdentity)).toString('utf8');
-    return [...(c.before===null?[]:before.split('\n').map(l=>'- '+l)),...(c.content===null?[]:c.content.split('\n').map(l=>'+ '+l))];
+    return actionDiff(before,c.content??'');
   }));
 }
 
@@ -138,6 +136,7 @@ export async function reviewAndApply(workspace, finalFiles, approve, {journalRoo
   if(!journalRoot||!isAbsolute(journalRoot))throw Error('private_journal_required');
   const values={...finalFiles};for(const p of Object.keys(workspace.manifest))if(!Object.hasOwn(values,p))values[p]=null;
   const proposal=recover?.proposal??await proposeExport(workspace,values);
+  if(!proposal.changes.length)return {status:'unchanged',completed:[]};
   if(!/^[a-f0-9-]{36}$/.test(proposal.id))throw Error('apply_operation_invalid');
   const digest=hash(JSON.stringify(proposal));
   if(!await approve({...proposal,digest,recovery:!!recover}))throw Error('apply_denied');

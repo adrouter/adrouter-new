@@ -129,10 +129,10 @@ export class SandboxRuntime {
 
   // Controller-owned, read-only checkpoint programs have bounded failure without
   // destroying work. Effectful run() retains uncertain-outcome VM teardown.
-  async readCheckpoint(name, command, { signal, outputBytes = 24 * 1024 * 1024 } = {}) {
+  async readCheckpoint(name, command, { signal, outputBytes = 24 * 1024 * 1024, input } = {}) {
     this.requireOwned(name);
     return this.call(['exec', '--no-tty', '--timeout', '15s', '--rlimit', 'core=0', name, '--', ...command],
-      { timeout: 20000, signal, outputBytes });
+      { timeout: 20000, signal, outputBytes, input });
   }
 
   async attachConsole(name, command, { signal, stdio = 'inherit', timeoutSeconds = 120, coordinator, beforeTeardown, onOutcome = () => {} } = {}) {

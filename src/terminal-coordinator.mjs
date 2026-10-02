@@ -4,10 +4,16 @@ import { ClientError } from './network.mjs';
 
 export function approvalLines(action) {
   const args = action.args ?? {};
-  if (action.name === 'bash' || action.name === 'operator_command') return [`Command: ${args.command}`, 'Working directory: /workspace', `Timeout: ${args.timeout ?? 120} seconds`];
+  if (action.name === 'bash' || action.name === 'operator_command') return ['Command:',...String(args.command??'').split('\n').map(line=>'  '+line.replaceAll('\t','    ')), 'Working directory: /workspace', `Timeout: ${args.timeout ?? 120} seconds`];
   if (action.changes) return action.changes.flatMap(c => [`${c.kind}: ${c.path}`, ...(c.diff ?? (c.content === null ? ['- File deleted'] : String(c.content).split('\n').map(l => `+ ${l}`)))]);
   if (['write', 'edit'].includes(action.name)) return [`File: ${args.path}`, ...(action.diff ?? [`- ${args.oldText ?? ''}`, `+ ${args.newText ?? args.content ?? ''}`])];
-  return [action.name, JSON.stringify(args, null, 2)];
+  return [action.name, ...JSON.stringify(args, null, 2).split('\n')];
+}
+export const reviewLines=action=>approvalLines(action).map(text=>({text,kind:text.startsWith('+')?'added':text.startsWith('-')?'removed':text.startsWith('@@')?'heading':undefined}));
+export class TerminalModes {
+  constructor(){this.states=new Map();this.tail='';}
+  observe(bytes){const text=this.tail+bytes.toString('utf8');for(const m of text.matchAll(/\x1b\[\?(1049|1000|1002|1003|1006|2004|25)([hl])/g))this.states.set(m[1],m[2]);this.tail=text.slice(-80);}
+  restore(){return '\x1b[0m'+[...this.states].filter(([k])=>k!=='1049').map(([k,v])=>`\x1b[?${k}${v}`).join('');}
 }
 export class TerminalCoordinator {
   constructor(ui, record = () => {}) { this.ui = ui; this.record = record; this.tail = Promise.resolve(); this.reviewing = false; }
@@ -16,23 +22,25 @@ export class TerminalCoordinator {
       if (Date.now() >= permission.expiresAt) return false;
       const attached = this.attached;
       this.reviewing = true;
+      const expiry=setTimeout(()=>this.ui.pending?.resolve(null),Math.max(1,permission.expiresAt-Date.now()));
       try {
-        if (attached) { this.ui.input.removeListener('data', this.onData); this.ui.start(); }
+        if (attached) { this.ui.input.removeListener('data', this.onData); this.ui.start({borrowScreen:true}); }
         let details = false;
         for (;;) {
           const choice = await this.ui.menu('Approve this action once?', [
             {value:'deny',label:'Deny'}, {value:'allow',label:'Allow once'},
             {value:'details',label:details?'Collapse details':'Expand details'},
-          ], {lines:[action.name, ...approvalLines(action).slice(0,10), ...(details ? [`Session: ${action.sessionId}`, `Tool call: ${action.toolCallId ?? 'host review'}`, `Content digest: ${permission.digest}`, `Expires: ${new Date(permission.expiresAt).toLocaleTimeString()}`] : [])]});
-          if (choice === 'details') { details = !details;if(details)await this.ui.page('Full action details',[...approvalLines(action),`Session: ${action.sessionId}`,`Tool call: ${action.toolCallId??'host review'}`,`Content digest: ${permission.digest}`,`Expires: ${new Date(permission.expiresAt).toLocaleTimeString()}`]);continue; }
+          ], {lines:[action.name, ...reviewLines(action).slice(0,10), ...(details ? [`Session: ${action.sessionId}`, `Tool call: ${action.toolCallId ?? 'host review'}`, `Content digest: ${permission.digest}`, `Expires: ${new Date(permission.expiresAt).toLocaleTimeString()}`] : [])]});
+          if (choice === 'details') { details = !details;if(details)await this.ui.page('Full action details',[...reviewLines(action),`Session: ${action.sessionId}`,`Tool call: ${action.toolCallId??'host review'}`,`Content digest: ${permission.digest}`,`Expires: ${new Date(permission.expiresAt).toLocaleTimeString()}`]);continue; }
           return choice === 'allow' && Date.now() < permission.expiresAt;
         }
       } finally {
+        clearTimeout(expiry);
         if (attached) {
           try{this.ui.stop();}catch{this.record({phase:'terminal_restoration',code:'terminal_restore_failed'});}
           if (this.attached && !this.ui.terminated) {
             this.ui.input.setRawMode(true); this.ui.input.resume(); this.ui.input.on('data',this.onData);
-            this.reviewing = false; this.resize(true);
+            this.ui.output.write(this.modes?.restore()??'');this.reviewing = false; this.resize(true);
           }
         }
         this.reviewing = false;
@@ -49,7 +57,7 @@ export class TerminalCoordinator {
     const captured=spawnSync('/bin/stty',['-g'],{stdio:[input,'pipe','ignore'],encoding:'utf8',timeout:1000});
     const terminalState=captured.status===0?captured.stdout.trim():undefined;
     if(!terminalState||!/^[A-Za-z0-9_=;:-]+$/.test(terminalState))throw new ClientError('terminal_state_unavailable');
-    this.attached = true;
+    this.attached = true;this.modes=new TerminalModes();
     this.child = spawn('python3',[fileURLToPath(new URL('./terminal-pty.py',import.meta.url))],{env:{PATH:'/opt/homebrew/bin:/usr/bin:/bin'},stdio:['pipe','pipe','ignore']});
     this.send({command:[executable,...args],environment,columns:Math.max(2,output.columns||80),rows:Math.max(2,output.rows||24)});
     this.onData=b=>{if(!this.reviewing)this.send({input:Buffer.from(b).toString('base64')});};
@@ -57,7 +65,7 @@ export class TerminalCoordinator {
     input.setRawMode(true);input.resume();input.on('data',this.onData);output.on('resize',resize);signal?.addEventListener('abort',abort,{once:true});
     try {
       await new Promise((resolve,reject)=>{
-        this.child.stdout.on('data',b=>{lines+=b;try{if(lines.length>262144)throw new ClientError('pty_frame_limit');let at;while((at=lines.indexOf('\n'))>=0){const frame=JSON.parse(lines.slice(0,at));lines=lines.slice(at+1);if(frame.output&&!this.reviewing)output.write(Buffer.from(frame.output,'base64'));if(Object.hasOwn(frame,'exitCode'))outcome=frame;}}catch(e){abort();reject(e);}});
+        this.child.stdout.on('data',b=>{lines+=b;try{if(lines.length>262144)throw new ClientError('pty_frame_limit');let at;while((at=lines.indexOf('\n'))>=0){const frame=JSON.parse(lines.slice(0,at));lines=lines.slice(at+1);if(frame.output){const bytes=Buffer.from(frame.output,'base64');this.modes.observe(bytes);if(!this.reviewing)output.write(bytes);}if(Object.hasOwn(frame,'exitCode'))outcome=frame;}}catch(e){abort();reject(e);}});
         this.child.once('error',()=>reject(new ClientError('guest_console_failed')));
         this.child.once('close',()=>{if(this.reviewing)this.ui.pending?.resolve(null);this.record({phase:'console',...outcome,...(outcome?.exitCode!==0?{code:signal?.aborted?'runtime_cancelled':'guest_console_cancelled'}:{})});if(outcome?.exitCode===0)resolve();else reject(Object.assign(new ClientError(signal?.aborted?'runtime_cancelled':'guest_console_cancelled'),outcome));});
         if(signal?.aborted)abort();
@@ -65,7 +73,7 @@ export class TerminalCoordinator {
     } catch(e) { primary=e; }
     finally {
       this.attached=false;if(this.reviewing){this.ui.pending?.resolve(null);await this.tail.catch(()=>{});}signal?.removeEventListener('abort',abort);input.removeListener('data',this.onData);output.removeListener('resize',resize);
-      try { input.setRawMode(raw);const restored=spawnSync('/bin/stty',[terminalState],{stdio:[input,'ignore','ignore'],timeout:1000});if(restored.status!==0)throw new ClientError('terminal_restore_failed');if(flowing!==true)input.pause();output.write('\x1b[0m\x1b[?25h');this.record({phase:'terminal_restoration',status:'succeeded'}); }
+      try { input.setRawMode(raw);const restored=spawnSync('/bin/stty',[terminalState],{stdio:[input,'ignore','ignore'],timeout:1000});if(restored.status!==0)throw new ClientError('terminal_restore_failed');if(flowing!==true)input.pause();output.write('\x1b[0m\x1b[?25h\x1b[?1000l\x1b[?1002l\x1b[?1003l\x1b[?1006l\x1b[?2004l\x1b[?1049l');this.record({phase:'terminal_restoration',status:'succeeded'}); }
       catch(e) { this.record({phase:'terminal_restoration',code:'terminal_restore_failed'});primary??=new ClientError('terminal_restore_failed'); }
       this.child=undefined;
     }

@@ -92,3 +92,61 @@ action. All 95 checks pass. Real PTY plain and fragmented bracketed directory
 paste, spaces, newline handling, numeric fields, default denial and terminal
 restoration pass; enhanced approval PTY still passes. Installation and final
 Ghostty project-path confirmation remain pending.
+
+
+# Plan: Provider and coding-agent acceptance fixes — 2 October 2026
+
+## Goal
+Resolve the operator's alpha.17 findings and prepare an immutable private alpha.18 acceptance installation.
+
+## Context
+The operator confirmed automatic read, Deny, approved edit and command, eleven-minute idle, checkpoint saving and saved-context resume. Review and Apply failed. FD startup, terminal handoff, thinking controls and cost display need corrections. The operator explicitly waived npm login for this local live acceptance on 2 October; this is not standing publication policy.
+
+## Research Summary
+Source confirms missing bundled fd, export/host eligibility disagreement, legacy presence prompts, zero legacy USD display, hardcoded non-thinking listing capabilities and collapsed inference errors. Existing workspace/coding tests pass but miss the export disagreement. Fly, Pages, canonical GitHub branches/access and linked Supabase metadata access passed; Router rulesets API reports an account-plan limitation.
+
+## Constraints
+Preserve unrelated operator edits, all prior artifacts/identities/checkpoints, Pages, access/spending bounds and unresolved liabilities. No credential or checkpoint-content inspection, migrations, database reset, inference replay, publication or promotion. Source/runtime generation uses checked-in helpers and pinned committed inputs.
+
+## Out of Scope
+USD/devnet settlement, legacy-client changes, public access and unrelated refactoring.
+
+## Reversibility
+Use clean isolated source commits and a new private version. Preserve old installations and the recovery image. Switch the launcher only after installed VM/PTY acceptance.
+
+## Step A: Scoped implementation
+### Status
+`review`
+### Tasks
+- [ ] Bundle pinned fd and bound startup/build retrieval.
+- [ ] Share workspace eligibility and contextual action diffs.
+- [ ] Pin selected details; restore guest terminal modes and redraw.
+- [ ] Add provider thinking controls and render-only credit/error displays.
+- [ ] Remove marketplace presence prompts; wire provider stop shortcuts.
+### Acceptance Criteria
+- [ ] Explicit approvals, accepted session bindings, cancellation and no-replay invariants remain intact.
+- [ ] No unrelated tracked/untracked work enters the release inputs.
+### Validation Results
+Not run for these changes.
+
+## Step B: Final verification and cleanup
+### Status
+`todo`
+### Tasks
+- [ ] Run owning-project source, contract, authentication and runtime checks.
+- [ ] Freeze clean commits and verify exact private artifact/provenance and installed native VM/PTY behavior.
+- [ ] Preserve Pages and drain/replace the sole Router staging Machine if required.
+- [ ] Record individual operator gates; live Review and Apply and thinking qualification remain pending until observed.
+### Acceptance Criteria
+- [ ] Reviewed host application succeeds; exclusions and conflicts do not damage originals.
+- [ ] Native terminal controls survive approvals, Continue, resume and resize.
+- [ ] Independent cleanup/accounting outcomes remain truthful.
+### Validation Results
+Not run for these changes.
+
+## Follow-up Work
+Operator-only guest key entry and final real-provider Review and Apply/thinking rerun after synthetic preparation.
+
+## Decision Log
+- 2 October: credits now, USD deferred; terminal background for tool output; provider thinking opt-in and buyer thinking initially off.
+- 2 October: preserve the historical undetermined incident, 6 charged / 94 refunded / zero reservation and USD 0.002075 liability.

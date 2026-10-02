@@ -13,7 +13,7 @@ export const providerStatusLines = (s, now = Date.now()) => [s.stopped ? 'Provid
   `VM: ${s.stopped ? s.teardownVerified === false ? 'teardown unverified' : s.teardownVerified === true ? 'not running' : 'stopping' : s.guestReady ? 'ready' : 'starting'}`,
   `Backend: ${s.stopped ? 'offline' : s.relayReady && s.relayLeaseUntil > now ? 'Hot · ready' : s.firstFailure ? 'reconnecting' : 'awaiting relay confirmation'}`,
   ...(s.stopTrigger ? [`Stopped: ${words(s.stopTrigger.trigger)}`] : ['Refresh the listing to read backend readiness.'])];
-const item = (value, label, detail = '', disabled = false) => ({ value, label, detail, disabled });
+const item = (value, label, detail = '', disabled = false) => ({ value, label, detail:Array.isArray(detail)?detail.join(' '):detail, details:Array.isArray(detail)?detail:undefined, disabled });
 const required = value => value.trim() ? '' : 'Please enter a value.';
 const integer = (min, max) => value => /^(0|[1-9][0-9]*)$/.test(value) && Number.isSafeInteger(Number(value)) && Number(value) >= min && Number(value) <= max ? '' : `Enter a whole number from ${min} to ${max}.`;
 const date = value => typeof value === 'number' ? new Date(value).toLocaleString() : '—';
@@ -93,6 +93,7 @@ export const providerFields = [
   { name: 'endpoint', label: 'API endpoint', maxLength: 2048, validate: value => { try { const u = new URL(value); return u.username || u.password || u.search || u.hash || !['https:', 'http:'].includes(u.protocol) ? 'Use an endpoint URL with no credentials, query or fragment.' : ''; } catch { return 'Enter a valid API endpoint URL.'; } }, help: 'Public endpoint metadata only. Never paste an API key here.' },
   { name: 'supplyClass', label: 'Supply type', choices: ['authorized_api', 'self_hosted'], default: 'authorized_api', help: 'Authorized API capacity or your own inference engine. Subscription supply is excluded.' },
   { name: 'availability', label: 'Availability', choices: ['hot', 'cold'], default: 'hot', help: 'Hot warms a VM now. Cold keeps control online; you have 120 seconds to activate after a reservation.' },
+  { name: 'thinking', label: 'Thinking support', choices: ['off','supported'], default:'off', help:'Advertise supported thinking only for a compatible upstream connector. Buyers start with thinking off.' },
   { name: 'inputRate', label: 'Input test credits / 1M', default: '1000', validate: integer(0, 999999999), help: 'Editable marketplace test-credit price; this is not your upstream USD cost.' },
   { name: 'outputRate', label: 'Output test credits / 1M', default: '1000', validate: integer(0, 999999999), help: 'Editable marketplace test-credit price; no cash settlement.' },
 ];
@@ -186,7 +187,7 @@ export async function runTui(options = {}, dependencies = {}) {
       if (currentProviderId === node.id) ui.pending?.resolve('refresh');
       if (ui.screen?.title?.startsWith('Provider operation')) ui.pending?.redraw?.();
     });
-    await ui.page(() => result.status.cleanupRequired ? 'Provider operation needs cleanup' : result.status.stopped ? 'Provider operation stopped' : 'Provider operation started', () => providerStatusLines(result.status));
+    await ui.page(() => result.status.cleanupRequired ? 'Provider operation needs cleanup' : result.status.stopped ? 'Provider operation stopped' : 'Provider operation started', () => providerStatusLines(result.status),{footer:'Enter Continue · Esc / Ctrl+C Stop provider VM',onCancel:()=>result.status.stopped?undefined:result.stop()});
   }
   async function createListing() {
     actor('provider');
@@ -198,11 +199,12 @@ export async function runTui(options = {}, dependencies = {}) {
     let draft = savedDraft ?? (preset === 'deepseek' ? { name: 'DeepSeek Flash - hot compute', model: 'deepseek-flash', endpoint: 'https://api.deepseek.com/chat/completions', supplyClass: 'authorized_api' } : { supplyClass: preset === 'self' ? 'self_hosted' : 'authorized_api' });
     setupDrafts.set(draftKey, draft);
     for (;;) {
+      draft.thinking??=draft.capabilities?.includes('thinking_v1')?'supported':'off';
       const edited = await ui.form('List compute · 2 of 3', providerFields, draft, 'Defaults are editable. Only public listing metadata is submitted.');
       if (!edited) return;
-      Object.assign(draft, edited);draft.capabilities=['coding_v1','streaming_v1','tools_v1'];draft.contextWindowTokens=32768;
+      const {thinking,...metadata}=edited;delete draft.thinking;Object.assign(draft,metadata);draft.capabilities=['coding_v1','streaming_v1','tools_v1',...(thinking==='supported'?['thinking_v1']:[])];draft.contextWindowTokens=32768;
       if (!MarketplaceDraft(draft)) { await ui.page('Check listing fields', ['Use printable metadata and integer test-credit prices.']); continue; }
-      const decision = await ui.menu('List compute · 3 of 3', [item('edit', 'Edit details'), item('create', 'Create draft and configure provider'), item('cancel', 'Cancel')], { lines: [draft.name, `${draft.model} · ${draft.availability}`, draft.endpoint, `Supply: ${words(draft.supplyClass)}`, `Input ${draft.inputRate} / output ${draft.outputRate} test credits per 1M tokens`, '', 'Publish your listing and qualify its current tariff before your private evaluation.'] });
+      const decision = await ui.menu('List compute · 3 of 3', [item('edit', 'Edit details'), item('create', 'Create draft and configure provider'), item('cancel', 'Cancel')], { lines: [draft.name, `${draft.model} · ${draft.availability}`, draft.endpoint, `Thinking: ${draft.capabilities.includes('thinking_v1')?'supported (buyer opt-in)':'off'}`, `Supply: ${words(draft.supplyClass)}`, `Input ${draft.inputRate} / output ${draft.outputRate} test credits per 1M tokens`, '', 'Publish your listing and qualify its current tariff before your private evaluation.'] });
       if (decision === 'edit') continue;
       if (decision !== 'create') return;
       const node = await post('/providers/nodes', draft);
@@ -264,12 +266,20 @@ export async function runTui(options = {}, dependencies = {}) {
         item('launch', node.availability === 'cold' ? 'Start cold control' : 'Launch hot VM', 'Keep this TUI open while providing.', providersRunning.has(node.id)),
         ...(providersRunning.get(node.id)?.status.activation.length ? [item('activate', 'Activate reserved buyer session', 'Launch the VM and enter the key before the 120-second deadline.')] : []),
         item('publish', 'Publish listing', 'Exposes listing metadata as a new immutable revision.', node.suspended),
+        item('thinking','Configure thinking support','Stop serving and pause before changing capabilities.'),
         item('pause', 'Pause listing'), item('stop', 'Stop serving and close sessions'),
         ...(node.status === 'paused' ? [item('delete', 'Delete paused listing', providersRunning.has(node.id) ? 'Stop serving in this terminal first.' : 'Permanent removal requires finished sessions and settlement. Receipts remain available.', providersRunning.has(node.id))] : []),
         item('refresh', 'Refresh status'), item('back', 'Back'),
-      ], { lines: [`Model: ${node.model}`, `Suspended: ${node.suspended ? 'yes' : 'no'} · Listing: ${node.status}`, `VM: ${providersRunning.get(node.id)?.status.guestReady ? 'ready' : 'not running'}`, `Backend: ${node.ready && Number(node.leaseUntil)>Date.now() && providersRunning.get(node.id)?.status.guestReady && providersRunning.get(node.id)?.status.relayReady ? 'Hot · Ready' : node.availability === 'cold' && Number(node.leaseUntil) > Date.now() ? 'cold · control online' : 'offline'}`, `Activity: ${providersRunning.get(node.id)?.status.calls??0} dispatched requests`, `Remaining upstream authority: ${formatUsd(exposure.remainingMicrousd)}`, `Outstanding exposure: ${formatUsd(exposure.outstandingMicrousd)}`, `Listing reference: ${node.id}`] });
+      ], { lines: [`Model: ${node.model}`, `Suspended: ${node.suspended ? 'yes' : 'no'} · Listing: ${node.status}`, `VM: ${providersRunning.get(node.id)?.status.guestReady ? 'ready' : 'not running'}`, `Backend: ${node.ready && Number(node.leaseUntil)>Date.now() && providersRunning.get(node.id)?.status.guestReady && providersRunning.get(node.id)?.status.relayReady ? 'Hot · Ready' : node.availability === 'cold' && Number(node.leaseUntil) > Date.now() ? 'cold · control online' : 'offline'}`, `Activity: ${providersRunning.get(node.id)?.status.calls??0} dispatched requests`, `Remaining upstream authority: ${formatUsd(exposure.remainingMicrousd)}`, `Outstanding exposure: ${formatUsd(exposure.outstandingMicrousd)}`, `Provider: ${node.id}`,`Listing: ${node.listingId??'not published'}`,`Session: ${node.activeSessionId??'none'}`,`Thinking: ${node.capabilities?.includes('thinking_v1')?'supported':'off'}`],footer:providersRunning.has(node.id)?'↑↓ Move  Enter Choose  Esc / Ctrl+C Stop provider VM':'↑↓ Move  Enter Choose  Esc Back' });
       currentProviderId = undefined; created = false;
+      if(!selection&&providersRunning.has(node.id)){await providersRunning.get(node.id).stop();providersRunning.delete(node.id);continue;}
       if (!selection || selection === 'back') return;
+      if(selection==='thinking'){
+        if(providersRunning.has(node.id)||!['draft','paused'].includes(node.status)||node.ready||Number(node.providerRunLeaseUntil)>Date.now()){await ui.page('Stop serving first',['Stop the provider run and pause the listing before changing thinking support.']);continue;}
+        const edited=await ui.form('Thinking support',[{name:'thinking',label:'Thinking support',choices:['off','supported']}],{thinking:node.capabilities?.includes('thinking_v1')?'supported':'off'},'Buyers start with thinking off. Enabling support requires a compatible upstream; publish a new revision explicitly afterward.');
+        if(edited)await attempt(()=>post(`/providers/nodes/${node.id}/capabilities`,{thinkingEnabled:edited.thinking==='supported'}));
+        continue;
+      }
       if (selection === 'delete') {
         if (node.status !== 'paused' || providersRunning.has(node.id)) { await ui.page('Stop serving first', ['Pause the listing and stop its running provider before deletion.']); continue; }
         const confirmed = await ui.menu('Delete paused listing?', [item(false, 'Cancel'), item(true, 'Delete permanently')], { lines: [node.name, 'This listing will disappear permanently from My provider listings and cannot be republished.', 'Existing receipts and accounting history remain available.', 'Unfinished sessions or settlement block deletion.'] }) === true;
@@ -303,7 +313,7 @@ export async function runTui(options = {}, dependencies = {}) {
     actor('provider');
     for (;;) {
       const nodes = await get('/providers/nodes');
-      const selected = await ui.menu('My provider listings', [...nodes.map(n => item(n.id, `${n.name} · ${n.suspended ? 'suspended · ' : ''}${n.status}`)), item('new', '+ List new compute'), item('back', 'Back')], { subtitle: nodes.length ? 'Select a listing to launch, publish, pause or stop.' : 'You have no listings yet.' });
+      const selected = await ui.menu('My provider listings', [...nodes.map(n => item(n.id, `${n.name} · ${n.suspended ? 'suspended · ' : ''}${n.status}`,[`Provider: ${n.id}`,`Listing: ${n.listingId??'not published'}`,`Session: ${n.activeSessionId??'none'}`,`${n.model} · Thinking ${n.capabilities?.includes('thinking_v1')?'supported':'off'}`,`Input ${n.inputRate} / output ${n.outputRate} test credits per 1M tokens`])), item('new', '+ List new compute'), item('back', 'Back')], { subtitle: nodes.length ? 'Select a listing to launch, publish, pause or stop.' : 'You have no listings yet.' });
       if (!selected || selected === 'back') return;
       await attempt(() => selected === 'new' ? createListing() : manageNode(selected));
     }
@@ -339,7 +349,7 @@ export async function runTui(options = {}, dependencies = {}) {
       for (const [key, value] of Object.entries(filters)) if (value && value !== 'any') query.set(key, value);
       if (cursor) query.set('after', cursor);
       const result = await get(`/listings?${query}`, true);
-      const selection = await ui.menu('Browse available compute', [item('filters', 'Search and filters'), ...result.listings.map(l => item(l.id, `${l.name} · ${l.ready ? 'ready' : 'offline'}`, `${l.model} · ${l.inputRate}/${l.outputRate} test credits per 1M tokens`)), ...(result.nextCursor ? [item('next', 'Next page')] : []), item('refresh', 'Refresh from first page'), item('back', 'Back')], { subtitle: result.listings.length ? 'Select compute to inspect its price and reserve access.' : 'No published listings match. Try changing filters or return after a provider publishes.' });
+      const selection = await ui.menu('Browse available compute', [item('filters', 'Search and filters'), ...result.listings.map(l => item(l.id, `${l.name} · ${l.ready ? 'ready' : 'offline'}`, [`Listing: ${l.id}`,`Provider: ${l.nodeId}`,`${l.model} · ${l.inputRate}/${l.outputRate} test credits per 1M tokens`,`Thinking: ${l.capabilities?.includes('thinking_v1')?'supported':'off'}`])), ...(result.nextCursor ? [item('next', 'Next page')] : []), item('refresh', 'Refresh from first page'), item('back', 'Back')], { subtitle: result.listings.length ? 'Select compute to inspect its price and reserve access.' : 'No published listings match. Try changing filters or return after a provider publishes.' });
       if (!selection || selection === 'back') return;
       if (selection === 'filters') { const edited = await ui.form('Compute filters', [{ name: 'model', label: 'Model contains', help: 'Leave blank for every model.' }, { name: 'supplyClass', label: 'Supply', choices: ['any', 'authorized_api', 'self_hosted'] }, { name: 'availability', label: 'Availability', choices: ['any', 'hot', 'cold'] }], filters); if (edited) filters = edited; cursor = undefined; }
       else if (selection === 'next') cursor = result.nextCursor;
@@ -426,7 +436,7 @@ export async function runTui(options = {}, dependencies = {}) {
             const result=await buyer[action==='recover'?'recover':action](...(action==='recover'?[interrupted]:[]));
             if(result.status==='interrupted'){interrupted=result.journal;location='Host application encountered a conflict; saved VM work is preserved.';}
             if(result.status==='applied'){interrupted=undefined;location='Reviewed changes applied to the host; checkpoint saved privately.';}
-            await ui.page('Workspace result',[result.status??'exported',location,...(result.directory?[result.directory]:[]),...(result.completed??[])]);
+            await ui.page('Workspace result',[result.status??'exported',location,...(result.directory?[result.directory]:[]),...(result.completed??[]),...(result.excluded?[`Excluded generated/private/ignored files: ${Object.values(result.excluded).reduce((a,b)=>a+b,0)}`]:[])]);
           }catch(e){await ui.page('Workspace remains available',[...errorLines(e),location]);}
           continue;
         }
@@ -463,7 +473,7 @@ export async function runTui(options = {}, dependencies = {}) {
   async function sessions() {
     actor('buyer');
     const values = await get('/sessions');
-    const choice = await ui.menu('My sessions', [...values.map(s => item(s.id, `${words(s.state)} · ${s.charged}/${s.funded} credits · ${s.id.slice(0, 8)}`)), item('back', 'Back')], { subtitle: values.length ? 'Inspect, recover status or stop a session.' : 'No sessions yet. Browse compute to get a quote.' });
+    const choice = await ui.menu('My sessions', [...values.map(s => item(s.id, `${words(s.state)} · ${s.charged}/${s.funded} credits · ${s.id.slice(0, 8)}`,[`Session: ${s.id}`,`Listing: ${s.listingId}`,`State: ${words(s.state)} · Charged ${s.charged} test credits`,`Expires: ${date(s.expiresAt)}`])), item('back', 'Back')], { subtitle: values.length ? 'Inspect, recover status or stop a session.' : 'No sessions yet. Browse compute to get a quote.' });
     if (choice && choice !== 'back') await sessionDetail(choice);
   }
   async function receipts() {

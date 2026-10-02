@@ -21,6 +21,7 @@ let dispatches=0,approvals=0,stops=0,statusUnavailable=false;
 let session={id,protocol:'coding_v1',mode:'private_rehearsal',state:'ready',handshakeStatus:'succeeded',expiresAt:Date.now()+3600000,requestLimit:100,requestSequence:0,maxOutputTokens:1024,contextWindowTokens:32768,listingId:randomUUID(),listingRevision:1,model:'synthetic'};
 const call=(id,name,args)=>({id,type:'function',function:{name,arguments:JSON.stringify(args)}});
 const network={request:async(path,options={})=>{
+  if(path.startsWith('/v2/listings/'))return {id:session.listingId,revision:session.listingRevision,model:session.model,inputRate:'1000',outputRate:'2000'};
   if(path.endsWith('/stop')){stops++;session.state='settled';return {...session};}
   if(path.endsWith('/inference')){
     dispatches++;session.requestSequence++;

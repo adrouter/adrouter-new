@@ -76,7 +76,7 @@ test('DeepSeek guided default submits valid metadata and resumes edits after can
       if(++formVisits===1){initial.name='Edited listing';return null;}
       assert.equal(initial.name,'Edited listing');
       const values=Object.fromEntries(fields.map(f=>[f.name,initial[f.name]??f.default??'']));
-      assert.equal(values.model,'deepseek-flash');assert.equal(MarketplaceDraft(values),true);return values;
+      assert.equal(values.model,'deepseek-flash');const {thinking,...metadata}=values;assert.equal(thinking,'off');assert.equal(MarketplaceDraft(metadata),true);return values;
     }
   };
   const network={local:true,origin:'http://127.0.0.1:8790',request:async(path,options)=>{

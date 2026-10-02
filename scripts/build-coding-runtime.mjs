@@ -11,6 +11,13 @@ const output=resolve('coding-runtime');
 const work=await mkdtemp(join(tmpdir(),'adr-coding-source-'));
 const hash=b=>createHash('sha256').update(b).digest('hex');
 const run=(command,args)=>new Promise((resolveRun,reject)=>{const p=spawn(command,args,{cwd:work,env:{PATH:process.env.PATH,HOME:work,TMPDIR:work,CI:'true'},stdio:'inherit'});p.once('error',reject);p.once('exit',n=>n===0?resolveRun():reject(Error('coding_build_failed')));});
+async function download(url) {
+  const response=await fetch(url,{signal:AbortSignal.timeout(30000),redirect:'follow'});
+  if(!response.ok)throw Error('coding_tool_download_failed');
+  const chunks=[];let length=0;
+  for await(const chunk of response.body){length+=chunk.length;if(length>32*1024*1024)throw Error('coding_tool_download_limit');chunks.push(chunk);}
+  return Buffer.concat(chunks);
+}
 try {
   const archive=execFileSync('git',['-C',source,'archive',revision],{maxBuffer:128*1024*1024});
   const file=join(work,'source.tar');await writeFile(file,archive);execFileSync('/usr/bin/tar',['-xf',file,'-C',work]);await rm(file);
@@ -40,6 +47,14 @@ try {
   await patch('packages/coding-agent/src/core/slash-commands.ts','\t{\n\t\tname: "ads",\n\t\tdescription: "Show or change AdRouter sponsorship preference",\n\t\targumentHint: "[status|on|off]",\n\t},\n','');
   await patch('packages/coding-agent/src/core/slash-commands.ts','\t{ name: "login", description: "Configure provider authentication", argumentHint: "<provider>" },\n','');
   await patch('packages/coding-agent/src/core/slash-commands.ts','\t{ name: "logout", description: "Remove provider authentication" },\n','');
+  await patch('packages/agent/src/presence.ts','public start(taskId: string = globalThis.crypto.randomUUID()): void {','public start(taskId: string = globalThis.crypto.randomUUID()): void { if ((globalThis as any).__adrCodingBridge) { this.stop(); return; }');
+  await patch('packages/coding-agent/src/utils/tools-manager.ts','export async function ensureTool(tool: "fd" | "rg", silent: boolean = false): Promise<string | undefined> {','export async function ensureTool(tool: "fd" | "rg", silent: boolean = false): Promise<string | undefined> { if ((globalThis as any).__adrCodingBridge) { const path = getToolPath(tool); if (!path) throw new Error("marketplace_tool_missing:" + tool); return path; }');
+  await patch('packages/coding-agent/src/modes/interactive/components/custom-editor.ts','private renderCostStatus(meta: EditorMetadata, width: number): string {','private renderCostStatus(meta: EditorMetadata, width: number): string { if ((globalThis as any).__adrCodingBridge) return truncateToWidth((globalThis as any).__adrCodingDisplay?.label ?? "Listing cost unavailable", width, "…");');
+  await patch('packages/coding-agent/src/modes/interactive/interactive-mode.ts','if (stats.cost > 0 || cacheWaste.missedTokens > 0) {','if ((globalThis as any).__adrCodingBridge) { const value=(globalThis as any).__adrCodingDisplay; info += "\\n" + (value ? value.label + " · " + value.rates : "Listing cost unavailable"); }\n\t\tif (!(globalThis as any).__adrCodingBridge && (stats.cost > 0 || cacheWaste.missedTokens > 0)) {');
+  await patch('packages/coding-agent/src/modes/interactive/theme/dark.json','"toolPendingBg": "#282832"','"toolPendingBg": ""');
+  await patch('packages/coding-agent/src/modes/interactive/theme/dark.json','"toolSuccessBg": "#283228"','"toolSuccessBg": ""');
+  await patch('packages/coding-agent/src/modes/interactive/theme/dark.json','"toolErrorBg": "#3c2828"','"toolErrorBg": ""');
+  {const path='packages/coding-agent/src/modes/interactive/theme/light.json';const before=await readFile(join(work,path),'utf8');const theme=JSON.parse(before);for(const key of ['toolPendingBg','toolSuccessBg','toolErrorBg'])theme.vars[key]='';await patch(path,before,JSON.stringify(theme,null,2)+'\n');}
   await run('npm',['ci','--ignore-scripts','--no-audit','--no-fund']);
   await run('npm',['run','build']);
   if(process.argv.includes('--verify')) {
@@ -62,15 +77,23 @@ try {
   }
   await cp(join(work,'LICENSE'),join(output,'LICENSE'));
   for(const f of ['THIRD_PARTY_NOTICES.md','BUNDLED_SOURCES.json'])await cp(join(work,'packages/coding-agent',f),join(output,f));
-  await mkdir(join(output,'guest'));for(const f of ['coding-entry.mjs','coding-provider.mjs','coding-controls.mjs'])await cp(resolve('src/guest',f),join(output,'guest',f));
+  await mkdir(join(output,'guest'));for(const f of ['coding-entry.mjs','coding-provider.mjs','coding-controls.mjs','workspace-snapshot.mjs','coding-preview.mjs'])await cp(resolve('src/guest',f),join(output,'guest',f));
+  for(const file of ['workspace-policy.mjs','coding-display.mjs'])await cp(resolve('src',file),join(output,file));
+  await cp(resolve('node_modules/ignore'),join(output,'node_modules/ignore'),{recursive:true,dereference:true});
   await cp(resolve('src/coding-wire.mjs'),join(output,'guest/coding-wire.mjs'));
   // Ripgrep is part of the development payload, pinned independently of the
   // base image. Verify the upstream release digest before extracting any byte.
   for(const [arch,target,digest] of [['arm64','aarch64-unknown-linux-gnu','2b661c6ef508e902f388e9098d9c4c5aca72c87b55922d94abdba830b4dc885e'],['x64','x86_64-unknown-linux-musl','1c9297be4a084eea7ecaedf93eb03d058d6faae29bbc57ecdaf5063921491599']]) {
     const name=`ripgrep-15.1.0-${target}`,url=`https://github.com/BurntSushi/ripgrep/releases/download/15.1.0/${name}.tar.gz`;
-    const response=await fetch(url);if(!response.ok)throw Error('ripgrep_download_failed');const bytes=Buffer.from(await response.arrayBuffer());if(hash(bytes)!==digest)throw Error('ripgrep_digest_mismatch');
+    const bytes=await download(url);if(hash(bytes)!==digest)throw Error('ripgrep_digest_mismatch');
     const archive=join(work,`${arch}.tar.gz`);await writeFile(archive,bytes);await mkdir(join(output,'tools',arch),{recursive:true});
     for(const file of ['rg','LICENSE-MIT']){const data=execFileSync('/usr/bin/tar',['-xOzf',archive,`${name}/${file}`],{maxBuffer:16*1024*1024});await writeFile(join(output,'tools',arch,file),data,{mode:file==='rg'?0o700:0o600});}
+  }
+  for(const [arch,target,digest] of [['arm64','aarch64-unknown-linux-gnu','66f297e404400a3358e9a0c0b2f3f4725956e7e4435427a9ae56e22adbe73a68'],['x64','x86_64-unknown-linux-musl','2b6bfaae8c48f12050813c2ffe1884c61ea26e750d803df9c9114550a314cd14']]) {
+    const name=`fd-v10.3.0-${target}`,bytes=await download(`https://github.com/sharkdp/fd/releases/download/v10.3.0/${name}.tar.gz`);
+    if(hash(bytes)!==digest)throw Error('fd_digest_mismatch');
+    const archive=join(work,`fd-${arch}.tar.gz`);await writeFile(archive,bytes);
+    for(const file of ['fd','LICENSE-MIT','LICENSE-APACHE']) {const data=execFileSync('/usr/bin/tar',['-xOzf',archive,`${name}/${file}`],{maxBuffer:16*1024*1024});await writeFile(join(output,'tools',arch,file==='fd'?file:'fd-'+file),data,{mode:file==='fd'?0o700:0o600});}
   }
   const files={};const walk=async(dir='')=>{for(const e of await readdir(join(output,dir),{withFileTypes:true})){const p=dir?`${dir}/${e.name}`:e.name;if(e.name==='.npmignore'){await rm(join(output,p));continue;}if(e.isDirectory())await walk(p);else if(e.isFile())files[p]=hash(await readFile(join(output,p)));else throw Error('coding_payload_link_rejected');}};await walk();
   const metadata={schemaVersion:1,repository:'https://github.com/adrouter/adrouterCLI',revision,archiveSha256:hash(archive),adaptations,prunedMetadata:['**/.npmignore'],files};

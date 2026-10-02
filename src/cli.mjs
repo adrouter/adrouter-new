@@ -5,7 +5,7 @@ import { ask, choose, render } from './terminal.mjs';
 import { SandboxRuntime } from './runtime.mjs';
 
 const booleanOptions = new Set(['json', 'local', 'accept', 'help', 'no-key', 'operator', 'private-rehearsal', 'acknowledge-provisional', 'bounded','coding','trust','confirm-delete']);
-const valueOptions = new Set(['profile', 'network', 'actor', 'name', 'model', 'endpoint', 'supply', 'availability', 'input-rate', 'output-rate', 'budget', 'max-output', 'duration', 'after', 'idempotency-key', 'review', 'user', 'amount', 'max-calls','workspace','mode','resume','prompt','context-window']);
+const valueOptions = new Set(['profile', 'network', 'actor', 'name', 'model', 'endpoint', 'supply', 'availability', 'input-rate', 'output-rate', 'budget', 'max-output', 'duration', 'after', 'idempotency-key', 'review', 'user', 'amount', 'max-calls','workspace','mode','resume','prompt','context-window','thinking']);
 export function parseArgs(args) {
   const options = {}; const words = [];
   for (let i = 0; i < args.length; i++) {
@@ -28,11 +28,13 @@ export const usage = `adr-cli — adr-v2 compute marketplace (test credits, no c
   connect LISTING_ID --budget UNITS [--accept]
   sessions | session inspect|resume|stop SESSION_ID | receipts
   provider create | listings | inspect NODE_ID | publish NODE_ID | pause NODE_ID | stop NODE_ID | serve NODE_ID
+  provider capabilities NODE_ID --thinking off|supported
   provider delete NODE_ID --confirm-delete
   doctor
 
 Provider create flags: --name --model --endpoint --supply
   --availability hot|cold --input-rate UNITS --output-rate UNITS
+  --coding --thinking off|supported (buyer thinking starts off)
 Public metadata only. Never put an API key in flags, a URL or listing text.
 Provider serving: provider serve NODE_ID --max-output 1024
   Hot listings serve continuously in the foreground; --bounded retains evaluation limits.
@@ -54,7 +56,9 @@ async function draft(options, json) {
     else if (json || !process.stdin.isTTY) { if (fallback) values[name] = fallback; else throw new ClientError(`missing_${name.replaceAll('-', '_')}`); }
     else values[name] = await ask(label, fallback);
   }
-  return { name: values.name, model: values.model, endpoint: values.endpoint, supplyClass: values.supply, availability: values.availability, inputRate: values['input-rate'], outputRate: values['output-rate'],...(options.coding?{capabilities:['coding_v1','streaming_v1','tools_v1'],contextWindowTokens:Number(options['context-window']??32768)}:{}) };
+  if(options.thinking!==undefined&&!['off','supported'].includes(options.thinking))throw new ClientError('invalid_thinking_setting');
+  if(options.thinking==='supported'&&!options.coding)throw new ClientError('thinking_requires_coding');
+  return { name: values.name, model: values.model, endpoint: values.endpoint, supplyClass: values.supply, availability: values.availability, inputRate: values['input-rate'], outputRate: values['output-rate'],...(options.coding?{capabilities:['coding_v1','streaming_v1','tools_v1',...(options.thinking==='supported'?['thinking_v1']:[])],contextWindowTokens:Number(options['context-window']??32768)}:{}) };
 }
 export async function run(args, dependencies = {}) {
   const { words, options: o } = parseArgs(args); const json = !!o.json;
@@ -122,6 +126,7 @@ export async function run(args, dependencies = {}) {
     } else throw new ClientError('unknown_command');
   } else if (command === 'provider') {
     if (sub === 'create') output(await post('/providers/nodes', await draft(o, json)));
+    else if (sub === 'capabilities') {if(!['off','supported'].includes(o.thinking))throw new ClientError('invalid_thinking_setting');output(await post(`/providers/nodes/${requireId(id)}/capabilities`,{thinkingEnabled:o.thinking==='supported'}));}
     else if (sub === 'listings') output(await get('/providers/nodes'));
     else if (sub === 'inspect') output(await get(`/providers/nodes/${requireId(id)}`));
     else if (['publish', 'pause', 'stop'].includes(sub)) output(await post(`/providers/nodes/${requireId(id)}/${sub}`, sub === 'stop' ? {scope:'node',trigger:'operator_stop'} : {}));

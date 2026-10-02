@@ -19,10 +19,10 @@ export function wrapText(value, width) {
 }
 
 // All untrusted labels and values are plain text. Only this renderer emits ANSI.
-export function renderScreen({ title, subtitle = '', lines = [], focus = 0, footer = '', context = '', sidebar = [] }, columns = 80, rows = 24, color = true) {
+export function renderScreen({ title, subtitle = '', lines = [], details = [], focus = 0, footer = '', context = '', sidebar = [] }, columns = 80, rows = 24, color = true) {
   if(sidebar.length && columns>=112 && !title.toLowerCase().includes('approv')) {
     const sideWidth=30,leftWidth=columns-sideWidth-3;
-    const left=renderScreen({title,subtitle,lines,focus,footer,context},leftWidth,rows,color).split('\r\n');
+    const left=renderScreen({title,subtitle,lines,details,focus,footer,context},leftWidth,rows,color).split('\r\n');
     return left.map((line,i)=>{const visible=line.replace(/\x1b\[[0-9;]*m/g,'').length;return line+' '.repeat(Math.max(1,leftWidth-visible))+'│ '+clip(sidebar[i]??'',sideWidth);}).join('\r\n');
   }
   const width = Math.max(1, columns - 2); const height = Math.max(1, rows - 1);
@@ -38,15 +38,18 @@ export function renderScreen({ title, subtitle = '', lines = [], focus = 0, foot
   result.push('');
   // A compact header must leave room to interact even after a terminal resize.
   while (result.length > Math.max(2, height - 5)) result.splice(0, 1);
-  const capacity = Math.max(1, height - result.length - 2);
+  const pinned=details.flatMap(v=>wrapText(v,width)).slice(0,Math.min(5,Math.max(0,height-result.length-3)));
+  const capacity = Math.max(1, height - result.length - 2 - pinned.length);
   const offset = Math.max(0, Math.min(Math.max(0, lines.length - capacity), focus - Math.floor(capacity / 2)));
   for (const [index, line] of lines.slice(offset, offset + capacity).entries()) {
     const text = typeof line === 'object' ? line.text : line;
     const selected = typeof line === 'object' && line.selected;
-    const rendered = clip(text, width);
+    let rendered = clip(text, width);
+    if(color && typeof line==='object' && ['added','removed','heading'].includes(line.kind)) rendered=`\x1b[${line.kind==='added'?'32':line.kind==='removed'?'31':'36'}m${rendered}\x1b[0m`;
     result.push(selected && color ? `\x1b[7m${rendered.padEnd(width)}\x1b[0m` : rendered);
   }
-  while (result.length < height - 2) result.push('');
+  while (result.length < height - 2 - pinned.length) result.push('');
+  result.push(...pinned);
   result.push(blue('─'.repeat(width)), clip(footer, width));
   return result.slice(0, height).join('\r\n');
 }
@@ -60,7 +63,7 @@ export class TerminalUI {
       this.pending?.key(text, key);
     };
   }
-  start() {
+  start({borrowScreen=false} = {}) {
     if(this.started)return;
     if (this.terminated) throw new ClientError('cancelled');
     if (!this.input.isTTY || !this.output.isTTY) throw new ClientError('interactive_terminal_required');
@@ -69,7 +72,7 @@ export class TerminalUI {
     this.releaseInput = terminalInput(this.input, this.onKey);
     this.input.setRawMode(true); this.input.resume();
     this.input.on('keypress', this.onKey); this.output.on('resize', this.resize);
-    this.output.write('\x1b[?1049h\x1b[?25l'); this.started = true;
+    this.borrowScreen=borrowScreen;this.output.write((borrowScreen?'':'\x1b[?1049h')+'\x1b[?25l\x1b[?1000l\x1b[?1002l\x1b[?1003l\x1b[?1006l\x1b[?2004l'); this.started = true;
   }
   stop() {
     if (!this.started) return;
@@ -81,7 +84,7 @@ export class TerminalUI {
     // Fresh stdin has readableFlowing=null, not isPaused=true. Leaving it
     // resumed after removing the UI listener keeps an otherwise finished CLI alive.
     if (this.wasPaused || this.wasFlowing !== true) this.input.pause();
-    this.output.write('\x1b[0m\x1b[?25h\x1b[?1049l'); this.started = false;if(restorationFailure)throw restorationFailure;
+    this.output.write('\x1b[0m\x1b[?25h'+(this.borrowScreen?'':'\x1b[?1049l')); this.started = false;if(restorationFailure)throw restorationFailure;
   }
   terminate() { this.terminated = true; this.stop(); }
   draw(screen) {
@@ -97,18 +100,18 @@ export class TerminalUI {
       draw();
     });
   }
-  async menu(title, options, { subtitle = '', lines = [] } = {}) {
+  async menu(title, options, { subtitle = '', lines = [], footer='↑↓ Move  Enter Choose  Type to filter  Esc Back  Ctrl+C Cancel' } = {}) {
     let selected = 0; let search = '';
     const items = options.map((item, index) => typeof item === 'string' ? { label: item, value: index } : item);
     const visible = () => fuzzyFilter(items, search, item => clean(`${item.label} ${item.detail ?? ''}`));
     const draw = () => {
       const choices = visible(); selected = Math.min(selected, Math.max(0, choices.length - 1));
-      const body = lines.flatMap(line => wrapText(line, Math.max(10, (this.output.columns || 80) - 2)));
+      const body = lines.flatMap(line => wrapText(typeof line==='object'?line.text:line, Math.max(10, (this.output.columns || 80) - 2)).map(text=>typeof line==='object'?{...line,text}:text));
       const start = body.length;
       choices.forEach((item, index) => body.push({ text: `${selected === index ? '›' : ' '} ${item.label}${item.disabled ? ' · unavailable' : ''}`, selected: selected === index }));
       if (!choices.length) body.push('No matching options. Backspace clears the search.');
-      body.push('', choices[selected]?.detail ?? '', search ? `Filter: ${search}` : '');
-      this.draw({ title, subtitle, lines: body, focus: start + selected, footer: '↑↓ Move  Enter Choose  Type to filter  Esc Back  Ctrl+C Cancel' });
+      if(search)body.push(`Filter: ${search}`);
+      this.draw({ title, subtitle, lines: body, focus: start + selected, details:choices[selected]?.details??(choices[selected]?.detail?[choices[selected].detail]:[]), footer });
     };
     return this.interact((text, key, finish) => {
       const choices = visible();
@@ -163,17 +166,17 @@ export class TerminalUI {
     finally { this.output.write('\x1b[?2004l'); remember(); }
     return result;
   }
-  async page(title, lines) {
+  async page(title, lines, {footer='↑↓ Scroll  Enter / Esc Back',onCancel} = {}) {
     let offset = 0;
-    const draw = () => this.draw({ title: typeof title === 'function' ? title() : title, lines: (typeof lines === 'function' ? lines() : lines).flatMap(line => wrapText(line, Math.max(10, (this.output.columns || 80) - 2))), focus: offset, footer: '↑↓ Scroll  Enter / Esc Back' });
+    const draw = () => this.draw({ title: typeof title === 'function' ? title() : title, lines: (typeof lines === 'function' ? lines() : lines).flatMap(line => wrapText(typeof line==='object'?line.text:line, Math.max(10, (this.output.columns || 80) - 2)).map(text=>typeof line==='object'?{...line,text}:text)), focus: offset, footer });
     const interaction = this.interact((_text, key, finish) => {
-      if (['return', 'escape'].includes(key.name)) { finish(true); return; }
+      if (['return', 'escape'].includes(key.name)) { finish(key.name==='escape'?null:true); return; }
       if (key.name === 'down' || key.name === 'pagedown') offset += key.name === 'pagedown' ? 10 : 1;
       if (key.name === 'up' || key.name === 'pageup') offset = Math.max(0, offset - (key.name === 'pageup' ? 10 : 1));
       draw();
     }, draw);
     if (this.pending) this.pending.redraw = draw;
-    return interaction;
+    return interaction.then(async value=>{if(value===null)await onCancel?.();return value;});
   }
   async task(title, work, { lines = [], cancel = false, onKey } = {}) {
     if (this.terminated) throw new ClientError('cancelled');
