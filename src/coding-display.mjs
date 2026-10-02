@@ -35,6 +35,12 @@ export function codingFooter(value,width=80) {
 }
 
 // Request metadata only, never an upstream response body or message.
+export function nativeFailureLines(failure) {
+  if(!failure?.provider||!failure?.model)return [];
+  const label=(value,pattern)=>String(value??'unknown').replace(pattern,'').slice(0,256)||'unknown';
+  return [`Provider ${label(failure.provider,/[^a-z0-9-]/gi)} / ${label(failure.model,/[^a-z0-9_@/:. -]/gi)}`,
+    `Native API ${label(failure.api,/[^a-z0-9-]/gi)} · maximum output ${Number.isSafeInteger(failure.maxOutputTokens)&&failure.maxOutputTokens>0?failure.maxOutputTokens:'unknown'} tokens`];
+}
 export function providerFailureLines(failure) {
   if(!failure)return [];
   const guidance={
@@ -46,7 +52,8 @@ export function providerFailureLines(failure) {
     429:'Check gateway rate and quota limits before another request.',
   };
   const status=failure.statusCode;
-  return [`Last upstream failure: ${failure.requestId}`,`HTTP ${status??'unavailable'} · ${failure.code} · ${new Date(failure.observedAt).toISOString()}`,
+  const native=nativeFailureLines(failure);
+  return [...native,`Last upstream failure: ${failure.requestId}`,`HTTP ${status??'unavailable'} · ${failure.code} · ${new Date(failure.observedAt).toISOString()}`,
     guidance[status]??(status>=500?'The gateway reported a server failure. Inspect its service status before another request.':status>=300&&status<400?'Redirects are not followed. Verify the exact approved endpoint.':inferenceErrorMessage(failure.code)),
     'No automatic retry or endpoint/model switch was made. Unknown usage stays unresolved.'];
 }

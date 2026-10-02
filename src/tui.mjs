@@ -1,6 +1,6 @@
 import { piCatalog } from './generated/pi-catalog.mjs';
 import { validateBinding } from './provider-broker.mjs';
-import { providerFailureLines } from './coding-display.mjs';
+import { nativeFailureLines, providerFailureLines } from './coding-display.mjs';
 import { connectorCatalog, resolveConnector, connectorReviewLines, CONNECTOR_PROTOCOL } from './connectors.mjs';
 import { ProviderActivityMonitor, providerActivityLines, providerConnectionLabel } from './provider-activity.mjs';
 import { recoverableStatusFailure } from './buyer-lifecycle.mjs';
@@ -277,7 +277,7 @@ export async function runTui(options = {}, dependencies = {}) {
       if(action!=='start'){await controller.stop();return;}
       await ui.task('Checking selected models',()=>controller.start());
       providersRunning.set(node.id,controller);void controller.done.then(()=>{if(providersRunning.get(node.id)===controller)providersRunning.delete(node.id);ui.pending?.redraw?.();});
-    }catch(error){await controller?.stop();await ui.page('Provider setup needs correction',[...errorLines(error),...(error.provider?[`${error.provider} / ${error.model} · HTTP ${error.statusCode??'unknown'} · ${error.code}`]:[]),'Your configuration is saved. Unknown checks retain their spending reservations.']);}
+    }catch(error){await controller?.stop();await ui.page('Provider setup needs correction',[...errorLines(error),...nativeFailureLines(error),...(error.provider?[`HTTP ${error.statusCode??'unknown'}`]:[]),'Your configuration is saved. Unknown checks retain their spending reservations.']);}
   }
   async function guidedProvider(node) {
     if(node.connectorProtocol==='pi_native_v1')return guidedNativeProvider(node);

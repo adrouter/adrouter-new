@@ -74,3 +74,13 @@ test('the discovered-read guard rejects private descendants and hard links synch
   }
  }finally{await rm(root,{recursive:true,force:true});}
 });
+
+test('native failure diagnostics include bound model and safe limits but exclude arbitrary upstream data',async()=>{const {providerFailureLines}=await import('../src/coding-display.mjs');const value=providerFailureLines({requestId:'fixture',provider:'deepseek',model:'deepseek-flash',api:'openai-completions',maxOutputTokens:512,statusCode:400,code:'upstream_parameter_rejected',observedAt:0,raw:'synthetic-secret-do-not-render',headers:{authorization:'synthetic-secret-do-not-render'}}).join('\n');assert.match(value,/deepseek-flash/);assert.match(value,/512 tokens/);assert.equal(value.includes('synthetic-secret-do-not-render'),false);});
+
+test('native setup diagnostics bound labels and remove terminal controls',async()=>{
+ const {nativeFailureLines}=await import('../src/coding-display.mjs');
+ const lines=nativeFailureLines({provider:'deep\nseek',model:'model\u001b\u0007'+ 'x'.repeat(1000),api:'openai\r-completions',maxOutputTokens:-1});
+ assert.equal(lines.some(line=>/[\x00-\x1f\x7f]/.test(line)),false);
+ assert.ok(lines[0].length<300);assert.match(lines[1],/maximum output unknown tokens/);
+ assert.deepEqual(nativeFailureLines({}),[]);
+});

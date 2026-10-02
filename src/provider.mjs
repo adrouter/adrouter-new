@@ -100,11 +100,11 @@ export async function startProvider(networkInput, nodeId, { prepareOnly = false,
         pending = undefined; lifecycle.event('request', { status: 'cancelled' });
       } else if (req.method === 'POST' && req.url === '/failed') {
         const result = JSON.parse(bytes);
-        if(result.scope==='request'&&pending?.qualification&&result.requestId===pending.id){const check=pending;pending=undefined;check.reject(Object.assign(new ClientError(result.code??'provider_outcome_unknown'),{provider:node.provider,model:check.binding.model,statusCode:check.upstreamStatus??null}));res.writeHead(200,{'content-type':'application/json'}).end('{"ok":true}');return;}
+        if(result.scope==='request'&&pending?.qualification&&result.requestId===pending.id){const check=pending;pending=undefined;check.reject(Object.assign(new ClientError(upstreamFailureCodes.includes(result.code)?result.code:'provider_outcome_unknown'),{provider:node.provider,model:check.binding.model,api:check.binding.api,maxOutputTokens:check.binding.maxOutputTokens,statusCode:check.upstreamStatus??null}));res.writeHead(200,{'content-type':'application/json'}).end('{"ok":true}');return;}
         if (result.scope === 'request' && pending && result.requestId === pending.id) {
           const frame = { type: 'request_failed', requestId: pending.id, sessionId: pending.binding.sessionId, bindingRevision: pending.binding.bindingRevision, sequence: pending.binding.sequence, code: upstreamFailureCodes.includes(result.code)?result.code:'provider_outcome_unknown' };
           if (!ProviderRequestFailure(frame)) throw Error('request_failure_binding');
-          lastUpstreamFailure={requestId:pending.id,statusCode:pending.upstreamStatus??null,code:frame.code,observedAt:now()};
+          lastUpstreamFailure={...(native?{provider:node.provider,model:pending.binding.model,api:pending.binding.api,maxOutputTokens:pending.binding.maxOutputTokens}:{}),requestId:pending.id,statusCode:pending.upstreamStatus??null,code:frame.code,observedAt:now()};
           failure('request', { code: frame.code }, 'provider_outcome_unknown');
           if (!pending.cancelled && relayReady && pending.socket === socket) socket.send(JSON.stringify(frame)); pending = undefined;
         } else if (result.scope === 'provider' && ['control_unavailable','handshake_rejected','frame_rejected'].includes(result.code)) void stop({ trigger: 'guest_failed', error: new ClientError(result.code) });
