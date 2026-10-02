@@ -10,6 +10,9 @@ const integer=n=>Number.isSafeInteger(n)&&n>=0;
 export async function nativeLogin(node,key,signal) {
   const p=piCatalog.providers.find(p=>p.id===node.provider);if(!p)throw fail('pi_provider_not_supported');
   if(typeof key!=='string'||!/^[\x20-\x7e]{1,4096}$/.test(key))throw fail('credential_format_invalid');
+  // Pi's Anthropic adapter detects this token family even through api_key auth.
+  // Never let a pasted subscription token select that implicit OAuth path.
+  if(key.includes('sk-ant-oat'))throw fail('metered_api_key_required');
   const module=await import('@earendil-works/pi-ai/providers/'+p.module),provider=module[p.factory]();
   const credentials=new InMemoryCredentialStore();
   const models=createModels({credentials,authContext:{env:async()=>undefined,fileExists:async()=>false}});

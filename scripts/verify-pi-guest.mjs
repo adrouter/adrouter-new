@@ -16,6 +16,6 @@ try{
  await cp(join(root,'provider-runtime'),join(copy,'src'),{recursive:true});await mkdir(join(copy,'test'));await cp(new URL('../test/pi-native.test.mjs',import.meta.url),join(copy,'test/pi-native.test.mjs'));
  guest=await createGuest(runtime,[],copy,undefined,{continuous:false});
  const output=await runtime.run(guest,['node','--test','/workspace/test/pi-native.test.mjs'],{timeoutSeconds:60});
- assert.match(output,/fail 0/);assert.match(output,/pass 16/);
- console.log(JSON.stringify({status:'passed',installed:root,platform:'darwin-arm64',nativeFamilies:6,syntheticTests:16,paidInference:false}));
+ assert.match(output,/fail 0/);assert.match(output,/pass 17/);
+ console.log(JSON.stringify({status:'passed',installed:root,platform:'darwin-arm64',nativeFamilies:6,syntheticTests:17,paidInference:false}));
 }finally{if(guest)await runtime.remove(guest);await rm(copy,{recursive:true,force:true});}

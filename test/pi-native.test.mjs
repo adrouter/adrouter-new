@@ -58,3 +58,5 @@ test('startup qualification rejects a native call that violates the declared too
  const malformed=structuredClone(toolCompletion);malformed[0].choices[0].delta.tool_calls[0].function.arguments='{"value":42}';
  try{await assert.rejects(nativeInference(n,auth,request,AbortSignal.timeout(5000),()=>{},()=>{},async()=>new Response(sse(malformed),{headers:{'content-type':'text/event-stream'}})),/upstream_malformed_response/);}finally{await auth.close();}
 });
+
+test('API-key login rejects subscription tokens before native adapter resolution',async()=>{await assert.rejects(nativeLogin(connection('anthropic','anthropic-messages'),'sk-ant-oat-synthetic-not-valid'),/metered_api_key_required/);});
