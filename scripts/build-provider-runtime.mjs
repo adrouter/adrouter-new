@@ -15,6 +15,6 @@ await mkdir(join(out,'generated'));for(const f of ['connectors.mjs','pi-catalog.
 const license=await (await fetch('https://raw.githubusercontent.com/earendil-works/pi/'+piCatalog.revision+'/LICENSE',{signal:AbortSignal.timeout(30000)})).text();
 if(hash(license)!=='0457f5bcec3b3b211605dfb5d1a49042fd638f3686a410fe099c24a25af13c48')throw Error('pi_license_identity_mismatch');
 await writeFile(join(out,'PI-LICENSE-MIT'),license);
-const files={};async function inventory(dir,prefix=''){for(const e of await readdir(dir,{withFileTypes:true})){const name=prefix+e.name;if(e.isDirectory())await inventory(join(dir,e.name),name+'/');else if(e.isFile())files[name]=hash(await readFile(join(dir,e.name)));else throw Error('provider_runtime_symlink_rejected');}}
+const files={};async function inventory(dir,prefix=''){for(const e of await readdir(dir,{withFileTypes:true})){const name=prefix+e.name;if(e.name==='.npmignore'){await rm(join(dir,e.name));continue;}if(e.isDirectory())await inventory(join(dir,e.name),name+'/');else if(e.isFile())files[name]=hash(await readFile(join(dir,e.name)));else throw Error('provider_runtime_symlink_rejected');}}
 await inventory(out);await writeFile(join(out,'provenance.json'),JSON.stringify({package:piCatalog.package,version:pin.version,integrity:pin.integrity,revision:piCatalog.revision,lockSha256:hash(await readFile(join(root,'package-lock.json'))),files},null,2)+'\n');
 console.log(JSON.stringify({package:piCatalog.package,version:pin.version,files:Object.keys(files).length}));
