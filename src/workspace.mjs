@@ -54,7 +54,6 @@ export async function proposeExport(workspace, changedFiles) {
     checkRelative(path);
     if (content !== null && (typeof content !== 'string' || Buffer.byteLength(content) > MAX_BYTES)) throw new Error('export_file_rejected');
     const exists = Object.hasOwn(workspace.manifest, path);
-    if(exists && content!==null && hash(content)===workspace.manifest[path])continue;
     const original = exists ? await safeRead(workspace.root, path, workspace.rootIdentity) : null;
     if (!exists && await lstat(resolve(workspace.root, path)).then(() => true, e => { if (e.code === 'ENOENT') return false; throw e; })) throw new Error('export_conflict');
     if (exists && hash(original) !== workspace.manifest[path]) throw new Error('export_conflict');
@@ -138,7 +137,7 @@ export async function reviewAndApply(workspace, finalFiles, approve, {journalRoo
   const proposal=recover?.proposal??await proposeExport(workspace,values);
   if(!proposal.changes.length)return {status:'unchanged',completed:[]};
   if(!/^[a-f0-9-]{36}$/.test(proposal.id))throw Error('apply_operation_invalid');
-  const digest=hash(JSON.stringify(proposal));
+  const digest=hash(JSON.stringify({proposal,root:workspace.root,identity:workspace.rootIdentity,snapshotRevision:workspace.snapshotRevision??null}));
   if(!await approve({...proposal,digest,recovery:!!recover}))throw Error('apply_denied');
   await mkdir(journalRoot,{recursive:true,mode:0o700});const stat=await lstat(journalRoot);
   if(!stat.isDirectory()||stat.isSymbolicLink()||stat.uid!==process.getuid()||(stat.mode&0o077))throw Error('private_journal_rejected');
@@ -146,7 +145,7 @@ export async function reviewAndApply(workspace, finalFiles, approve, {journalRoo
   const result=await new Promise((resolveResult,reject)=>{
     const child=spawn('python3',[fileURLToPath(new URL('./workspace-apply.py',import.meta.url))],{env:{PATH:'/opt/homebrew/bin:/usr/bin:/bin'},stdio:['pipe','pipe','ignore']});let output='';
     child.stdout.on('data',b=>{output+=b;if(output.length>65536)child.kill();});child.once('error',reject);child.once('close',async()=>{try{resolveResult(JSON.parse(output));}catch{const state=await readFile(journal,'utf8').then(v=>JSON.parse(v)).catch(()=>null);resolveResult({status:'interrupted',code:'apply_outcome_unknown',uncertain:true,completed:state?.completed??[],operationId:proposal.id});}});
-    child.stdin.end(JSON.stringify({id:proposal.id,root:workspace.root,identity:workspace.rootIdentity,changes:proposal.changes,journal,recover:!!recover}));
+    child.stdin.end(JSON.stringify({id:proposal.id,root:workspace.root,identity:workspace.rootIdentity,changes:proposal.changes,journal,snapshotRevision:workspace.snapshotRevision??null,recover:!!recover}));
   });
   return {...result,journal};
 }

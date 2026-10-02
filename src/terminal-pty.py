@@ -34,7 +34,6 @@ try:
                 frame = json.loads(line)
                 if 'input' in frame: os.write(master, base64.b64decode(frame['input']))
                 elif 'columns' in frame:
-                    if frame.get('redraw'): resize(max(2, frame['columns']-1), frame['rows'])
                     resize(frame['columns'], frame['rows'])
         if child.poll() is not None and not ready: break
     code = child.wait(timeout=5)

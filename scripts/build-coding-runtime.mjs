@@ -55,6 +55,23 @@ try {
   await patch('packages/coding-agent/src/modes/interactive/theme/dark.json','"toolSuccessBg": "#283228"','"toolSuccessBg": ""');
   await patch('packages/coding-agent/src/modes/interactive/theme/dark.json','"toolErrorBg": "#3c2828"','"toolErrorBg": ""');
   {const path='packages/coding-agent/src/modes/interactive/theme/light.json';const before=await readFile(join(work,path),'utf8');const theme=JSON.parse(before);for(const key of ['toolPendingBg','toolSuccessBg','toolErrorBg'])theme.vars[key]='';await patch(path,before,JSON.stringify(theme,null,2)+'\n');}
+  await patch('packages/tui/src/tui.ts','if (this.previousLines.length > 0) {','if (!(globalThis as any).__adrCodingSuspending && this.previousLines.length > 0) {');
+  await patch('packages/tui/src/terminal.ts','process.stdout.write("\\x1b[?2004l\\x1b[?1006l\\x1b[?1003l\\x1b[?1002l\\x1b[?1000l\\x1b[?1049l");','process.stdout.write("\\x1b[?2004l\\x1b[?1006l\\x1b[?1003l\\x1b[?1002l\\x1b[?1000l" + ((globalThis as any).__adrCodingSuspending ? "" : "\\x1b[?1049l"));');
+  await patch('packages/coding-agent/src/modes/interactive/interactive-mode.ts','if (text === "/quit") {','if (text === "/workspace" && (globalThis as any).__adrCodingWorkspace) { this.editor.setText(""); await (globalThis as any).__adrCodingWorkspace(); return; }\n\t\t\tif (text === "/quit") {');
+  await patch('packages/coding-agent/src/modes/interactive/interactive-mode.ts','private async shutdown(options?: { fromSignal?: boolean }): Promise<void> {','private async shutdown(options?: { fromSignal?: boolean }): Promise<void> { if (!options?.fromSignal && (globalThis as any).__adrCodingWorkspace) { await (globalThis as any).__adrCodingWorkspace(); return; }');
+  await patch('packages/coding-agent/src/modes/interactive/interactive-mode.ts','this.showStatus("Current model does not support thinking");','this.showStatus((globalThis as any).__adrThinkingExplanation ?? "The accepted session lacks thinking support.");');
+  await patch('packages/coding-agent/src/core/slash-commands.ts','\t{ name: "quit", description: `Quit ${APP_NAME}` },','\t{ name: "workspace", description: "Review saved coding work on the host; Continue keeps this agent" },\n\t{ name: "quit", description: `Quit ${APP_NAME}` },');
+  await patch('packages/coding-agent/src/core/tools/bash.ts','import { Container, Text, truncateToWidth }','import { Container, Text, truncateToWidth, visibleWidth }');
+  await patch('packages/coding-agent/src/core/tools/bash.ts','const text = (context.lastComponent as Text | undefined) ?? new Text("", 0, 0);\n\t\t\ttext.setText(formatBashCall(args));\n\t\t\treturn text;',`const text = new Text("Working directory: " + cwd + " · Timeout: " + (args?.timeout ?? 120) + " seconds\\n" + String(args?.command ?? "").replaceAll("\\t", "    "), 0, 0);
+            return {invalidate:()=>text.invalidate(),render:(width:number)=>{
+              if(width<8)return text.render(width);
+              const inner=width-4,lines=text.render(inner);
+              return [theme.fg("muted","┌"+"─".repeat(width-2)+"┐"),...lines.map(line=>theme.fg("muted","│ ")+line+" ".repeat(Math.max(0,inner-visibleWidth(line)))+theme.fg("muted"," │")),theme.fg("muted","└"+"─".repeat(width-2)+"┘")];
+            }};`);
+  await patch('packages/coding-agent/src/core/agent-session.ts','if (context.effect === "read") return { allow: true };','if (context.effect === "read") return (globalThis as any).__adrCodingRead ? (globalThis as any).__adrCodingRead(context) : { allow: true };');
+  await patch('packages/tui/src/terminal.ts','this.stdinBuffer!.process(data);','this.stdinBuffer?.process(data);');
+  await patch('packages/coding-agent/src/modes/interactive/theme/theme.ts','fg(color: ThemeColor, text: string): string {','fg(color: ThemeColor, text: string): string { if ((globalThis as any).__adrCodingBridge && process.env.NO_COLOR !== undefined) return text;');
+  await patch('packages/coding-agent/src/modes/interactive/theme/theme.ts','bg(color: ThemeBg, text: string): string {','bg(color: ThemeBg, text: string): string { if ((globalThis as any).__adrCodingBridge && process.env.NO_COLOR !== undefined) return text;');
   await run('npm',['ci','--ignore-scripts','--no-audit','--no-fund']);
   await run('npm',['run','build']);
   if(process.argv.includes('--verify')) {
@@ -77,7 +94,7 @@ try {
   }
   await cp(join(work,'LICENSE'),join(output,'LICENSE'));
   for(const f of ['THIRD_PARTY_NOTICES.md','BUNDLED_SOURCES.json'])await cp(join(work,'packages/coding-agent',f),join(output,f));
-  await mkdir(join(output,'guest'));for(const f of ['coding-entry.mjs','coding-provider.mjs','coding-controls.mjs','workspace-snapshot.mjs','coding-preview.mjs'])await cp(resolve('src/guest',f),join(output,'guest',f));
+  await mkdir(join(output,'guest'));for(const f of ['coding-entry.mjs','coding-provider.mjs','coding-controls.mjs','workspace-snapshot.mjs','coding-preview.mjs','coding-read-policy.mjs'])await cp(resolve('src/guest',f),join(output,'guest',f));
   for(const file of ['workspace-policy.mjs','coding-display.mjs'])await cp(resolve('src',file),join(output,file));
   await cp(resolve('node_modules/ignore'),join(output,'node_modules/ignore'),{recursive:true,dereference:true});
   await cp(resolve('src/coding-wire.mjs'),join(output,'guest/coding-wire.mjs'));

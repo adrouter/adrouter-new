@@ -3,13 +3,14 @@ import { randomBytes, createHash, randomUUID } from 'node:crypto';
 import { readFile, writeFile, rename, mkdir, cp, rm, lstat, readdir } from 'node:fs/promises';
 import { join } from 'node:path';
 import { homedir } from 'node:os';
+import { saveCodingSnapshot, openSavedCodingWork } from './saved-work.mjs';
 import { ActionApproval } from './buyer.mjs';
 import { importWorkspace, exportSnapshot, proposeExport, changeDiffs, reviewAndApply, recoverApplication } from './workspace.mjs';
 import { configuredRuntime, createGuest } from './provider.mjs';
 import { SandboxRuntime } from './runtime.mjs';
 import { ClientError } from './network.mjs';
 import { actionDiff } from './action-diff.mjs';
-import { CodingDisplay } from './coding-display.mjs';
+import { CodingDisplay, thinkingExplanation } from './coding-display.mjs';
 import { approvedRetrieval, hostOperation } from './host-bridges.mjs';
 import { BuyerLifecycle, backgroundOperation, recoverableStatusFailure, approvalRequired } from './buyer-lifecycle.mjs';
 const canonical=v=>JSON.stringify(v,(key,value)=>value&&typeof value==='object'&&!Array.isArray(value)?Object.fromEntries(Object.entries(value).sort(([a],[b])=>a.localeCompare(b))):value);
@@ -48,7 +49,7 @@ export class DispatchQueue {
   stop(){this.closed=true;}
 }
 
-export async function openCodingBuyer(network,sessionId,{root,files,runtimeConfig,runtime:provided,signal,approve=approvalRequired,trusted=false,profile='buyer',resumeId,coordinator,progress=()=>{},intervals={}}={}) {
+export async function openCodingBuyer(network,sessionId,{root,files,runtimeConfig,runtime:provided,signal,approve=approvalRequired,trusted=false,profile='buyer',resumeId,confirmProject=async()=>false,coordinator,progress=()=>{},intervals={}}={}) {
   if(!/^[a-z][a-z0-9_-]{0,31}$/.test(profile))throw new ClientError('invalid_profile_name');
   if(!/^[a-f0-9-]{36}$/.test(sessionId))throw new ClientError('coding_session_required');
   let guest,workspace,closing,watchdog,statusPoll,expires,checkpoint,saving,snapshot,discarded=false,statusChecking,dependencyApproved=false,dependencyBytes=0;const abort=new AbortController(), queue=new DispatchQueue(),authorities=new Map(),mainCapability=randomBytes(32).toString('base64url');
@@ -88,7 +89,7 @@ export async function openCodingBuyer(network,sessionId,{root,files,runtimeConfi
       if(!snapshot)abort.abort();
       await startupReady;
       if(!discarded&&snapshot&&guest&&runtime.owned.has(guest))await snapshot().catch(()=>{});
-      abort.abort();
+      coordinator?.close();abort.abort();
       const operations=[['guest_removal',()=>guest&&runtime.owned.has(guest)?runtime.remove(guest):undefined],
         ['workspace_cleanup',()=>workspace?rm(workspace.copy,{recursive:true,force:true}):undefined],
         ['remote_stop',()=>network.request(`/v2/sessions/${sessionId}/stop`,{method:'POST',body:{},signal:AbortSignal.timeout(30000)})]];
@@ -120,6 +121,13 @@ export async function openCodingBuyer(network,sessionId,{root,files,runtimeConfi
   },abort.signal);
   authorities.set(mainCapability,{purpose:'main',mutation:true});
   const toolGrants=new Map(),usedCalls=new Set();
+  let terminalCommand,terminalPending;
+  const terminalControl=operation=>new Promise((resolve,reject)=>{
+    if(terminalPending)return reject(new ClientError('terminal_operation_busy'));
+    const id=randomUUID(),timer=setTimeout(()=>{terminalCommand=undefined;terminalPending=undefined;reject(new ClientError('terminal_ack_timeout'));},3000);
+    terminalCommand={id,operation};terminalPending={id,resolve:metadata=>{clearTimeout(timer);terminalCommand=undefined;terminalPending=undefined;coordinator.lastAck=metadata;resolve(metadata);}};
+  });
+  coordinator?.setControl(terminalControl);
   const server=createServer(async(req,res)=>{
     const authorityKey=req.headers.authorization?.replace(/^Bearer /,'');
     const authority=authorities.get(authorityKey);
@@ -138,7 +146,10 @@ export async function openCodingBuyer(network,sessionId,{root,files,runtimeConfi
       let bytes='';for await(const b of req){bytes+=b;if(Buffer.byteLength(bytes)>(req.url?.startsWith('/host/')?4*1024*1024:262144))throw new ClientError('coding_body_limit');}
       const body=JSON.parse(bytes||'{}');let reply;
       if(req.method!=='POST')throw new ClientError('coding_operation_rejected');
-      if(req.url==='/inference') {
+      if(req.url==='/terminal/poll'){if(authority.purpose!=='main')throw new ClientError('host_bridge_denied');reply=terminalCommand??{};
+      }else if(req.url==='/terminal/ack'){if(authority.purpose!=='main'||!terminalPending||body.id!==terminalPending.id)throw new ClientError('terminal_ack_rejected');const metadata={};for(const k of ['draftHash','agentId'])if(/^[a-f0-9-]{36,64}$/.test(body[k]??''))metadata[k]=body[k];terminalPending.resolve(metadata);reply={ok:true};
+      }else if(req.url==='/terminal/workspace'){if(authority.purpose!=='main'||!coordinator)throw new ClientError('host_bridge_denied');await snapshot();coordinator.workspace();reply={ok:true};
+      }else if(req.url==='/inference') {
         const requestAbort=new AbortController(),disconnect=()=>{if(!res.writableEnded)requestAbort.abort();};res.once('close',disconnect);
         try {reply=await queue.run(async()=>{const current=await status();if(Number(current.requestSequence??0)>=current.requestLimit)throw new ClientError('session_request_limit');display.pending=true;return network.request(`/v2/sessions/${sessionId}/inference`,{method:'POST',body:{...body,protocol:'coding_v1',maxOutputTokens:session.maxOutputTokens,purpose:authority.purpose},signal:AbortSignal.any([abort.signal,requestAbort.signal]),onEvent:event=>{if(res.writableLength>262144||res.destroyed)throw new ClientError('coding_stream_backpressure');if(!res.headersSent)res.setHeader('content-type','application/x-ndjson');res.write(JSON.stringify(event)+'\n');}});},requestAbort.signal);display.complete(reply.requestId,reply.usage);for(const call of reply.toolCalls??[]){const key=authorityKey+':'+call.id;if(usedCalls.has(key)||toolGrants.has(key))throw new ClientError('tool_replay_rejected');toolGrants.set(key,{name:call.function.name,args:JSON.parse(call.function.arguments)});}
         if(!res.headersSent)res.setHeader('content-type','application/x-ndjson');res.end(JSON.stringify({type:'complete',requestId:reply.requestId,text:reply.text,thinking:reply.thinking??'',toolCalls:reply.toolCalls,usage:reply.usage})+'\n');return;}
@@ -175,9 +186,9 @@ export async function openCodingBuyer(network,sessionId,{root,files,runtimeConfi
     const listing=await network.request(`/v2/listings/${session.listingId}`,{public:true,signal:startupSignal});
     if(listing.id!==session.listingId||listing.revision!==session.listingRevision)throw new ClientError('marketplace_price_unavailable');
     display=new CodingDisplay(session,listing);
-    const configuration={terminal:Object.fromEntries(['TERM','COLORTERM','TERM_PROGRAM','TERM_PROGRAM_VERSION'].filter(k=>/^[a-zA-Z0-9_.-]{1,80}$/.test(process.env[k]??'')).map(k=>[k,process.env[k]])),control:`http://host.microsandbox.internal:${server.address().port}`,capability:mainCapability,sessionId,model:session.model??listing.model,maxOutputTokens:session.maxOutputTokens,contextWindowTokens:session.contextWindowTokens,expiresAt:session.expiresAt,trusted,thinking:session.capabilities?.includes('thinking_v1')??false,resume:!!resumeId};
+    const configuration={terminal:Object.fromEntries(['TERM','COLORTERM','TERM_PROGRAM','TERM_PROGRAM_VERSION'].filter(k=>/^[a-zA-Z0-9_.-]{1,80}$/.test(process.env[k]??'')).map(k=>[k,process.env[k]])),control:`http://host.microsandbox.internal:${server.address().port}`,capability:mainCapability,sessionId,model:session.model??listing.model,maxOutputTokens:session.maxOutputTokens,contextWindowTokens:session.contextWindowTokens,expiresAt:session.expiresAt,trusted,monochrome:process.env.NO_COLOR!==undefined||process.env.TERM==='dumb',thinkingExplanation:thinkingExplanation({accepted:session.capabilities?.includes('thinking_v1'),providerEnabled:listing.capabilities?.includes('thinking_v1'),modelSupported:session.thinkingModelSupport??null}),thinking:session.capabilities?.includes('thinking_v1')??false,resume:!!resumeId};
     await runtime.run(guest,['node','-e',`const fs=require('node:fs');fs.writeFileSync('/tmp/adr-coding.json',${JSON.stringify(JSON.stringify(configuration))},{mode:0o600});fs.writeFileSync('/tmp/.npmrc',${JSON.stringify(`registry=http://host.microsandbox.internal:${server.address().port}/dependencies/npm/\n//host.microsandbox.internal:${server.address().port}/:_authToken=${mainCapability}\nignore-scripts=true\naudit=false\nfund=false\n`)},{mode:0o600});`],{signal:startupSignal});
-    if(resumeId){if(!/^[a-f0-9-]{36}$/.test(resumeId))throw new ClientError('resume_id_invalid');const saved=JSON.parse(await readFile(join(privateRoot,resumeId,'state.json'),'utf8'));if(saved.root!==root||Object.keys(saved.manifest).length!==Object.keys(workspace.manifest).length||Object.entries(saved.manifest).some(([p,h])=>!Object.hasOwn(workspace.manifest,p)||workspace.manifest[p]!==h))throw new ClientError('resume_workspace_mismatch');await restoreGuestState(runtime,guest,saved.files,saved.resources,Object.keys(saved.manifest).filter(p=>!Object.hasOwn(saved.files,p)));}
+    if(resumeId){if(!/^[a-f0-9-]{36}$/.test(resumeId))throw new ClientError('resume_id_invalid');const saved=(await openSavedCodingWork(profile,resumeId,{root:workspace.root,confirmProject})).state;if(saved.root!==root||Object.keys(saved.manifest).length!==Object.keys(workspace.manifest).length||Object.entries(saved.manifest).some(([p,h])=>!Object.hasOwn(workspace.manifest,p)||workspace.manifest[p]!==h))throw new ClientError('resume_workspace_mismatch');await restoreGuestState(runtime,guest,saved.files,saved.resources,Object.keys(saved.manifest).filter(p=>!Object.hasOwn(saved.files,p)));}
     startupSignal.throwIfAborted();
     watchdog=backgroundOperation(()=>runtime.touch(guest,{signal:AbortSignal.any([abort.signal,AbortSignal.timeout(10000)])}),intervals.keepalive??20000,e=>{lifecycle.event('keepalive',{code:e.code??'keepalive_failed'});void close();});
     statusPoll=backgroundOperation(status,intervals.status??20000,()=>{});
@@ -185,19 +196,32 @@ export async function openCodingBuyer(network,sessionId,{root,files,runtimeConfi
     const exportFiles=async()=>{const result=JSON.parse(await runtime.readCheckpoint(guest,['node','-e',`let input='';process.stdin.on('data',b=>input+=b).on('end',async()=>{const {workspaceSnapshot}=await import('/workspace/.adr-runtime/guest/workspace-snapshot.mjs');console.log(JSON.stringify(await workspaceSnapshot('/workspace',JSON.parse(input))));});`],{signal:abort.signal,outputBytes:24*1024*1024,input:JSON.stringify(Object.keys(workspace.manifest))}));snapshotExclusions=result.excluded;return result.files;};
     snapshot=async()=>{
       if(saving)return saving;
-      saving=(async()=>{const resources=JSON.parse(await runtime.readCheckpoint(guest,['node','-e',`const fs=require('node:fs');const r={};for(const n of ['settings.json','keybindings.json','trust.json','history.json']){const p='/tmp/adr-agent/'+n;if(fs.existsSync(p)){const s=fs.lstatSync(p);if(!s.isFile()||s.isSymbolicLink()||s.nlink!==1||s.size>2097152)throw Error('resource_snapshot_invalid');r[n]=fs.readFileSync(p,'utf8');}}if(fs.existsSync('/tmp/adr-agent/sessions'))for(const n of fs.readdirSync('/tmp/adr-agent/sessions')){if(/^[a-zA-Z0-9_.-]+\\.jsonl$/.test(n)){const p='/tmp/adr-agent/sessions/'+n,s=fs.lstatSync(p);if(!s.isFile()||s.isSymbolicLink()||s.nlink!==1||s.size>16777216)throw Error('session_snapshot_invalid');r['sessions/'+n]=fs.readFileSync(p,'utf8');}}console.log(JSON.stringify(r));`],{signal:abort.signal,outputBytes:24*1024*1024}));const temp=join(storage,`checkpoint-${randomUUID()}.tmp`);await writeFile(temp,JSON.stringify({schemaVersion:1,root,sessionId,listingId:session.listingId,resources,manifest:workspace.manifest,files:await exportFiles()}),{flag:'wx',mode:0o600});await rename(temp,join(storage,'state.json'));lifecycle.event('checkpoint',{status:'saved'});return {resumeId:sessionId,savedAt:Date.now()};})();
+      saving=(async()=>{const resources=JSON.parse(await runtime.readCheckpoint(guest,['node','-e',`const fs=require('node:fs');const r={};for(const n of ['settings.json','keybindings.json','trust.json','history.json']){const p='/tmp/adr-agent/'+n;if(fs.existsSync(p)){const s=fs.lstatSync(p);if(!s.isFile()||s.isSymbolicLink()||s.nlink!==1||s.size>2097152)throw Error('resource_snapshot_invalid');r[n]=fs.readFileSync(p,'utf8');}}if(fs.existsSync('/tmp/adr-agent/sessions'))for(const n of fs.readdirSync('/tmp/adr-agent/sessions')){if(/^[a-zA-Z0-9_.-]+\\.jsonl$/.test(n)){const p='/tmp/adr-agent/sessions/'+n,s=fs.lstatSync(p);if(!s.isFile()||s.isSymbolicLink()||s.nlink!==1||s.size>16777216)throw Error('session_snapshot_invalid');r['sessions/'+n]=fs.readFileSync(p,'utf8');}}console.log(JSON.stringify(r));`],{signal:abort.signal,outputBytes:24*1024*1024}));const saved=await saveCodingSnapshot(storage,{root:workspace.root,rootIdentity:workspace.rootIdentity,sessionId,listingId:session.listingId,resources,manifest:{...workspace.manifest},files:await exportFiles(),excluded:snapshotExclusions});lifecycle.event('checkpoint',{status:'saved'});return saved;})();
       try{return await saving;}catch(e){lifecycle.event('checkpoint',{code:e.code??'checkpoint_failed'});throw e;}finally{saving=undefined;}
+    };
+    const localWork=async()=>{
+      if(!closing&&runtime.owned.has(guest))await snapshot();
+      else if(saving)await saving.catch(()=>{});
+      return openSavedCodingWork(profile,sessionId,{root:workspace.root,approve});
+    };
+    const applied=async(saved,result)=>{
+      if(result.status==='applied'){
+        workspace.manifest={...saved.workspace.manifest};
+        if(!closing&&runtime.owned.has(guest))await snapshot();
+      }
     };
     checkpoint=backgroundOperation(snapshot,intervals.checkpoint??30000,()=>{});
     finishStartup();
     return {status,close,lifecycle,
-      async interactive({prompt='',mode='interactive',consoleOptions={}}={}){await status();await runtime.run(guest,['node','-e',`const fs=require('node:fs');const p='/tmp/adr-coding.json';const d=JSON.parse(fs.readFileSync(p));d.prompt=${JSON.stringify(prompt)};d.resume=require('node:fs').existsSync('/tmp/adr-agent/sessions');fs.writeFileSync(p,JSON.stringify(d),{mode:0o600});`]);try{await runtime.attachConsole(guest,['node','/workspace/.adr-runtime/guest/coding-entry.mjs',...(mode==='rpc'?['--mode','rpc']:mode==='json'?['--mode','json','--print']:mode==='print'?['--print']:[])],{...consoleOptions,coordinator,beforeTeardown:()=>snapshot(),onOutcome:o=>lifecycle.event(o.phase,o),signal:abort.signal,timeoutSeconds:Math.min(3600,Math.max(1,Math.floor((session.expiresAt-Date.now())/1000)))});lifecycle.event('console',{status:'completed'});}catch(e){lifecycle.event('console',{code:e.code,exitCode:e.exitCode,signal:e.signal});throw e;}},
-      save:snapshot,
+      async workspace(){if(!coordinator)throw new ClientError('terminal_operation_busy');await terminalControl('suspend');await snapshot();coordinator.workspace();},
+      async interactive({prompt='',mode='interactive',consoleOptions={}}={}){await status();if(!coordinator?.child)await runtime.run(guest,['node','-e',`const fs=require('node:fs');const p='/tmp/adr-coding.json';const d=JSON.parse(fs.readFileSync(p));d.prompt=${JSON.stringify(prompt)};d.resume=require('node:fs').existsSync('/tmp/adr-agent/sessions');fs.writeFileSync(p,JSON.stringify(d),{mode:0o600});`]);try{await runtime.attachConsole(guest,['node','/workspace/.adr-runtime/guest/coding-entry.mjs',...(mode==='rpc'?['--mode','rpc']:mode==='json'?['--mode','json','--print']:mode==='print'?['--print']:[])],{...consoleOptions,coordinator,beforeTeardown:()=>snapshot(),onOutcome:o=>lifecycle.event(o.phase,o),signal:abort.signal,timeoutSeconds:Math.min(3600,Math.max(1,Math.floor((session.expiresAt-Date.now())/1000)))});lifecycle.event('console',{status:'completed'});}catch(e){lifecycle.event('console',{code:e.code,exitCode:e.exitCode,signal:e.signal});throw e;}},
+      async save(){if(!closing&&runtime.owned.has(guest))return snapshot();if(saving)await saving.catch(()=>{});const saved=await openSavedCodingWork(profile,sessionId,{root:workspace.root});return {resumeId:sessionId,snapshotRevision:saved.snapshotRevision,savedAt:saved.state.savedAt};},
       async discard(){discarded=true;checkpoint?.stop();if(saving)await saving.catch(()=>{});await rm(join(storage,'state.json'),{force:true});lifecycle.event('checkpoint',{status:'discarded'});},
-      async changes(){const files=await exportFiles(),changes=[];for(const p of Object.keys(workspace.manifest))if(!Object.hasOwn(files,p))files[p]=null;for(const [path,content] of Object.entries(files)){const before=workspace.manifest[path]??null,after=content===null?null:hash(content);if(before!==after)changes.push({path,kind:content===null?'delete':before===null?'add':'modify',before,after});}return {changes};},
-      async recover(journal){if(!journal.startsWith(join(privateRoot,'journals')+'/'))throw new ClientError('apply_journal_rejected');const record=JSON.parse(await readFile(journal,'utf8'));const result=await recoverApplication(workspace,journal,p=>authorize({name:'recover_application',changes:p.changes,digest:p.digest}));if(result.status==='applied'){await restoreGuestState(runtime,guest,Object.fromEntries(record.changes.filter(c=>c.content!==null).map(c=>[c.path,c.content])),{},record.changes.filter(c=>c.content===null).map(c=>c.path));for(const c of record.changes){if(c.after===null)delete workspace.manifest[c.path];else workspace.manifest[c.path]=c.after;}await snapshot();}return result;},
-      async export(){return exportSnapshot(workspace,await exportFiles(),p=>authorize({name:'export_workspace',changes:p.changes}));},
-      async apply(){const files=await exportFiles(),values={...files};for(const p of Object.keys(workspace.manifest))if(!Object.hasOwn(values,p))values[p]=null;const diffs=await changeDiffs(workspace,(await proposeExport(workspace,values)).changes);const result=await reviewAndApply(workspace,files,async p=>authorize({name:'apply_workspace',changes:p.changes.map((c,i)=>({...c,diff:diffs[i]})),digest:p.digest}),{journalRoot:join(privateRoot,'journals')});if(result.status==='applied'){for(const c of result.completed){if(Object.hasOwn(files,c))workspace.manifest[c]=hash(files[c]);else delete workspace.manifest[c];}await snapshot();}return {...result,excluded:snapshotExclusions};},
+      async changes(){return (await localWork()).changes();},
+      async review(){return (await localWork()).review();},
+      async recover(journal){const saved=await localWork();const result=await saved.recover(journal);await applied(saved,result);return result;},
+      async export(){return (await localWork()).export();},
+      async apply(){const saved=await localWork();const result=await saved.apply();await applied(saved,result);return result;},
     };
   }catch(original){if(!guest&&/^adrnew-[a-f0-9-]{36}$/.test(original.sandboxName??'')&&runtime.owned.has(original.sandboxName))guest=original.sandboxName;const e=startupSignal.aborted&&original.name==='AbortError'?new ClientError('cancelled'):original;lifecycle.event('startup',{code:e.code??'coding_startup_failed',exitCode:e.exitCode,signal:e.signal});finishStartup();e.lifecycleOutcome=await close().catch(()=>undefined);throw e;}
 }

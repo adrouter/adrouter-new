@@ -150,3 +150,95 @@ Operator-only guest key entry and final real-provider Review and Apply/thinking 
 ## Decision Log
 - 2 October: credits now, USD deferred; terminal background for tool output; provider thinking opt-in and buyer thinking initially off.
 - 2 October: preserve the historical undetermined incident, 6 charged / 94 refunded / zero reservation and USD 0.002075 liability.
+
+
+# Plan: Private alpha.19 acceptance repairs — 2 October 2026
+
+## Goal
+Prepare immutable private alpha.19 with compute-independent saved work, stable inline host approvals and workspace transitions, readable tools, and automatic recognized-provider tariff qualification.
+
+## Context
+The operator supplied per-gate alpha.18 failures and explicitly requested implementation and private rollout. Use clean canonical clones `.reliability/client-ux` and `.reliability/router-ux`, branch `codex/adrv2-reliability-20261001`. Preserve earlier plan sections and unrelated original-checkout work.
+
+## Research Summary
+Kickoff Fly/app, Pages/project, canonical GitHub refs/push access, and linked active Supabase database query pass. Normal Fly registry authentication resolved the recovery-image lookup; index/platform digests match alpha.18. npm identity/scope checks fail E401 under the retained private-install waiver; no public publisher is enabled. Official DeepSeek pricing identifies peak cache-miss Flash input/output rates. Current Apply exports from the VM and live-status authorizes host actions; tariff renewal also compares inference to the node's latest tariff.
+
+## Constraints
+No schema migration, public publication, admissions expansion, inference replay, guessed settlement, secrets inspection or legacy source changes. Preserve identities, checkpoints, project, limits, original 6/94/zero reservation and USD 0.002075 liability; latest pending settlement remains separate. Generate contracts and runtime through owning committed sources/builders. Keep snapshot approvals bound to root identity, revision, original hashes and content.
+
+## Out of Scope
+Unrelated UI, legacy clients, public channels, payment reconciliation and database resets.
+
+## Reversibility
+Add checkpoint version support, preserve earlier immutable snapshots/installations and Fly recovery image. Freeze clean commits, replace the same drained staging Machine and switch launcher only after installed acceptance.
+
+## Step A: Saved coding work independent of compute
+### Status
+`in_progress`
+### Tasks
+- [ ] Version immutable snapshots with root identity/revision; legacy project confirmation and baseline validation.
+- [ ] Local Review/Apply/Export and journal recovery without session authority; preserve conflict/denial/one-use checks.
+- [ ] Save before workspace departure/teardown and show actual compute versus saved-work availability.
+### Relevant Files
+Client `src/coding-buyer.mjs`, `src/workspace.mjs`, `src/tui.mjs`, workspace tests.
+### Acceptance Criteria
+- [ ] Running, expired, removed and pending-settlement compute all permit reviewed saved host application.
+- [ ] Denial, changed originals, legacy confirmation, interrupted/repeated application are covered.
+### Validation Results
+Not run.
+
+## Step B: Persistent coding terminal and readable presentation
+### Status
+`todo`
+### Tasks
+- [ ] Persistent agent/process and host-only approval panel with bounded suspend/resume acknowledgements.
+- [ ] `/workspace`, existing exit workflow, same-process Continue and full runtime redraw/mode restoration.
+- [ ] Green/red diffs, bordered formatted commands, stable tool/status styling and monochrome support.
+### Relevant Files
+Client terminal coordinator/PTY, guest entry/controls, reproducible runtime builder, native verifiers.
+### Acceptance Criteria
+- [ ] Draft/transcript survive approval/workspace cycles; guest output/input cannot authorize or overwrite approvals.
+- [ ] Exact installed native controls are independently accepted.
+### Validation Results
+Not run.
+
+## Step C: Qualification and consolidated setup
+### Status
+`todo`
+### Tasks
+- [ ] Server-owned allowlist and bounded fresh official pricing retrieval, 24-hour expiry and owner refresh.
+- [ ] Cover quote acceptance plus requested duration; retain manual path and immutable accepted bindings.
+- [ ] Commit Router contract before regenerating client validators; consolidate missing prerequisites and accurate thinking explanations.
+### Relevant Files
+Router marketplace service/routes/store/contracts/tests; client setup/TUI.
+### Acceptance Criteria
+- [ ] Renewal, failed evidence, unsupported endpoints, duration coverage and active-session tariff stability pass.
+### Validation Results
+Not run.
+
+## Step D: Final verification and private rollout
+### Status
+`todo`
+### Tasks
+- [ ] Retry regression waits for injected failure and successful subsequent touch; green macOS/Ubuntu CI.
+- [ ] Client source/provenance and affected Router marketplace/auth/contracts/typecheck/build.
+- [ ] Freeze clean alpha.19 bytes, compare installed files and run Apple Silicon VM/PTY/660-second acceptance.
+- [ ] Preserve Pages, drain sole relay, replace same staging Machine and verify serving modules/policy.
+- [ ] Switch launcher after installed acceptance; append individual reliability outcomes and final real-provider handoff.
+### Acceptance Criteria
+- [ ] Real-provider/buyer gates have separate PASS/FAIL/NOT TESTED entries with action/steps/expected/actual/transition/time/session/code.
+- [ ] Synthetic gates never close live UI gates; unresolved liabilities unchanged.
+### Validation Results
+Not run.
+
+## Follow-up Work
+Operator guest-only key entry and live UI/thinking/host-file verification after exact installed and hosted preparation.
+
+## Decision Log
+- 2 October: retain standing deployment authority and exact private npm-login waiver.
+- 2 October: preserve Pages deployment b02ef6ec and Git Provider No; feature-branch pushes only.
+- 2 October: no runtime-ownership bypass; host saved-work review is independent of inference authorization.
+
+### Alpha.19 validation checkpoint
+
+120 client tests pass, paired contracts match committed Router c603f9a, runtime provenance passes, and generated adaptations preserve the legacy source pin. Actual Apple Silicon source diagnostics passed seven inline reviews, two same-process Continue cycles, multiline draft/agent identity retention, host-file results before/after teardown and saved-context resume without inference replay. Repeated diagnostics exposed an intermittent suspend/input failure; the builder now guards late input and defers workspace suspension past the input callback. Repeated exact installed acceptance is required before launcher selection. No public version, tag, channel or deployment has been changed.

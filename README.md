@@ -179,3 +179,12 @@ Private rehearsal evidence does not establish full provider qualification or pub
 ## Private live coding
 
 The negotiated VM coding runtime and its exact install/test/recovery procedure are in [the private live coding guide](docs/live-coding-rollout.md). It reuses the pinned legacy harness without requiring a legacy installation. Existing buffered sessions keep their bounds; coding quotes support up to 60 minutes and 100 shared inference dispatches. Public publication and real payment transactions remain gated.
+
+
+### Private alpha.19 saved work and coding terminal
+
+Saved coding work offers Review, Apply, Export and interrupted-application recovery without a running VM or a new compute purchase. Host approval binds the immutable snapshot revision, canonical root identity and original-file hashes. Existing unversioned-root checkpoints require explicit project confirmation and baseline validation. Changes in host originals remain conflicts.
+
+`/workspace` opens host review after the current response completes. Continue coding retains the same agent, draft and transcript. Inline tool approval remains host controlled; commands and diffs retain formatting and added/removed markers. Compute expiry disables inference while saved work remains reviewable.
+
+Recognized official DeepSeek Flash supply refreshes conservative tariff qualification automatically from bounded official evidence. Owner refresh is available in provider controls or `provider tariff-refresh NODE_ID --duration 3600`. Custom supply keeps manual qualification. Accepted session tariffs and capabilities remain immutable; thinking is provider opt-in and starts off for buyers. This private alpha version does not enable npm publication or public admissions.

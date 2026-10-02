@@ -167,7 +167,7 @@ export async function runTui(options = {}, dependencies = {}) {
     runtimeConfig = await saveRuntimeConfig(values);
     await ui.page('Runtime verified', [`Microsandbox ${identity.version}`, identity.platform, 'Only these non-secret paths are saved. Binary hashes are checked before reuse.']);
   }
-  async function launch(node, preparedBounds) {
+  async function launch(node, preparedBounds, reviewed=false) {
     const savedBounds = limitDrafts.get(node.id) ?? {}; limitDrafts.set(node.id, savedBounds);
     const bounds = preparedBounds ?? await ui.form(node.availability === 'cold' ? 'Start cold provider control' : 'Start hot provider VM', [
       { name: 'maxCalls', label: 'Maximum requests', default: '5', validate: integer(1, 30) },
@@ -176,7 +176,7 @@ export async function runTui(options = {}, dependencies = {}) {
     if (!bounds) return;
     Object.assign(savedBounds, bounds);
     const { startProvider } = await import('./provider.mjs');
-    if (!await confirm('Launch this VM?', [node.name, `Endpoint: ${node.endpoint}`, `Model: ${node.model}`, `Maximum requests: ${bounds.maxCalls}`, `Maximum output per request: ${bounds.maxOutputTokens}`, 'Publish your listing and qualify its current tariff before your private evaluation.', 'The terminal will attach directly to the guest. Ctrl+C stops it.'], node.availability === 'cold' ? 'Start cold control' : 'Launch hot VM')) return;
+    if (!reviewed && !await confirm('Launch this VM?', [node.name, `Endpoint: ${node.endpoint}`, `Model: ${node.model}`, `Maximum requests: ${bounds.maxCalls}`, `Maximum output per request: ${bounds.maxOutputTokens}`, 'Publish your listing and qualify its current tariff before your private evaluation.', 'The terminal will attach directly to the guest. Ctrl+C stops it.'], node.availability === 'cold' ? 'Start cold control' : 'Launch hot VM')) return;
     const result = await ui.suspend(() => startProvider(network, node.id, { maxCalls: Number(bounds.maxCalls), maxOutputTokens: Number(bounds.maxOutputTokens), runtimeConfig, notify: value => {
       if (value.status === 'activation_required' && currentProviderId === node.id) ui.pending?.resolve('refresh');
       if (ui.screen?.title?.startsWith('Provider operation')) ui.pending?.redraw?.();
@@ -236,15 +236,13 @@ export async function runTui(options = {}, dependencies = {}) {
     if (!edited) return;
     Object.assign(bounds, edited);
     const budget = await get('/providers/budget');
-    if (!await confirm('Cumulative provider spending', [`Remaining: ${formatUsd(budget.remainingMicrousd)}`, 'Consumed and outstanding amounts persist across retries and restarts.', 'The independent USD 10 acceptance ceiling also applies.'], 'Review or set spending cap')) return;
-    if (!await spendingBudget(true)) return;
-    if (BigInt((await get('/providers/budget')).remainingMicrousd) <= 0n) { await ui.page('Spending cap required', ['Set a cap with remaining authority before launching the provider.']); return; }
-    node = await get(`/providers/nodes/${node.id}`);
-    if (node.suspended) { await ui.page('Listing suspended', ['An operator must clear suspension before you can republish.']); return; }
-    if (node.status !== 'published') {
-      if (!await confirm('Publish this listing?', [node.name, node.endpoint, node.model, 'Publication exposes listing metadata.', ...(config?.admissions === false ? ['Ordinary purchases remain disabled on this network.'] : []), 'Provider credentials will be entered only inside the guest.'], 'Publish')) return;
-      await post(`/providers/nodes/${node.id}/publish`);
-      node = await get(`/providers/nodes/${node.id}`);
+    if(BigInt(budget.remainingMicrousd)<=0n&&!await spendingBudget(true))return;
+    if(BigInt((await get('/providers/budget')).remainingMicrousd)<=0n){await ui.page('Spending cap required',['Set a cap with remaining authority before launching.']);return;}
+    node=await get(`/providers/nodes/${node.id}`);
+    if(node.suspended){await ui.page('Listing suspended',['An operator must clear suspension before you can republish.']);return;}
+    if(node.tariffQualification?.mode==='automatic'){
+      await post(`/providers/nodes/${node.id}/tariff/refresh`,{durationSeconds:3600});
+      node=await get(`/providers/nodes/${node.id}`);
     }
     if (!node.tariffQualified) {
       if(config.capabilities?.includes('coding_v1')) {
@@ -253,7 +251,11 @@ export async function runTui(options = {}, dependencies = {}) {
         await post(`/providers/nodes/${node.id}/tariff`,{...tariff,qualifiedUntil:Date.now()+86400000});node=await get(`/providers/nodes/${node.id}`);
       }else {await ui.page('Qualify the current tariff', ['Your listing is published. In the separate operator profile, choose Qualify upstream tariff.','Then choose Continue setup from My provider listings.']);return;}
     }
-    await launch(node, bounds);
+    const decision=await ui.menu('Review provider setup',[
+      ...(node.status!=='published'?[item('publish','Publish and Start')]:[item('start','Start provider')]),item('back','Back'),
+    ],{lines:[node.name,node.endpoint,node.model,`Requests: ${bounds.maxCalls} · Output tokens: ${bounds.maxOutputTokens}`,`Thinking: ${node.capabilities?.includes('thinking_v1')?'supported · buyer starts off':'provider disabled'}`,`Tariff: ${node.tariffQualified?'qualified':'manual qualification required'}`,`Qualification expires: ${node.tariffQualification?.qualifiedUntil?date(node.tariffQualification.qualifiedUntil):'unknown'}`,`Session coverage: ${node.tariffQualification?.coversDurationSeconds??'unknown'} seconds`,'Provider keys are entered only in the guest.']});
+    if(decision==='publish'){await post(`/providers/nodes/${node.id}/publish`);node=await get(`/providers/nodes/${node.id}`);}
+    if(['publish','start'].includes(decision))await launch(node,bounds,true);
   }
   async function manageNode(id, created = false) {
     for (;;) {
@@ -266,6 +268,7 @@ export async function runTui(options = {}, dependencies = {}) {
         item('launch', node.availability === 'cold' ? 'Start cold control' : 'Launch hot VM', 'Keep this TUI open while providing.', providersRunning.has(node.id)),
         ...(providersRunning.get(node.id)?.status.activation.length ? [item('activate', 'Activate reserved buyer session', 'Launch the VM and enter the key before the 120-second deadline.')] : []),
         item('publish', 'Publish listing', 'Exposes listing metadata as a new immutable revision.', node.suspended),
+        ...(node.tariffQualification?.mode==='automatic'?[item('tariffRefresh','Refresh official tariff')]:[]),
         item('thinking','Configure thinking support','Stop serving and pause before changing capabilities.'),
         item('pause', 'Pause listing'), item('stop', 'Stop serving and close sessions'),
         ...(node.status === 'paused' ? [item('delete', 'Delete paused listing', providersRunning.has(node.id) ? 'Stop serving in this terminal first.' : 'Permanent removal requires finished sessions and settlement. Receipts remain available.', providersRunning.has(node.id))] : []),
@@ -274,6 +277,7 @@ export async function runTui(options = {}, dependencies = {}) {
       currentProviderId = undefined; created = false;
       if(!selection&&providersRunning.has(node.id)){await providersRunning.get(node.id).stop();providersRunning.delete(node.id);continue;}
       if (!selection || selection === 'back') return;
+      if(selection==='tariffRefresh'){await attempt(()=>post(`/providers/nodes/${node.id}/tariff/refresh`,{durationSeconds:3600}));continue;}
       if(selection==='thinking'){
         if(providersRunning.has(node.id)||!['draft','paused'].includes(node.status)||node.ready||Number(node.providerRunLeaseUntil)>Date.now()){await ui.page('Stop serving first',['Stop the provider run and pause the listing before changing thinking support.']);continue;}
         const edited=await ui.form('Thinking support',[{name:'thinking',label:'Thinking support',choices:['off','supported']}],{thinking:node.capabilities?.includes('thinking_v1')?'supported':'off'},'Buyers start with thinking off. Enabling support requires a compatible upstream; publish a new revision explicitly afterward.');
@@ -392,40 +396,42 @@ export async function runTui(options = {}, dependencies = {}) {
   }
 
   async function codingAgent(session,listing) {
-    const input={root:process.cwd()};let manifest;
+    const input={root:process.cwd()};let manifest,trusted=false,resumeId='new';
+    const {openCodingBuyer,savedCodingContexts,pendingApplications}=await import('./coding-buyer.mjs');
     const cancelReservation=async()=>{
       const stopped=await post(`/sessions/${session.id}/stop`);
       await ui.page('Reservation cancelled',[`Refunded: ${stopped.refunded??'pending'} test credits`,`Held: ${stopped.reserved??'unresolved'} test credits`,stopped.state==='settlement_pending'?'Accounting pending: uncertain upstream outcome remains held.':`Status: ${words(stopped.state)}`]);
     };
     const {projectManifest}=await import('./workspace.mjs');
     for(;;){
-      const selected=await ui.form('Choose a project',[{name:'root',label:'Project directory',maxLength:4096,validate:required}],input);
-      if(!selected){await cancelReservation();return;}
+      const projectSelection=await ui.form('Choose a project',[{name:'root',label:'Project directory',maxLength:4096,validate:required}],input);
+      if(!projectSelection){await cancelReservation();return;}
       try{manifest=await ui.task('Prepare reviewed project manifest',()=>projectManifest(input.root));}
       catch(e){await ui.page('Project directory needs attention',[`Project directory: ${input.root}`,...errorLines(e)]);continue;}
-      const resources=manifest.files.filter(f=>f.resource);
-      const next=await ui.menu('Project import manifest',[item('continue','Continue to import confirmation'),item('back','Choose another directory'),item('cancel','Cancel')],{lines:[`Canonical path: ${manifest.root}`,`Eligible files: ${manifest.files.length} · Total size: ${manifest.totalBytes} bytes`,`Reviewed resources: ${resources.map(f=>f.path).join(', ')||'none'}`,'Exclusions:',...manifest.exclusions.categories,...manifest.files.map(f=>`${f.path} · ${f.bytes} bytes`)]});
-      if(next==='cancel'){await cancelReservation();return;}
-      if(next!=='continue')continue;
-      if(!await confirm('Import this project?',[manifest.root,`${manifest.files.length} files · ${manifest.totalBytes} bytes`,'This permission imports reviewed files. Resource trust, VM launch and host application are separate permissions.'],'Import reviewed files'))continue;
-      break;
+      const contexts=await (dependencies.savedCodingContexts??savedCodingContexts)(store.profile,manifest.root);
+      let selected;
+      for(;;){
+        const resources=manifest.files.filter(f=>f.resource);
+        selected=await ui.menu('Review project and launch',[
+          item('launch','Import and launch new coding conversation'),...contexts.map(c=>item(c.id,`Import and resume ${date(c.savedAt)}`)),
+          ...(resources.length?[item('trust',`Resource trust: ${trusted?'enabled':'off'}`)]:[]),item('back','Choose another directory'),item('cancel','Cancel reservation'),
+        ],{lines:[`Canonical project: ${manifest.root}`,`Files: ${manifest.files.length} · Bytes: ${manifest.totalBytes}`,`Resources: ${resources.map(f=>f.path).join(', ')||'none'}`,`Resource trust: ${trusted?'enabled':'off'}`,...manifest.exclusions.categories,'Reads stay in the reviewed VM project. Commands, edits and host application require host approval.']});
+        if(selected==='trust'){trusted=!trusted;continue;}break;
+      }
+      if(!selected||selected==='cancel'){await cancelReservation();return;}
+      if(selected==='back'){trusted=false;continue;}
+      resumeId=selected==='launch'?'new':selected;break;
     }
-    const resources=manifest.files.filter(f=>f.resource);
-    const trusted=resources.length?await confirm('Trust reviewed project resources?',resources.map(f=>f.path),'Trust for this isolated project'):false;
-    const {openCodingBuyer,savedCodingContexts,pendingApplications}=await import('./coding-buyer.mjs');
-    const contexts=await (dependencies.savedCodingContexts??savedCodingContexts)(store.profile,manifest.root);
-    const resumeId=contexts.length?await ui.menu('Coding context',[item('new','Start a new conversation'),...contexts.map(c=>item(c.id,`Resume ${date(c.savedAt)}`,c.id))],{lines:['This accepted session supplies new authority. Previous inference and tool actions are not replayed.']}):'new';
-    if(!resumeId||!await confirm('Launch isolated coding VM?',[manifest.root,'The host terminal will review each mutation or command. VM reads are automatic.'],'Launch VM')){await cancelReservation();return;}
     let buyer,interrupted,location='Changes remain in the VM.',saved,discard=false;
     const coordinator=new TerminalCoordinator(ui,o=>buyer?.lifecycle.event(o.phase,o));
     try {
-      buyer=await ui.task('Start coding development VM',signal=>(dependencies.openCodingBuyer??openCodingBuyer)(network,session.id,{signal,root:manifest.root,files:manifest.files.map(f=>f.path),runtimeConfig,trusted,profile:store.profile,coordinator,approve:(a,p)=>coordinator.approve(a,p),...(resumeId!=='new'?{resumeId}:{})}));
+      buyer=await ui.task('Start coding development VM',signal=>(dependencies.openCodingBuyer??openCodingBuyer)(network,session.id,{signal,root:manifest.root,files:manifest.files.map(f=>f.path),runtimeConfig,trusted,profile:store.profile,confirmProject:p=>confirm('Confirm legacy checkpoint project',[p.root,'Validate original-file hashes before restoring context.'],'Use this project'),coordinator,approve:(a,p)=>coordinator.approve(a,p),...(resumeId!=='new'?{resumeId}:{})}));
       const applications=await (dependencies.pendingApplications??pendingApplications)(store.profile,manifest.root);
       interrupted=applications.length?await ui.menu('Interrupted application',[item('skip','Start coding without recovery'),...applications.map(a=>item(a.journal,a.operationId,`${a.completed} files confirmed complete`))],{lines:['Recover exact reviewed contents. Changed host originals are preserved.']}):undefined;
       if(interrupted==='skip')interrupted=undefined;
       let enterCoding=!interrupted;
       for(;;){
-        if(enterCoding){try{await ui.suspend(()=>buyer.interactive());}catch(e){if(e.restorationCode)buyer.lifecycle.event('terminal_restoration',{code:e.restorationCode});if(!recoverableStatusFailure(e)||buyer.lifecycle.closing||e.restorationCode)throw e;await ui.page('Coding paused',[...errorLines(e),'The VM and saved work remain available. New inference and mutations wait for authenticated status.']);}enterCoding=false;}
+        if(enterCoding){try{await ui.suspend(()=>buyer.interactive());}catch(e){if(e.restorationCode)buyer.lifecycle.event('terminal_restoration',{code:e.restorationCode});if(e.restorationCode)throw e;await ui.page('Coding paused',[...errorLines(e),'Inference is unavailable. Review, Apply and Export remain available for saved coding work.']);}enterCoding=false;}
         try{saved=await ui.task('Save private coding checkpoint',()=>buyer.save());location=`Saved privately: ${saved.resumeId} · ${date(saved.savedAt)}`;}
         catch(e){await ui.page('Checkpoint could not be updated',[...errorLines(e),'The last successful checkpoint remains available.']);}
         let current,statusUnavailable=false;try{current=await buyer.status();}catch{current=session;statusUnavailable=true;}
@@ -437,7 +443,7 @@ export async function runTui(options = {}, dependencies = {}) {
             if(result.status==='interrupted'){interrupted=result.journal;location='Host application encountered a conflict; saved VM work is preserved.';}
             if(result.status==='applied'){interrupted=undefined;location='Reviewed changes applied to the host; checkpoint saved privately.';}
             await ui.page('Workspace result',[result.status??'exported',location,...(result.directory?[result.directory]:[]),...(result.completed??[]),...(result.excluded?[`Excluded generated/private/ignored files: ${Object.values(result.excluded).reduce((a,b)=>a+b,0)}`]:[])]);
-          }catch(e){await ui.page('Workspace remains available',[...errorLines(e),location]);}
+          }catch(e){await ui.page('Saved-work recovery',[...errorLines(e),location,'Review, Apply and Export use the last saved snapshot. Further inference requires active compute.']);}
           continue;
         }
         if(!action||action==='finish'){
@@ -455,9 +461,19 @@ export async function runTui(options = {}, dependencies = {}) {
 
   async function savedWork(){
     const {savedCodingContexts,pendingApplications}=await import('./coding-buyer.mjs');
-    const contexts=await savedCodingContexts(store.profile),journals=await pendingApplications(store.profile);
-    const choice=await ui.menu('Saved coding work',[...contexts.map(c=>item(c.id,`Checkpoint ${date(c.savedAt)}`,c.root)),item('back','Back')],{lines:[`${journals.length} interrupted application journals`,...journals.map(j=>`${j.operationId}: ${j.completed} confirmed files · ${j.root}`),'To resume coding or recover an application, accept a new valid session and select the same project. Inference and tools are never replayed.']});
-    if(choice&&choice!=='back')await sessionDetail(choice);
+    const {openSavedCodingWork}=await import('./saved-work.mjs');
+    const contexts=await savedCodingContexts(store.profile);
+    const choice=await ui.menu('Saved coding work',[...contexts.map(c=>item(c.id,`Checkpoint ${date(c.savedAt)}`,c.root)),item('back','Back')],{lines:['Review, Apply and Export require no running VM or new session. Resume coding requires a newly accepted session.']});
+    if(!choice||choice==='back')return;
+    const coordinator=new TerminalCoordinator(ui);
+    const work=await openSavedCodingWork(store.profile,choice,{approve:(a,p)=>coordinator.approve(a,p),confirmProject:p=>confirm('Confirm legacy checkpoint project',[p.root,'Original-file hashes will be validated before review.'],'Use this project')});
+    for(;;){
+      const journals=await pendingApplications(store.profile,work.workspace.root);
+      const action=await ui.menu('Saved workspace',[item('review','Review changes'),item('apply','Review and Apply'),item('export','Export reviewed snapshot'),...journals.map(j=>item(j.journal,'Recover interrupted application',j.operationId)),item('back','Back')],{lines:[work.workspace.root,`Snapshot: ${work.snapshotRevision}`,'Saved work is available independently of compute and settlement.']});
+      if(!action||action==='back')return;
+      if(action==='review'){const review=await work.review();await ui.page('Saved changes',review.changes.flatMap((c,i)=>[`${c.kind}: ${c.path}`,...review.diffs[i].map(text=>({text,kind:text.startsWith('+')?'added':text.startsWith('-')?'removed':'heading'}))]));}
+      else await attempt(async()=>{const result=await (action==='apply'?work.apply():action==='export'?work.export():work.recover(action));await ui.page('Saved-work result',[result.status??'exported',result.directory??'',...(result.completed??[]),...(result.code?[result.code]:[])]);});
+    }
   }
 
   async function sessionDetail(id) {

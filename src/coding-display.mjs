@@ -19,3 +19,10 @@ export function inferenceErrorMessage(code,cancelled=false) {
   if(/unknown|incomplete|stream_invalid/.test(code??''))return 'The inference outcome is unknown. Reconcile the session before continuing; no request was replayed.';
   return `Inference could not complete (${/^[a-z0-9_]{1,80}$/.test(code??'')?code:'coding_bridge_rejected'}). Check the session status; no request was replayed.`;
 }
+
+export function thinkingExplanation({accepted=false,providerEnabled=false,modelSupported=null}={}) {
+  if(modelSupported===false)return 'This model is unsupported for thinking by this connector.';
+  if(!providerEnabled&&modelSupported===true)return 'The provider disabled thinking. Enable support and publish a new listing, then accept a new session.';
+  if(!accepted)return 'The accepted session lacks thinking support. Accept a new session with thinking enabled by the provider.';
+  return 'Thinking is available in this session and starts off. Choose a thinking level to enable it.';
+}

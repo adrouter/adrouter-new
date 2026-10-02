@@ -9,7 +9,7 @@ for(const [path,expected] of Object.entries(metadata.files)){
  const file=join(directory,path),stat=await lstat(file);if(!stat.isFile()||stat.isSymbolicLink())throw Error('coding_provenance_file_invalid');
  if(createHash('sha256').update(await readFile(file)).digest('hex')!==expected)throw Error('coding_provenance_mismatch');
 }
-for(const file of ['coding-entry.mjs','coding-provider.mjs','coding-controls.mjs','workspace-snapshot.mjs','coding-preview.mjs'])if(!Buffer.from(await readFile(join(root,'src/guest',file))).equals(await readFile(join(directory,'guest',file))))throw Error('coding_guest_source_drift');
+for(const file of ['coding-entry.mjs','coding-provider.mjs','coding-controls.mjs','workspace-snapshot.mjs','coding-preview.mjs','coding-read-policy.mjs'])if(!Buffer.from(await readFile(join(root,'src/guest',file))).equals(await readFile(join(directory,'guest',file))))throw Error('coding_guest_source_drift');
 if(!Buffer.from(await readFile(join(root,'src/coding-wire.mjs'))).equals(await readFile(join(directory,'guest/coding-wire.mjs'))))throw Error('coding_wire_source_drift');
 console.log(JSON.stringify({status:'passed',revision:metadata.revision,files:Object.keys(metadata.files).length,licenses:true,legacyInstallationRequired:false}));
 

@@ -129,6 +129,7 @@ export async function run(args, dependencies = {}) {
     else if (sub === 'capabilities') {if(!['off','supported'].includes(o.thinking))throw new ClientError('invalid_thinking_setting');output(await post(`/providers/nodes/${requireId(id)}/capabilities`,{thinkingEnabled:o.thinking==='supported'}));}
     else if (sub === 'listings') output(await get('/providers/nodes'));
     else if (sub === 'inspect') output(await get(`/providers/nodes/${requireId(id)}`));
+    else if (sub === 'tariff-refresh') output(await post(`/providers/nodes/${requireId(id)}/tariff/refresh`,{durationSeconds:Number(o.duration??3600)}));
     else if (['publish', 'pause', 'stop'].includes(sub)) output(await post(`/providers/nodes/${requireId(id)}/${sub}`, sub === 'stop' ? {scope:'node',trigger:'operator_stop'} : {}));
     else if (sub === 'delete') {
       const nodeId = requireId(id);

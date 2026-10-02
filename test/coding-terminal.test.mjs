@@ -19,5 +19,5 @@ test('host review borrows the screen and restores guest mouse/paste modes',()=>{
  assert.equal(input.isRaw,false);
 });
 test('command approval preserves line breaks and indentation',()=>{
- assert.deepEqual(approvalLines({name:'bash',args:{command:'first\n\tsecond'}}).slice(0,3),['Command:','  first','      second']);
+ assert.deepEqual(approvalLines({name:'bash',args:{command:'first\n\tsecond'}}).slice(0,3),['┌─ Command ─','│ first','│     second']);
 });

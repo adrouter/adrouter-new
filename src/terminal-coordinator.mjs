@@ -1,10 +1,11 @@
 import { spawn, spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
+import { renderScreen } from './tui-screen.mjs';
 import { ClientError } from './network.mjs';
 
 export function approvalLines(action) {
   const args = action.args ?? {};
-  if (action.name === 'bash' || action.name === 'operator_command') return ['Command:',...String(args.command??'').split('\n').map(line=>'  '+line.replaceAll('\t','    ')), 'Working directory: /workspace', `Timeout: ${args.timeout ?? 120} seconds`];
+  if (action.name === 'bash' || action.name === 'operator_command') return ['┌─ Command ─',...String(args.command??'').split('\n').map(line=>'│ '+line.replaceAll('\t','    ')), '└────────────', 'Working directory: /workspace', `Timeout: ${args.timeout ?? 120} seconds`];
   if (action.changes) return action.changes.flatMap(c => [`${c.kind}: ${c.path}`, ...(c.diff ?? (c.content === null ? ['- File deleted'] : String(c.content).split('\n').map(l => `+ ${l}`)))]);
   if (['write', 'edit'].includes(action.name)) return [`File: ${args.path}`, ...(action.diff ?? [`- ${args.oldText ?? ''}`, `+ ${args.newText ?? args.content ?? ''}`])];
   return [action.name, ...JSON.stringify(args, null, 2).split('\n')];
@@ -16,66 +17,86 @@ export class TerminalModes {
   restore(){return '\x1b[0m'+[...this.states].filter(([k])=>k!=='1049').map(([k,v])=>`\x1b[?${k}${v}`).join('');}
 }
 export class TerminalCoordinator {
-  constructor(ui, record = () => {}) { this.ui = ui; this.record = record; this.tail = Promise.resolve(); this.reviewing = false; }
-  approve(action, permission) {
-    const pending = this.tail.then(async () => {
-      if (Date.now() >= permission.expiresAt) return false;
-      const attached = this.attached;
-      this.reviewing = true;
+  constructor(ui,record=()=>{}){this.ui=ui;this.record=record;this.tail=Promise.resolve();this.state='workspace';this.reviewing=false;}
+  setControl(control){this.control=control;}
+  async transition(operation){if(this.control)await this.control(operation);}
+  workspace(){if(this.state!=='coding')throw new ClientError('terminal_operation_busy');this.state='workspace';this.detachWait?.();}
+  close(){this.state='closed';this.child?.kill('SIGTERM');this.detachWait?.();this.ui.pending?.resolve(null);}
+  approve(action,permission){
+    const pending=this.tail.then(async()=>{
+      if(Date.now()>=permission.expiresAt)return false;
+      const inline=this.attached&&this.state==='coding',modes=this.modes?.restore();let draw;
+      this.reviewing=true;
       const expiry=setTimeout(()=>this.ui.pending?.resolve(null),Math.max(1,permission.expiresAt-Date.now()));
-      try {
-        if (attached) { this.ui.input.removeListener('data', this.onData); this.ui.start({borrowScreen:true}); }
-        let details = false;
-        for (;;) {
-          const choice = await this.ui.menu('Approve this action once?', [
-            {value:'deny',label:'Deny'}, {value:'allow',label:'Allow once'},
-            {value:'details',label:details?'Collapse details':'Expand details'},
-          ], {lines:[action.name, ...reviewLines(action).slice(0,10), ...(details ? [`Session: ${action.sessionId}`, `Tool call: ${action.toolCallId ?? 'host review'}`, `Content digest: ${permission.digest}`, `Expires: ${new Date(permission.expiresAt).toLocaleTimeString()}`] : [])]});
-          if (choice === 'details') { details = !details;if(details)await this.ui.page('Full action details',[...reviewLines(action),`Session: ${action.sessionId}`,`Tool call: ${action.toolCallId??'host review'}`,`Content digest: ${permission.digest}`,`Expires: ${new Date(permission.expiresAt).toLocaleTimeString()}`]);continue; }
-          return choice === 'allow' && Date.now() < permission.expiresAt;
+      try{
+        if(inline){
+          this.ui.input.removeListener('data',this.onData);
+          await this.transition('suspend');this.state='approval';
+          this.ui.start({borrowScreen:true});
+          draw=this.ui.draw;
+          this.ui.draw=screen=>{
+            if(screen)this.ui.screen=screen;
+            if(!this.ui.started||!this.ui.screen)return;
+            const rows=Math.max(2,this.ui.output.rows||24),height=Math.min(rows,Math.max(8,Math.floor(rows*.55)));
+            this.ui.output.write(`\x1b[${rows-height+1};1H`+renderScreen({...this.ui.screen,context:'Host approval · conversation above',sidebar:[]},this.ui.output.columns||80,height,this.ui.color));
+          };
         }
-      } finally {
+        let details=false;
+        for(;;){
+          const choice=await this.ui.menu('Approve this action once?',[
+            {value:'deny',label:'Deny'},{value:'allow',label:'Allow once'},{value:'details',label:details?'Collapse details':'Expand details'},
+          ],{lines:[action.name,...reviewLines(action).slice(0,10),...(details?[`Project: ${action.root??'/workspace'}`,`Snapshot: ${action.snapshotRevision??'live tool'}`,`Content digest: ${permission.digest}`]:[])]});
+          if(choice==='details'){details=!details;if(details)await this.ui.page('Full action details',[...reviewLines(action),`Session: ${action.sessionId}`,`Digest: ${permission.digest}`]);continue;}
+          return choice==='allow'&&Date.now()<permission.expiresAt;
+        }
+      }finally{
         clearTimeout(expiry);
-        if (attached) {
-          try{this.ui.stop();}catch{this.record({phase:'terminal_restoration',code:'terminal_restore_failed'});}
-          if (this.attached && !this.ui.terminated) {
-            this.ui.input.setRawMode(true); this.ui.input.resume(); this.ui.input.on('data',this.onData);
-            this.ui.output.write(this.modes?.restore()??'');this.reviewing = false; this.resize(true);
+        if(inline){
+          if(draw)this.ui.draw=draw;
+          this.ui.stop();
+          if(this.attached&&this.state!=='closed'&&!this.ui.terminated){
+            this.ui.input.setRawMode(true);this.ui.input.resume();this.ui.output.write(modes??'');
+            this.state='resuming';await this.transition('resume');this.state='coding';
+            this.ui.input.on('data',this.onData);
           }
         }
-        this.reviewing = false;
+        this.reviewing=false;
       }
-    });
-    this.tail = pending.catch(() => false); return pending;
+    });this.tail=pending.catch(()=>false);return pending;
   }
-  send(frame) { if (this.child && !this.child.stdin.destroyed) this.child.stdin.write(JSON.stringify(frame)+'\n'); }
-  resize(redraw=false) { this.send({columns:Math.max(2,this.ui.output.columns||80),rows:Math.max(2,this.ui.output.rows||24),redraw}); }
-  async attach(executable, args, environment, signal) {
-    if (this.attached || this.ui.started || !this.ui.input.isTTY) throw new ClientError('terminal_operation_busy');
+  send(frame){if(this.child&&!this.child.stdin.destroyed)this.child.stdin.write(JSON.stringify(frame)+'\n');}
+  resize(){this.send({columns:Math.max(2,this.ui.output.columns||80),rows:Math.max(2,this.ui.output.rows||24)});}
+  async attach(executable,args,environment,signal){
+    if(this.attached||this.ui.started||!this.ui.input.isTTY||this.state==='closed')throw new ClientError('terminal_operation_busy');
     const input=this.ui.input,output=this.ui.output,raw=!!input.isRaw,flowing=input.readableFlowing;
-    let lines='',outcome,primary;
     const captured=spawnSync('/bin/stty',['-g'],{stdio:[input,'pipe','ignore'],encoding:'utf8',timeout:1000});
     const terminalState=captured.status===0?captured.stdout.trim():undefined;
     if(!terminalState||!/^[A-Za-z0-9_=;:-]+$/.test(terminalState))throw new ClientError('terminal_state_unavailable');
-    this.attached = true;this.modes=new TerminalModes();
-    this.child = spawn('python3',[fileURLToPath(new URL('./terminal-pty.py',import.meta.url))],{env:{PATH:'/opt/homebrew/bin:/usr/bin:/bin'},stdio:['pipe','pipe','ignore']});
-    this.send({command:[executable,...args],environment,columns:Math.max(2,output.columns||80),rows:Math.max(2,output.rows||24)});
-    this.onData=b=>{if(!this.reviewing)this.send({input:Buffer.from(b).toString('base64')});};
-    const resize=()=>this.resize(),abort=()=>this.child?.kill('SIGTERM');
-    input.setRawMode(true);input.resume();input.on('data',this.onData);output.on('resize',resize);signal?.addEventListener('abort',abort,{once:true});
-    try {
-      await new Promise((resolve,reject)=>{
-        this.child.stdout.on('data',b=>{lines+=b;try{if(lines.length>262144)throw new ClientError('pty_frame_limit');let at;while((at=lines.indexOf('\n'))>=0){const frame=JSON.parse(lines.slice(0,at));lines=lines.slice(at+1);if(frame.output){const bytes=Buffer.from(frame.output,'base64');this.modes.observe(bytes);if(!this.reviewing)output.write(bytes);}if(Object.hasOwn(frame,'exitCode'))outcome=frame;}}catch(e){abort();reject(e);}});
+    const continuing=!!this.child;this.attached=true;
+    if(!this.child){
+      this.modes=new TerminalModes();let lines='',outcome;
+      this.child=spawn('python3',[fileURLToPath(new URL('./terminal-pty.py',import.meta.url))],{env:{PATH:'/opt/homebrew/bin:/usr/bin:/bin'},stdio:['pipe','pipe','ignore']});
+      this.exit=new Promise((resolve,reject)=>{
+        this.child.stdout.on('data',b=>{lines+=b;try{if(lines.length>262144)throw new ClientError('pty_frame_limit');let at;while((at=lines.indexOf('\n'))>=0){const frame=JSON.parse(lines.slice(0,at));lines=lines.slice(at+1);if(frame.output){const bytes=Buffer.from(frame.output,'base64');if(['coding','resuming'].includes(this.state)){this.modes.observe(bytes);output.write(bytes);}}if(Object.hasOwn(frame,'exitCode'))outcome=frame;}}catch(e){this.close();reject(e);}});
         this.child.once('error',()=>reject(new ClientError('guest_console_failed')));
-        this.child.once('close',()=>{if(this.reviewing)this.ui.pending?.resolve(null);this.record({phase:'console',...outcome,...(outcome?.exitCode!==0?{code:signal?.aborted?'runtime_cancelled':'guest_console_cancelled'}:{})});if(outcome?.exitCode===0)resolve();else reject(Object.assign(new ClientError(signal?.aborted?'runtime_cancelled':'guest_console_cancelled'),outcome));});
-        if(signal?.aborted)abort();
-      });
-    } catch(e) { primary=e; }
-    finally {
-      this.attached=false;if(this.reviewing){this.ui.pending?.resolve(null);await this.tail.catch(()=>{});}signal?.removeEventListener('abort',abort);input.removeListener('data',this.onData);output.removeListener('resize',resize);
-      try { input.setRawMode(raw);const restored=spawnSync('/bin/stty',[terminalState],{stdio:[input,'ignore','ignore'],timeout:1000});if(restored.status!==0)throw new ClientError('terminal_restore_failed');if(flowing!==true)input.pause();output.write('\x1b[0m\x1b[?25h\x1b[?1000l\x1b[?1002l\x1b[?1003l\x1b[?1006l\x1b[?2004l\x1b[?1049l');this.record({phase:'terminal_restoration',status:'succeeded'}); }
-      catch(e) { this.record({phase:'terminal_restoration',code:'terminal_restore_failed'});primary??=new ClientError('terminal_restore_failed'); }
-      this.child=undefined;
+        this.child.once('close',()=>{this.state='closed';this.child=undefined;this.ui.pending?.resolve(null);this.record({phase:'console',...outcome});if(outcome?.exitCode===0)resolve();else reject(Object.assign(new ClientError(signal?.aborted?'runtime_cancelled':'guest_console_cancelled'),outcome));});
+      });this.exit.catch(()=>{});
+      this.send({command:[executable,...args],environment,columns:Math.max(2,output.columns||80),rows:Math.max(2,output.rows||24)});
+    }
+    this.onData=b=>{if(this.state==='coding'&&!this.reviewing)this.send({input:Buffer.from(b).toString('base64')});};
+    const resize=()=>this.resize(),abort=()=>this.close();let primary;
+    input.setRawMode(true);input.resume();input.on('data',this.onData);output.on('resize',resize);signal?.addEventListener('abort',abort,{once:true});
+    try{
+      this.state=continuing?'resuming':'coding';
+      const detached=new Promise(r=>this.detachWait=r);
+      if(continuing){this.resize();await this.transition('resume');this.state='coding';}
+      if(signal?.aborted)this.close();
+      await Promise.race([this.exit,detached]);
+    }catch(e){primary=e;this.close();}
+    finally{
+      this.attached=false;this.detachWait=undefined;signal?.removeEventListener('abort',abort);input.removeListener('data',this.onData);output.removeListener('resize',resize);
+      if(this.reviewing){this.ui.pending?.resolve(null);await this.tail.catch(()=>{});}
+      try{input.setRawMode(raw);const result=spawnSync('/bin/stty',[terminalState],{stdio:[input,'ignore','ignore'],timeout:1000});if(result.status!==0)throw Error();if(flowing!==true)input.pause();output.write('\x1b[0m\x1b[?25h\x1b[?1000l\x1b[?1002l\x1b[?1003l\x1b[?1006l\x1b[?2004l\x1b[<u\x1b[?1049l');this.record({phase:'terminal_restoration',status:'succeeded'});}catch{primary??=new ClientError('terminal_restore_failed');}
     }
     if(primary)throw primary;
   }

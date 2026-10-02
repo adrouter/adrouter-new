@@ -58,7 +58,7 @@ def run(request):
     if os.path.realpath(root_path) != root_path: raise ValueError('apply_root_rejected')
     root = os.open(root_path, O_DIR); s = os.fstat(root)
     if str(s.st_dev) != request['identity']['dev'] or str(s.st_ino) != request['identity']['ino']: raise ValueError('apply_root_changed')
-    state = {'schemaVersion':1,'operationId':request['id'],'root':root_path,'identity':request['identity'],'status':'preparing','completed':[],'changes':request['changes']}
+    state = {'schemaVersion':1,'operationId':request['id'],'root':root_path,'identity':request['identity'],'snapshotRevision':request.get('snapshotRevision'),'status':'preparing','completed':[],'changes':request['changes']}
     if request.get('recover'):
         f=os.open(journal,os.O_RDONLY|os.O_NOFOLLOW)
         try:
@@ -66,7 +66,7 @@ def run(request):
             if not stat.S_ISREG(st.st_mode) or st.st_nlink!=1 or st.st_uid!=os.getuid() or st.st_mode & 0o077: raise ValueError('apply_journal_rejected')
             state=json.loads(os.read(f,32*1024*1024))
         finally: os.close(f)
-        if state['operationId']!=request['id'] or state['root']!=root_path or state.get('identity')!=request['identity'] or state['changes']!=request['changes']: raise ValueError('apply_journal_mismatch')
+        if state['operationId']!=request['id'] or state['root']!=root_path or state.get('identity')!=request['identity'] or state['changes']!=request['changes'] or state.get('snapshotRevision')!=request.get('snapshotRevision'): raise ValueError('apply_journal_mismatch')
     try:
         for c in request['changes']:
             parts(c['path']); data, mode = original(root,c); actual = None if data is None else digest(data)

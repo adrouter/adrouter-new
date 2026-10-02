@@ -5,7 +5,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { workspaceSnapshot } from '../src/guest/workspace-snapshot.mjs';
 import { importWorkspace, reviewAndApply } from '../src/workspace.mjs';
-import { CodingDisplay, estimateCredits, inferenceErrorMessage } from '../src/coding-display.mjs';
+import { CodingDisplay, estimateCredits, inferenceErrorMessage, thinkingExplanation } from '../src/coding-display.mjs';
 import { actionDiff } from '../src/action-diff.mjs';
 
 test('guest-created hidden/generated/ignored files never block reviewed host application',async()=>{
@@ -43,4 +43,20 @@ test('known limits and cancellation do not falsely instruct reconciliation',()=>
 test('approval diffs retain unchanged context and only mark actual changes',async()=>{
  const lines=await actionDiff('one\ntwo\nthree\n','one\nchanged\nthree\n');
  assert.ok(lines.includes(' one'));assert.ok(lines.includes('-two'));assert.ok(lines.includes('+changed'));assert.ok(lines.includes(' three'));
+});
+
+test('thinking explanation distinguishes provider opt-out, accepted session and model support',()=>{
+ assert.match(thinkingExplanation({modelSupported:true,providerEnabled:false}),/provider disabled/);
+ assert.match(thinkingExplanation({providerEnabled:true,accepted:false}),/accepted session lacks/);
+ assert.match(thinkingExplanation({modelSupported:false}),/model is unsupported/);
+ assert.match(thinkingExplanation({accepted:true,providerEnabled:true}),/starts off/);
+});
+
+test('automatic coding reads reject outside roots and links while reviewed files remain readable',async()=>{
+ const {reviewedRead}=await import('../src/guest/coding-read-policy.mjs');const {symlink}=await import('node:fs/promises');
+ const root=await realpath(await mkdtemp(join(tmpdir(),'adr-read-policy-')));
+ try{await writeFile(join(root,'main.txt'),'synthetic');await symlink('/tmp',join(root,'outside'));assert.equal((await reviewedRead({toolName:'read',arguments:{path:'main.txt'}},root)).allow,true);
+ for(const path of ['../outside','/etc/passwd','outside/file','.adr-runtime/config.json'])assert.equal((await reviewedRead({toolName:'read',arguments:{path}},root)).allow,false);
+ assert.equal((await reviewedRead({toolName:'ls',arguments:{}},root)).allow,true);
+ }finally{await rm(root,{recursive:true,force:true});}
 });
