@@ -1,11 +1,11 @@
 {
   "name": "@adrouter/adr-cli",
-  "version": "0.1.0-alpha.25",
+  "version": "0.1.0-alpha.26",
   "private": true,
   "description": "adr-v2 test-credit compute marketplace terminal",
   "type": "module",
   "engines": {
-    "node": ">=22.14.0"
+    "node": ">=22.19.0"
   },
   "license": "MIT",
   "repository": {
@@ -25,7 +25,8 @@
     "LICENSE",
     "pi-provenance.lock.json",
     "release-policy.json",
-    "coding-runtime/"
+    "coding-runtime/",
+    "provider-runtime/"
   ],
   "scripts": {
     "test": "node --test test/*.test.mjs",
@@ -34,7 +35,8 @@
     "coding:build": "node scripts/build-coding-runtime.mjs ../adrouterCLI --verify",
     "coding:mac": "node scripts/verify-coding-mac.mjs",
     "coding:pty": "python3 scripts/verify-coding-pty.py --long",
-    "coding:verify": "node scripts/verify-coding-provenance.mjs"
+    "coding:verify": "node scripts/verify-coding-provenance.mjs",
+    "provider:build": "node scripts/build-provider-runtime.mjs"
   },
   "publishConfig": {
     "access": "public",
@@ -42,6 +44,7 @@
     "registry": "https://registry.npmjs.org/"
   },
   "dependencies": {
+    "@earendil-works/pi-ai": "1.0.0",
     "ajv": "8.20.0",
     "ignore": "7.0.5"
   },

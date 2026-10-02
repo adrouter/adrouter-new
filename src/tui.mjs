@@ -1,3 +1,4 @@
+import { piCatalog } from './generated/pi-catalog.mjs';
 import { validateBinding } from './provider-broker.mjs';
 import { providerFailureLines } from './coding-display.mjs';
 import { connectorCatalog, resolveConnector, connectorReviewLines, CONNECTOR_PROTOCOL } from './connectors.mjs';
@@ -81,7 +82,7 @@ export const errorLines = error => {
   return [problems[code] ?? `Unable to complete this operation: ${words(code)}.`, '', `Reference: ${code}`];
 };
 export function listingLines(l) {
-  return [l.name, `Model: ${l.model}`, `Supply: ${words(l.supplyClass)} · ${l.availability}`, `Availability: ${l.ready ? 'Hot · ready' : l.controlOnline && l.availability === 'cold' ? 'Cold · control online · 120 seconds to activate' : 'Offline'}`, `Input: ${l.inputRate} test credits / 1M tokens`, `Output: ${l.outputRate} test credits / 1M tokens`, 'Test credits have no cash value.', l.evaluation ? `Evaluation: ${l.evaluation.passed ? 'qualified' : 'provisional'} · ${l.evaluation.sampleCount} samples · ${l.evaluation.elapsedMs} ms` : 'Evaluation: not available', `Published: ${date(l.publishedAt)}`];
+  return [l.name, `Model: ${l.model}`, `Supply: ${words(l.supplyClass)} · ${l.availability}`, `Availability: ${l.ready ? 'Hot · ready' : l.controlOnline && l.availability === 'cold' ? 'Cold · control online · 120 seconds to activate' : 'Offline'}`, `Input: ${l.inputRate} test credits / 1M tokens`, `Output: ${l.outputRate} test credits / 1M tokens`, 'Test credits have no cash value.', l.nativeQualified ? 'Compatibility: streaming, tools and final usage verified' : l.evaluation ? `Evaluation: ${l.evaluation.passed ? 'qualified' : 'provisional'} · ${l.evaluation.sampleCount} samples · ${l.evaluation.elapsedMs} ms` : 'Evaluation: not available', `Published: ${date(l.publishedAt)}`];
 }
 export function quoteAccess(config,listing) {
   if(!config)return {disabled:true,code:'network_policy_unavailable',detail:problems.network_policy_unavailable};
@@ -181,7 +182,7 @@ export async function runTui(options = {}, dependencies = {}) {
     if (!bounds) return;
     Object.assign(savedBounds, bounds);
     const { startProvider } = await import('./provider.mjs');
-    if (!reviewed && !await confirm('Launch this VM?', [node.name, `Endpoint: ${node.endpoint}`, `Model: ${node.model}`, `Maximum requests: ${bounds.maxCalls}`, `Maximum output per request: ${bounds.maxOutputTokens}`, 'Publish your listing and qualify its current tariff before your private evaluation.', 'The terminal will attach directly to the guest. Ctrl+C stops it.'], node.availability === 'cold' ? 'Start cold control' : 'Launch hot VM')) return;
+    if (!reviewed && !await confirm('Launch this VM?', [node.name, `Endpoint: ${node.endpoint}`, `Models: ${node.models?.join(', ')??node.model}`, `Maximum requests: ${bounds.maxCalls}`, `Maximum output per request: ${bounds.maxOutputTokens}`, 'Publish your listing and qualify its current tariff before your private evaluation.', 'The terminal will attach directly to the guest. Ctrl+C stops it.'], node.availability === 'cold' ? 'Start cold control' : 'Launch hot VM')) return;
     const result = await ui.suspend(() => startProvider(network, node.id, { maxCalls: Number(bounds.maxCalls), maxOutputTokens: Number(bounds.maxOutputTokens), runtimeConfig, notify: value => {
       if (value.status === 'activation_required' && currentProviderId === node.id) ui.pending?.resolve('refresh');
       if (ui.screen?.title?.startsWith('Provider operation')) ui.pending?.redraw?.();
@@ -198,8 +199,9 @@ export async function runTui(options = {}, dependencies = {}) {
     actor('provider');
     const draftKey = `${store.profile ?? 'default'}:${network.origin}`;
     const savedDraft = setupDrafts.get(draftKey);
-    const supply=savedDraft?'resume':await ui.menu('List compute · 1 of 3',[item('authorized_api','Authorized API','DeepSeek, MiMo or a custom OpenAI-compatible API.'),item('self_hosted','Self-hosted','Your own public endpoint or reviewed loopback inference engine.'),item('back','Back')]);
+    const supply=savedDraft?'resume':await ui.menu('List compute · 1 of 3',[item('authorized_api','Authorized API','Metered API-key providers from the pinned Pi catalog.'),item('self_hosted','Self-hosted','Your own public endpoint or reviewed loopback inference engine.'),item('back','Back')]);
     if(!supply||supply==='back')return;
+    if(supply==='authorized_api')return createNativeListing();
     const preset=savedDraft?'resume':supply==='authorized_api'?await ui.menu('Choose authorized API',[...connectorCatalog.presets.map(p=>item(p.id,p.name)),item('custom','OpenAI-compatible API gateway','Full Chat Completions URL and exact model ID; streaming, function tools and final token usage are required.'),item('back','Back')]):'self';
     if(!preset||preset==='back')return;
     const selectedPreset=connectorCatalog.presets.find(p=>p.id===preset);
@@ -235,7 +237,50 @@ export async function runTui(options = {}, dependencies = {}) {
       await manageNode(node.id, true); return;
     }
   }
+  async function createNativeListing(existing) {
+    if(!config.capabilities?.includes('pi_native_v1'))throw new ClientError('pi_native_client_required');
+    const draftKey='native:'+store.profile+':'+network.origin,state=setupDrafts.get(draftKey)??(existing?{provider:existing.provider,models:existing.models,limits:{...existing,...existing.fields,maxOutputTokens:String(existing.maxOutputTokens)}}:{models:[],limits:{}});setupDrafts.set(draftKey,state);
+    const providerId=state.provider??await ui.menu('Choose provider',[...piCatalog.providers.map(p=>item(p.id,p.name)),item('back','Back')]);
+    if(!providerId||providerId==='back')return;
+    state.provider=providerId;const provider=piCatalog.providers.find(p=>p.id===providerId),selected=new Set(state.models);
+    for(;;){
+      const model=await ui.menu('Choose models',[item('continue',`Continue with ${selected.size} models`,'One connection, one guest, one shared execution slot.',!selected.size),...provider.models.map(m=>item(m.id,`${selected.has(m.id)?'[x]':'[ ]'} ${m.name}`,m.unavailableReason??`${m.id} · ${m.api} · ${m.contextWindow} context tokens`,!!m.unavailableReason)),item('back','Back')]);
+      if(!model||model==='back'){state.provider=undefined;return;}
+      if(model==='continue')break;
+      if(selected.has(model))selected.delete(model);else if(selected.size<16)selected.add(model);state.models=[...selected];
+    }
+    const values=await ui.form('Shared provider limits',[
+      {name:'name',label:'Connection name',default:provider.name,validate:required},
+      ...provider.fields.map(f=>({...f,validate:v=>new RegExp(f.pattern).test(v)?'':'Enter the required provider identifier.'})),
+      {name:'totalTokens',label:'Total tokens across all models',default:'1000000',validate:integer(1,999999999999)},
+      {name:'testCredits',label:'Total test credits across all models',default:'10000',validate:integer(1,999999999)},
+      {name:'maxOutputTokens',label:'Maximum output per request',default:'1024',validate:integer(128,Math.min(8192,...provider.models.filter(m=>selected.has(m.id)).map(m=>m.maxTokens)))},
+      {name:'inputRate',label:'Input test credits per million tokens',default:'1000',validate:integer(0,999999999)},
+      {name:'outputRate',label:'Output test credits per million tokens',default:'3000',validate:integer(0,999999999)},
+    ],state.limits,'Limits are shared and cumulative. Restarting does not reset consumed or held amounts.');
+    if(!values)return;Object.assign(state.limits,values);
+    const fields=Object.fromEntries(provider.fields.map(f=>[f.name,values[f.name]]));
+    const payload={connectorProtocol:'pi_native_v1',name:values.name,provider:providerId,models:[...selected],fields,totalTokens:values.totalTokens,testCredits:values.testCredits,maxOutputTokens:Number(values.maxOutputTokens),inputRate:values.inputRate,outputRate:values.outputRate};
+    if(existing&&!await confirm('Save provider changes?',[`Shared total: ${payload.totalTokens} tokens / ${payload.testCredits} test credits`,'Consumed and outstanding amounts remain reserved. Changed configuration must pass compatibility checks again.'],'Save changes'))return;
+    const node=await post(existing?`/providers/nodes/${existing.id}/native`:'/providers/nodes',existing?{...payload,expectedRevision:existing.nativeRevision??0,confirmIncrease:true}:payload);
+    setupDrafts.delete(draftKey);await guidedNativeProvider(node);if(!existing)await manageNode(node.id,true);
+  }
+  async function guidedNativeProvider(node) {
+    if(node.suspended)throw new ClientError('node_suspended');
+    const budget=await get('/providers/budget');
+    if(BigInt(budget.remainingMicrousd)<=0n&&!await spendingBudget(true))return;
+    const {startProvider}=await import('./provider.mjs');
+    let controller;
+    try {
+      controller=await ui.suspend(()=>startProvider(network,node.id,{prepareOnly:true,maxOutputTokens:node.maxOutputTokens,runtimeConfig}));
+      const action=await ui.menu('Start provider',[item('start','Start provider','Run bounded streaming and tool checks, publish selected models, then serve.'),item('back','Back')],{lines:[node.name,...node.models.map(m=>'• '+m),`Shared allowance: ${node.sharedAllowance.totalTokens} tokens · ${node.sharedAllowance.testCredits} test credits`,`Output per request: ${node.maxOutputTokens}`,'API key is held only in the isolated guest.','Compatibility checks consume shared limits and upstream spending authority.']});
+      if(action!=='start'){await controller.stop();return;}
+      await ui.task('Checking selected models',()=>controller.start());
+      providersRunning.set(node.id,controller);void controller.done.then(()=>{if(providersRunning.get(node.id)===controller)providersRunning.delete(node.id);ui.pending?.redraw?.();});
+    }catch(error){await controller?.stop();await ui.page('Provider setup needs correction',[...errorLines(error),...(error.provider?[`${error.provider} / ${error.model} · HTTP ${error.statusCode??'unknown'} · ${error.code}`]:[]),'Your configuration is saved. Unknown checks retain their spending reservations.']);}
+  }
   async function guidedProvider(node) {
+    if(node.connectorProtocol==='pi_native_v1')return guidedNativeProvider(node);
     // A server draft is already durable; Back never deletes it.
     const { configuredRuntime } = await import('./provider.mjs');
     const { SandboxRuntime } = await import('./runtime.mjs');
@@ -287,6 +332,7 @@ export async function runTui(options = {}, dependencies = {}) {
       const exposure=await get('/providers/budget');
       const monitor=new ProviderActivityMonitor(network,node.id,()=>ui.pending?.redraw?.());await monitor.start();
       let selection;try{selection = await ui.menu(created ? 'Your listing is drafted' : node.name, [
+        ...(node.connectorProtocol==='pi_native_v1'?[item('editNative','Edit provider configuration','Pause and stop serving before changing models or limits.',!['draft','paused'].includes(node.status)||providersRunning.has(node.id))]:[]),
         item('setup', 'Continue setup', 'Runtime → limits → publication → tariff → guest → relay', providersRunning.has(node.id)),
         item('launch', node.availability === 'cold' ? 'Start cold control' : 'Launch hot VM', 'Keep this TUI open while providing.', providersRunning.has(node.id)),
         ...(providersRunning.get(node.id)?.status.activation.length ? [item('activate', 'Activate reserved buyer session', 'Launch the VM and enter the key before the 120-second deadline.')] : []),
@@ -296,10 +342,11 @@ export async function runTui(options = {}, dependencies = {}) {
         item('pause', 'Pause listing'), item('stop', 'Stop serving and close sessions'),
         ...(node.status === 'paused' ? [item('delete', 'Delete paused listing', providersRunning.has(node.id) ? 'Stop serving in this terminal first.' : 'Permanent removal requires finished sessions and settlement. Receipts remain available.', providersRunning.has(node.id))] : []),
         item('refresh', 'Refresh status'), item('back', 'Back'),
-      ], { tick:true,lines:()=>[...providerActivityLines(monitor.view()),...providerFailureLines(providersRunning.get(node.id)?.status.lastUpstreamFailure),`Model: ${node.model}`, `Suspended: ${node.suspended ? 'yes' : 'no'} · Listing: ${node.status}`, `VM: ${providersRunning.get(node.id)?.status.guestReady ? 'ready' : 'not running'}`, `Backend connection: ${providerConnectionLabel(monitor.view())}`, `Activity: ${providersRunning.get(node.id)?.status.calls??0} dispatched requests`, `Remaining upstream authority: ${formatUsd(exposure.remainingMicrousd)}`, `Outstanding exposure: ${formatUsd(exposure.outstandingMicrousd)}`, `Provider: ${node.id}`,`Listing: ${node.listingId??'not published'}`,`Thinking: ${node.capabilities?.includes('thinking_v1')?'supported':'off'}`],footer:providersRunning.has(node.id)?'↑↓ Move  Enter Choose  Esc / Ctrl+C Stop provider VM':'↑↓ Move  Enter Choose  Esc Back' });}finally{monitor.stop();}
+      ], { tick:true,lines:()=>[...providerActivityLines(monitor.view()),...providerFailureLines(providersRunning.get(node.id)?.status.lastUpstreamFailure),`Models: ${node.models?.join(', ')??node.model}`, `Suspended: ${node.suspended ? 'yes' : 'no'} · Listing: ${node.status}`, `VM: ${providersRunning.get(node.id)?.status.guestReady ? 'ready' : 'not running'}`, `Backend connection: ${providerConnectionLabel(monitor.view())}`, `Activity: ${providersRunning.get(node.id)?.status.calls??0} dispatched requests`, ...(node.sharedAllowance?[`Shared tokens: ${node.sharedAllowance.consumedTokens} consumed · ${node.sharedAllowance.outstandingTokens} held / ${node.sharedAllowance.totalTokens}`,`Shared test credits: ${node.sharedAllowance.consumedCredits} consumed · ${node.sharedAllowance.outstandingCredits} held / ${node.sharedAllowance.testCredits}`]:[]),`Remaining upstream authority: ${formatUsd(exposure.remainingMicrousd)}`, `Outstanding exposure: ${formatUsd(exposure.outstandingMicrousd)}`, `Provider: ${node.id}`,`Listing: ${node.listingId??'not published'}`,`Thinking: ${node.capabilities?.includes('thinking_v1')?'supported':'off'}`],footer:providersRunning.has(node.id)?'↑↓ Move  Enter Choose  Esc / Ctrl+C Stop provider VM':'↑↓ Move  Enter Choose  Esc Back' });}finally{monitor.stop();}
       currentProviderId = undefined; created = false;
       if(!selection&&providersRunning.has(node.id)){await providersRunning.get(node.id).stop();providersRunning.delete(node.id);continue;}
       if (!selection || selection === 'back') return;
+      if(selection==='editNative'){await attempt(()=>createNativeListing(node));continue;}
       if(selection==='tariffRefresh'){await attempt(()=>post(`/providers/nodes/${node.id}/tariff/refresh`,{durationSeconds:3600}));continue;}
       if(selection==='thinking'){
         if(providersRunning.has(node.id)||!['draft','paused'].includes(node.status)||node.ready||Number(node.providerRunLeaseUntil)>Date.now()){await ui.page('Stop serving first',['Stop the provider run and pause the listing before changing thinking support.']);continue;}
@@ -362,7 +409,7 @@ export async function runTui(options = {}, dependencies = {}) {
     access=quoteAccess(config,listing);if(access.disabled)throw new ClientError(access.code);
     if(privateMode!==(!config.admissions&&config.privateRehearsal)||coding!==(!!config.capabilities?.includes('coding_v1')&&listing.capabilities?.includes('coding_v1')))throw new ClientError('quote_policy_changed');
     resolveConnector(listing);
-    const quote = await post('/quotes', { ...(listing.connector?{connectorProtocol:CONNECTOR_PROTOCOL}:{}), listingId: listing.id, maximumCharge: bounds.budget, maxOutputTokens: Number(bounds.output), durationSeconds: Number(bounds.duration), ...(coding?{protocol:'coding_v1',requestLimit:100}:{}), ...mode });
+    const quote = await post('/quotes', { ...(listing.connectorProtocol==='pi_native_v1'?{connectorProtocol:'pi_native_v1'}:listing.connector?{connectorProtocol:CONNECTOR_PROTOCOL}:{}), listingId: listing.id, maximumCharge: bounds.budget, maxOutputTokens: Number(bounds.output), durationSeconds: Number(bounds.duration), ...(coding?{protocol:'coding_v1',requestLimit:100}:{}), ...mode });
     if (!await confirm('Review your quote', [...listingLines(listing), '', `Maximum reserved: ${quote.maximumCharge} test credits`, `Output limit: ${quote.maxOutputTokens} tokens`, `Session duration: ${quote.durationSeconds} seconds`, `Shared inference dispatches: ${quote.requestLimit??5}`, `Quote expires: ${date(quote.expiresAt)}`, `Cold activation deadline: ${quote.activationDeadlineSeconds || 0} seconds. Expired activation refunds the reservation.`], 'Accept and reserve test credits')) return;
     const session = await post('/sessions', { quoteId: quote.id, accept: true, ...mode }, `accept_${quote.id}`);
     if (privateMode) {

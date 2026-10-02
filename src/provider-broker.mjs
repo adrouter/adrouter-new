@@ -27,7 +27,7 @@ export function tunnelAgent(node, url) {
   if(!node.tunnel)return undefined;
   const agent=new Agent({keepAlive:false,maxSockets:1});
   agent.createConnection=(_options,callback)=>{
-    const request=httpRequest({host:'host.microsandbox.internal',port:node.tunnel.port,method:'CONNECT',path:'/upstream',headers:{authorization:`Bearer ${node.tunnel.capability}`},timeout:10000});
+    const request=httpRequest({host:'host.microsandbox.internal',port:node.tunnel.port,method:'CONNECT',path:node.tunnel.path??'/upstream',headers:{authorization:`Bearer ${node.tunnel.capability}`},timeout:10000});
     request.once('connect',(response,socket,head)=>{
       if(response.statusCode!==200||head.length){socket.destroy();callback(new Error('tunnel_rejected'));return;}
       const secure=tlsConnect({socket,servername:url.hostname,rejectUnauthorized:true});

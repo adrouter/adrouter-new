@@ -8,16 +8,19 @@ export function readHiddenKey(input = process.stdin, output = process.stdout) {
   }
   output.write('Provider API key (hidden; memory only; Ctrl+C cancels): ');
   return new Promise((resolve, reject) => {
-    let value = '';
+    let value = '', escape = '', paste = '', pasting = false, finished = false;
+    let escapeTimer;
     const previousRaw = Boolean(input.isRaw);
     const wasPaused = input.isPaused();
     const finish = (error) => {
+      if(finished)return;finished=true;clearTimeout(escapeTimer);
       input.removeListener('data', onData);
       input.removeListener('end', onEnd);
       input.removeListener('error', onError);
       input.setRawMode(previousRaw);
       if (wasPaused) input.pause();
       output.write('\n');
+      output.write('\x1b[?2004l');paste='';
       if (error) { value = ''; reject(new ProviderSetupError(error)); }
       else { const result = value; value = ''; resolve(result); }
     };
@@ -26,6 +29,14 @@ export function readHiddenKey(input = process.stdin, output = process.stdout) {
     const onData = chunk => {
       for (const char of chunk.toString('utf8')) {
         if (char === '\x03' || char === '\x04') { finish('credential_entry_cancelled'); return; }
+        if(char==='\x1b'||escape){
+          escape+=char;clearTimeout(escapeTimer);
+          if(escape==='\x1b[200~'&&!pasting){pasting=true;paste='';escape='';continue;}
+          if(escape==='\x1b[201~'&&pasting){pasting=false;value+=paste.replace(/[\r\n]+$/,'');paste='';escape='';if(!/^[\x20-\x7e]{1,4096}$/.test(value)){finish('credential_format_invalid');return;}continue;}
+          if(!['\x1b[200~','\x1b[201~'].some(s=>s.startsWith(escape))){finish('credential_format_invalid');return;}
+          escapeTimer=setTimeout(()=>finish('credential_entry_cancelled'),250);continue;
+        }
+        if(pasting){paste+=char;if(paste.length>4098){finish('credential_format_invalid');return;}continue;}
         if (char === '\r' || char === '\n') {
           finish(/^[\x20-\x7e]{1,4096}$/.test(value) ? null : 'credential_format_invalid'); return;
         }
@@ -36,6 +47,7 @@ export function readHiddenKey(input = process.stdin, output = process.stdout) {
       }
     };
     input.setRawMode(true);
+    output.write('\x1b[?2004h');
     input.on('data', onData);
     input.once('end', onEnd);
     input.once('error', onError);

@@ -6,7 +6,7 @@ private; no candidate or alpha has been published from this work.
 
 ## Terminal application
 
-Use Node 22.14 or newer. Run `node bin/adr-cli.mjs` for the branded TUI. Native
+Use Node 22.19 or newer. Run `node bin/adr-cli.mjs` for the branded TUI. Native
 Safari opens only after the explicit sign-in action on macOS. Marketplace device
 approval is separate from other AdRouter clients. Operator sign-in requests only
 `marketplace:operator` and also requires a current owner/operator account role.
@@ -228,3 +228,31 @@ show the last request's validated HTTP status and failure code in memory, withou
 raw response bodies. Authentication and access errors require checking the key and
 entitlement; changing thinking is not an authentication fix. Use the checklist in
 [private acceptance](docs/private-mac-acceptance.md) before live qualification.
+
+
+### Native metered API connections
+
+New authorized-API setup uses the Router projection of pinned `@earendil-works/pi-ai@1.0.0`
+(revision `a13d35a742c6ef8462812a28fbe1d8c8b7431c32`). Select a metered provider and one or
+more models, then shared cumulative token/test-credit limits and per-request output limits.
+Only provider-required public configuration fields are collected. Keys are entered in the
+isolated guest and remain in memory. Preparing key entry does not publish or serve.
+
+Start runs bounded streaming, tool and final-usage checks under both shared allowances and
+the independent upstream spending guard, then publishes immutable model listings. One node
+and guest provide one execution slot across all selected models. A buyer's accepted model and
+rates remain fixed for that session. Restarting or correcting saved configuration does not
+reset consumed/outstanding allowances. Unknown checks and inference remain reserved; verified
+teardown releases execution only. Simulated USD is informational and uses versioned catalog
+prices separately from test credits and upstream spending authority.
+
+Native `pi_native_v1` / `pi_context_v1` negotiation retains native tool data and opaque reasoning
+signatures through a replay whitelist. Legacy single-model/self-hosted connections remain
+supported. Older clients receive a compatibility error when attempting a native connection.
+The new flow excludes subscription/coding-plan capacity, OAuth, IAM and custom gateways.
+
+Build the provider payload with `npm run provider:build`; it copies the locked dependency
+closure and MIT attribution, and records file hashes. `verifyProviderRuntime()` checks installed
+bytes before preparing a native guest. Router's `generate-pi-catalog.mjs` owns catalog generation;
+its normal contract generator emits the client projection from committed source. Upgrades
+require explicit package, integrity, revision, catalog and fixture updates.

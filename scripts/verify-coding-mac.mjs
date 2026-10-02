@@ -11,6 +11,7 @@ const entry=file=>clientRoot?pathToFileURL(join(clientRoot,'src',file)).href:new
 const {TerminalUI}=await import(entry('tui-screen.mjs'));
 const {TerminalCoordinator}=await import(entry('terminal-coordinator.mjs'));
 const {configuredRuntime}=await import(entry('provider.mjs'));
+const nativePi=process.env.ADR_NATIVE_PI_BUYER==='1';
 const readOnly=process.argv.includes('--read-only');
 const controlled=process.argv.includes('--host-approval'),idle=process.argv.includes('--idle');
 const ui=controlled?new TerminalUI():undefined,coordinator=ui?new TerminalCoordinator(ui):undefined;
@@ -22,6 +23,7 @@ await writeFile(join(root,'main.py'),'print("before")\n');await writeFile(join(r
 let readsVerified=false,nativePhase='startup';
 let dispatches=0,approvals=0,stops=0,statusUnavailable=false;
 let session={id,protocol:'coding_v1',mode:'private_rehearsal',state:'ready',handshakeStatus:'succeeded',expiresAt:Date.now()+3600000,requestLimit:100,requestSequence:0,maxOutputTokens:1024,contextWindowTokens:32768,listingId:randomUUID(),listingRevision:1,model:'synthetic'};
+if(nativePi)Object.assign(session,{connectorProtocol:'pi_native_v1',messageFormat:'pi_context_v1',provider:'deepseek',api:'openai-completions'});
 const call=(id,name,args)=>({id,type:'function',function:{name,arguments:JSON.stringify(args)}});
 const network={request:async(path,options={})=>{
   if(path.startsWith('/v2/listings/'))return {id:session.listingId,revision:session.listingRevision,model:session.model,inputRate:'1000',outputRate:'2000'};
@@ -30,7 +32,7 @@ const network={request:async(path,options={})=>{
     dispatches++;nativePhase='inference_'+dispatches;session.requestSequence++;if(process.env.ADR_NATIVE_PROGRESS_FILE)await writeFile(process.env.ADR_NATIVE_PROGRESS_FILE,JSON.stringify({dispatches}),{mode:0o600});
     if(dispatches===2){
       try {
-      const results=new Map(options.body.messages.filter(m=>m.role==='tool').map(m=>[m.tool_call_id,m.content]));
+      const results=new Map(options.body.messages.filter(m=>m.role===(nativePi?'toolResult':'tool')).map(m=>[nativePi?m.toolCallId:m.tool_call_id,nativePi?m.content.filter(c=>c.type==='text').map(c=>c.text).join('\n'):m.content]));
       assert.match(results.get('read1')??'',/print\("before"\)/,'read returns fixture content');
       for(const name of ['ls1','find1','grep1']){assert.match(results.get(name)??'',/main\.py/,'built-in '+name+' returns actual results');assert.doesNotMatch(results.get(name)??'',/\.adr-runtime|private-fixture|escape-link|hard-link/,'built-in results respect protected paths');}
       assert.equal(approvals,0,'safe reads do not ask approval');
@@ -40,7 +42,8 @@ const network={request:async(path,options={})=>{
       }catch(error){console.error(JSON.stringify({nativeReadCheck:'failed',assertion:error.message.split('\n')[0],approvals}));throw error;}
     }
     const toolCalls=dispatches===1?[call('read1','read',{path:'main.py'}),call('ls1','ls',{path:'.'}),call('find1','find',{path:'.',pattern:'*.py'}),call('grep1','grep',{path:'.',pattern:'before'})]:!readOnly&&dispatches===2?[call('deny1','write',{path:'denied.txt',content:'denied change'}),call('blue1','write',{path:'index.html',content:'<body style="background:blue">synthetic website</body>\n'}),call('write1','write',{path:'main.py',content:'print("after")\n'}),call('write2','write',{path:'added.py',content:'assert 2 + 2 == 4\n'}),call('bash1','bash',{command:'if true; then\n  rm remove.txt\n  python3 added.py\nfi\ngit --version\nrg after main.py',timeout:120})]:[];
-    return {requestId:options.body.requestId,text:toolCalls.length?'':'Synthetic coding complete.',thinking:'',toolCalls,usage:{inputTokens:8,outputTokens:8}};
+    if(nativePi)assert.equal(options.body.messageFormat,'pi_context_v1');
+    return {...(nativePi?{nativeMessage:{role:'assistant',api:session.api,provider:session.provider,model:session.model,stopReason:toolCalls.length?'toolUse':'stop',timestamp:Date.now(),content:toolCalls.length?toolCalls.map(c=>({type:'toolCall',id:c.id,name:c.function.name,arguments:JSON.parse(c.function.arguments),thoughtSignature:'synthetic-signature'})):[{type:'text',text:'Synthetic coding complete.'}]}}:{}),requestId:options.body.requestId,text:toolCalls.length?'':'Synthetic coding complete.',thinking:'',toolCalls,usage:{inputTokens:8,outputTokens:8}};
   }
   if(statusUnavailable)throw Object.assign(Error('synthetic_status_unavailable'),{code:'marketplace_unavailable',status:503});return {...session};
 }};

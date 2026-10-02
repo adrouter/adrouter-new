@@ -103,7 +103,7 @@ try {
   await cp(join(work,'LICENSE'),join(output,'LICENSE'));
   for(const f of ['THIRD_PARTY_NOTICES.md','BUNDLED_SOURCES.json'])await cp(join(work,'packages/coding-agent',f),join(output,f));
   await mkdir(join(output,'guest'));for(const f of ['coding-entry.mjs','coding-provider.mjs','coding-controls.mjs','workspace-snapshot.mjs','coding-preview.mjs','coding-read-policy.mjs'])await cp(resolve('src/guest',f),join(output,'guest',f));
-  for(const file of ['workspace-policy.mjs','coding-display.mjs'])await cp(resolve('src',file),join(output,file));
+  for(const file of ['workspace-policy.mjs','coding-display.mjs','pi-context.mjs','money.mjs'])await cp(resolve('src',file),join(output,file));
   await cp(resolve('node_modules/ignore'),join(output,'node_modules/ignore'),{recursive:true,dereference:true});
   await cp(resolve('src/coding-wire.mjs'),join(output,'guest/coding-wire.mjs'));
   // Ripgrep is part of the development payload, pinned independently of the

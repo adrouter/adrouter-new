@@ -59,45 +59,24 @@ test('listing shows hot readiness only from backend-confirmed readiness', () => 
   assert.ok(listingLines({availability:'hot',ready:true}).join('\n').includes('Hot · ready'));
 });
 
-test('DeepSeek guided default submits valid metadata and resumes edits after cancel', async () => {
-  const {runTui} = await import('../src/tui.mjs');
-  const {MarketplaceDraft} = await import('../src/generated/validators.mjs');
-  let homeVisits=0, formVisits=0, posted;
-  const config={protocol:'2.0.0',product:'adr-v2',settlement:'test_credits',cashValue:false,admissions:false,privateRehearsal: false, privateOwnerEvaluation:true,supplyClasses:['authorized_api','self_hosted'],connectorProfile:'inference_connector_v1',maxNodeSessions:1,relay:'wss_single_instance',agentExecution:'buyer_vm_v1',capabilities:['allowance_v1','provider_budget_v1','cold_activation_v1']};
-  const ui={start(){},stop(){},task:(_title,fn)=>fn(new AbortController().signal,()=>{}),page:async()=>{},
-    menu:async title=>{
-      if(title==='What would you like to do?')return ++homeVisits<=2?'create':'exit';
-      if(title==='List compute · 1 of 3')return 'authorized_api';
-      if(title==='Choose authorized API')return 'deepseek';
-      if(title==='List compute · 3 of 3')return 'create';
-      return null;
-    },
-    form:async(title,fields,initial)=>{
-      if(title!=='List compute · 2 of 3')return null;
-      if(++formVisits===1){initial.name='Edited listing';return null;}
-      assert.equal(initial.name,'Edited listing');
-      const values=Object.fromEntries(fields.map(f=>[f.name,initial[f.name]??f.default??'']));
-      assert.equal(values.model,'deepseek-flash');const {thinking,...metadata}=values;assert.equal(thinking,'off');assert.equal(MarketplaceDraft(metadata),true);return values;
-    }
-  };
-  const network={local:true,origin:'http://127.0.0.1:8790',request:async(path,options)=>{
-    if(path.endsWith('/network/config'))return config;
-    if(path==='/v2/providers/nodes'){posted=options.body;return {...posted,id:'synthetic-node',suspended:false,status:'draft'};}
-    if(path.endsWith('/synthetic-node'))return {...posted,id:'synthetic-node',suspended:false,status:'draft'};
-    throw new Error('unexpected request');
-  }};
-  await runTui({}, {network,ui,store:{profile:'provider'}});
-  assert.equal('rightsReference' in posted,false);assert.equal(posted.name,'Edited listing');assert.equal(homeVisits,3);
+test('native setup selects several models with shared limits and contains no manual protocol or host key fields',async()=>{
+ const {runTui}=await import('../src/tui.mjs');let visits=0,picks=0,posted;
+ const config={protocol:'2.0.0',product:'adr-v2',settlement:'test_credits',cashValue:false,admissions:false,privateRehearsal:false,privateOwnerEvaluation:true,supplyClasses:['authorized_api','self_hosted'],connectorProfile:'inference_connector_v1',maxNodeSessions:1,relay:'wss_single_instance',agentExecution:'buyer_vm_v1',capabilities:['allowance_v1','provider_budget_v1','cold_activation_v1','pi_native_v1'],activationDeadlineSeconds:120};
+ const ui={start(){},stop(){},task:(_t,fn)=>fn(new AbortController().signal,()=>{}),page:async()=>{},menu:async(title,options)=>{
+  if(title==='What would you like to do?')return ++visits===1?'create':'exit';if(title==='List compute · 1 of 3')return 'authorized_api';if(title==='Choose provider'){assert.ok(!options.some(o=>o.value==='custom'));return 'deepseek';}if(title==='Choose models'){const choices=options.filter(o=>!['continue','back'].includes(o.value));return picks<2?choices[picks++].value:'continue';}return null;
+ },form:async(title,fields)=>{assert.equal(title,'Shared provider limits');assert.equal(fields.some(f=>/key|endpoint|authentication|protocol/i.test(f.name)),false);return Object.fromEntries(fields.map(f=>[f.name,f.default]));}};
+ const network={local:true,origin:'http://127.0.0.1:8790',request:async(path,options)=>{if(path.endsWith('/network/config'))return config;if(path==='/v2/providers/nodes'){posted=options.body;throw Object.assign(Error('synthetic stop before key entry'),{code:'synthetic_stop'});}throw Error('unexpected request');}};
+ await runTui({}, {network,ui,store:{profile:'provider'}});assert.equal(posted.connectorProtocol,'pi_native_v1');assert.equal(posted.models.length,2);assert.equal(posted.totalTokens,'1000000');assert.equal('connector'in posted,false);assert.equal('endpoint'in posted,false);
 });
 
-test('generic gateway retains exact namespaced model and all adapter settings across Back/Edit before creation',async()=>{
+test('self-hosted legacy connector retains exact namespaced model and all adapter settings across Back/Edit before creation',async()=>{
  const {runTui}=await import('../src/tui.mjs');let homeVisits=0,forms=0,reviews=0,posted;const errors=[];
  const config={protocol:'2.0.0',product:'adr-v2',settlement:'test_credits',cashValue:false,admissions:false,privateRehearsal:false,privateOwnerEvaluation:true,supplyClasses:['authorized_api','self_hosted'],connectorProfile:'inference_connector_v1',maxNodeSessions:1,relay:'wss_single_instance',agentExecution:'buyer_vm_v1',capabilities:['allowance_v1','provider_budget_v1','cold_activation_v1']};
  const expected={model:'vendor/exact-model:variant',endpoint:'https://gateway.example.test/custom/chat/completions',authentication:'x_api_key',outputTokenParameter:'max_completion_tokens',streamingUsage:'native',connectorThinking:'reasoning_effort',reasoningHistory:'on',thinking:'supported'};
  const ui={start(){},stop(){},task:(_t,fn)=>fn(new AbortController().signal,()=>{}),page:async(t,lines)=>errors.push(t),
   menu:async(title,options,settings)=>{
    if(title==='What would you like to do?')return ++homeVisits<=2?'create':'exit';
-   if(title==='List compute · 1 of 3')return 'authorized_api';if(title==='Choose authorized API'){assert.ok(options.some(o=>o.label==='OpenAI-compatible API gateway'));return 'custom';}
+   if(title==='List compute · 1 of 3')return 'self_hosted';
    if(title==='List compute · 3 of 3'){const text=settings.lines.join('\n');for(const value of ['vendor/exact-model:variant','x_api_key','max_completion_tokens','native','reasoning_effort','reasoning_content'])assert.ok(text.includes(value));return ++reviews===1?'edit':'create';}return null;
   },form:async(title,fields,initial)=>{
    if(title!=='List compute · 2 of 3')return null;forms++;

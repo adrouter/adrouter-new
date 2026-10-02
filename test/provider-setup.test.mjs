@@ -35,3 +35,9 @@ test('cancel, oversized input and noninteractive input fail without exposing inp
   }
   assert.throws(() => readHiddenKey(new PassThrough(), new PassThrough()), /interactive_terminal_required/);
 });
+
+test('hidden bracketed paste survives split markers and trailing newline without submitting',async()=>{
+ const tty=terminal();let resolved=false;const pending=readHiddenKey(tty.input,tty.output).then(v=>{resolved=true;return v;});
+ for(const b of Buffer.from('\x1b[200~'+synthetic+'\n\x1b[201~'))tty.input.emit('data',Buffer.from([b]));
+ await Promise.resolve();assert.equal(resolved,false);tty.input.emit('data',Buffer.from('\r'));assert.equal(await pending,synthetic);assert.equal(tty.displayed().includes(synthetic),false);
+});

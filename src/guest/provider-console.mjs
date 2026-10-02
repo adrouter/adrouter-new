@@ -3,10 +3,11 @@ import { fork } from 'node:child_process';
 import { readFile } from 'node:fs/promises';
 import { readHiddenKey } from './provider-setup.mjs';
 import { upstreamInference } from './provider-broker.mjs';
+const controlFetch=globalThis.fetch;
 const configuration = JSON.parse(await readFile('/workspace/config.json', 'utf8'));
 const { control, capability, node, maxCalls, maxOutputTokens, continuous } = configuration;
 const controlRequest = async (path, body) => {
-  const response = await fetch(`${control}${path}`, { method: body === undefined ? 'GET' : 'POST', redirect: 'error', headers: { authorization: `Bearer ${capability}`, 'content-type': 'application/json' }, body: body === undefined ? undefined : JSON.stringify(body), signal: AbortSignal.timeout(5000) });
+  const response = await controlFetch(`${control}${path}`, { method: body === undefined ? 'GET' : 'POST', redirect: 'error', headers: { authorization: `Bearer ${capability}`, 'content-type': 'application/json' }, body: body === undefined ? undefined : JSON.stringify(body), signal: AbortSignal.timeout(5000) });
   if (!response.ok) throw new Error('control_unavailable');
   return response.json();
 };
@@ -27,7 +28,9 @@ if (process.argv[2] !== '--worker') {
   process.once('message', async message => {
     let key = message.key; delete message.key;
     const abort = new AbortController(); let attempted = 0; const seen = new Set();
-    const stop = () => { key = ''; abort.abort(); process.exit(0); };
+    let nativeAuth;const native=node.connectorProtocol==='pi_native_v1';const nativeModule=native?await import('./pi-native.mjs'):undefined;
+    if(native){nativeAuth=await nativeModule.nativeLogin(node,key,abort.signal);key='';}
+    const stop = () => { void nativeAuth?.close(); key = ''; abort.abort(); process.exit(0); };
     process.once('SIGTERM', stop); process.once('SIGINT', stop);
     const lifetime = continuous ? undefined : setTimeout(stop, 540000);
     const challenges = new Set(); let active;
@@ -35,7 +38,8 @@ if (process.argv[2] !== '--worker') {
       const frame = context.frame; let lastTiming;
       try {
         const timeout = AbortSignal.any([abort.signal, context.abort.signal, AbortSignal.timeout(Math.max(1, Math.min(120000, frame.deadlineUnixMs - Date.now())))]);
-        const result = await upstreamInference(node, key, frame, timeout, timing => { lastTiming = { requestId: frame.requestId, ...timing }; }, event => context.cancelled ? undefined : controlRequest('/delta', event));
+        const infer=native?(...args)=>nativeModule.nativeInference(node,nativeAuth,...args):(...args)=>upstreamInference(node,key,...args);
+        const result = await infer(frame, timeout, timing => { lastTiming = { requestId: frame.requestId, ...timing }; }, event => context.cancelled||frame.type==='qualification' ? undefined : controlRequest('/delta', event));
         if (context.cancelled) { await controlRequest('/cancelled', { requestId: frame.requestId }); return; }
         if (lastTiming) await controlRequest('/timing', lastTiming);
         await controlRequest('/result', result);
@@ -53,18 +57,19 @@ if (process.argv[2] !== '--worker') {
         const frame = await controlRequest('/work');
         if (!frame) { await new Promise(r => setTimeout(r, 250)); continue; }
         if (frame.type === 'stop') break;
+        if(native&&frame.type==='bind'){node.listingIds=frame.listingIds;node.listingRevision=frame.listingRevision;continue;}
         if (frame.type === 'cancel') {
           if (!active) { await controlRequest('/cancelled', {requestId:frame.requestId}).catch(()=>{}); continue; }
           if (['requestId','sessionId','bindingRevision','sequence'].some(k=>active.frame[k]!==frame[k])) throw new Error('frame_rejected');
           active.cancelled = true; active.abort.abort(); continue;
         }
         if (frame.type === 'handshake') {
-          if (active || challenges.has(frame.challengeId) || frame.deadlineUnixMs <= Date.now() || frame.bindingRevision !== node.listingId || frame.providerInstallationId !== node.installationId || frame.listingRevision !== node.listingRevision) throw new Error('handshake_rejected');
+          if (active || challenges.has(frame.challengeId) || frame.deadlineUnixMs <= Date.now() || (native?!node.listingIds?.includes(frame.bindingRevision):frame.bindingRevision !== node.listingId) || frame.providerInstallationId !== node.installationId || frame.listingRevision !== node.listingRevision) throw new Error('handshake_rejected');
           challenges.add(frame.challengeId);
           if (challenges.size > 4096) challenges.delete(challenges.values().next().value);
           await controlRequest('/handshake-result',{ ...frame,type:'handshake_result' }); continue;
         }
-        if (active || frame.type !== 'inference' || seen.has(frame.requestId) || frame.deadlineUnixMs <= Date.now() || frame.maxOutputTokens > maxOutputTokens) throw new Error('frame_rejected');
+        if (active || (frame.type !== 'inference'&&!(native&&frame.type==='qualification')) || seen.has(frame.requestId) || frame.deadlineUnixMs <= Date.now() || frame.maxOutputTokens > maxOutputTokens) throw new Error('frame_rejected');
         seen.add(frame.requestId); if(seen.size>4096)seen.delete(seen.values().next().value); attempted++;
         active = {frame,abort:new AbortController(),cancelled:false}; void execute(active);
       }

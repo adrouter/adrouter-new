@@ -88,7 +88,7 @@ export class Network {
     const bytes = body === undefined ? undefined : JSON.stringify(body);
     let nonce;
     for (let attempt = 0; attempt < 2; attempt++) {
-      const headers = { 'X-Adr-Coding-Protocol':'coding_v1','X-Adr-Connector-Protocol':'openai_compatible_v1', accept: onEvent ? 'application/x-ndjson' : 'application/json', ...(bytes === undefined ? {} : { 'Content-Type': 'application/json' }), ...(this.local ? { 'X-Adr-Local-Actor': this.actor } : {}), ...(key ? { 'Idempotency-Key': key } : {}) };
+      const headers = { 'X-Adr-Coding-Protocol':'coding_v1','X-Adr-Connector-Protocol':'pi_native_v1', accept: onEvent ? 'application/x-ndjson' : 'application/json', ...(bytes === undefined ? {} : { 'Content-Type': 'application/json' }), ...(this.local ? { 'X-Adr-Local-Actor': this.actor } : {}), ...(key ? { 'Idempotency-Key': key } : {}) };
       if (identity) {
         headers.DPoP = proof(identity, method, this.origin + path, bytes, nonce, token);
         if (bytes !== undefined) headers['Content-Digest'] = `sha-256=:${digest(bytes).toString('base64')}:`;

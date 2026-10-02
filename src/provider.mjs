@@ -3,10 +3,10 @@ import { connect } from 'node:net';
 import { lookup } from 'node:dns';
 import { createServer } from 'node:http';
 import { randomBytes, randomUUID } from 'node:crypto';
-import { readFile, writeFile, mkdtemp, copyFile, rm, mkdir } from 'node:fs/promises';
+import { readFile, writeFile, mkdtemp, copyFile, rm, mkdir, cp } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { CodingInferenceRequest, InferenceRequest, Handshake, HandshakeResult, ProviderRelayReady, ProviderRequestFailure } from './generated/validators.mjs';
+import { PiInferenceRequest, CodingInferenceRequest, InferenceRequest, Handshake, HandshakeResult, ProviderRelayReady, ProviderRequestFailure } from './generated/validators.mjs';
 import { SandboxRuntime } from './runtime.mjs';
 import { ClientError } from './network.mjs';
 import { validateBinding, publicAddress } from './provider-broker.mjs';
@@ -28,11 +28,14 @@ export async function createGuest(runtime, hostPorts, copyDirectory, endpoint, {
   }catch(error){try{error.sandboxName=name;}catch{}await runtime.remove(name).catch(()=>{});throw error;}
 }
 
-export async function startProvider(networkInput, nodeId, { maxCalls = 5, maxOutputTokens = 1024, runtimeConfig, runtime: providedRuntime, noKey = false, notify = () => {}, continuous: requestedContinuous, consoleOptions, diagnosticsDirectory, intervals = {}, Socket = WebSocket, now = Date.now } = {}) {
+export async function startProvider(networkInput, nodeId, { prepareOnly = false, maxCalls = 5, maxOutputTokens = 1024, runtimeConfig, runtime: providedRuntime, noKey = false, notify = () => {}, continuous: requestedContinuous, consoleOptions, diagnosticsDirectory, intervals = {}, Socket = WebSocket, now = Date.now } = {}) {
   if (!Number.isInteger(maxCalls) || maxCalls < 1 || maxCalls > 30 || !Number.isInteger(maxOutputTokens) || maxOutputTokens < 1 || maxOutputTokens > 8192) throw new ClientError('provider_exposure_bound_invalid');
   const network = Object.create(networkInput); network.actor = 'provider';
   let node = await network.request(`/v2/providers/nodes/${nodeId}`);
-  const connector=resolveConnector(node);
+  const native=node.connectorProtocol==='pi_native_v1';
+  const connector=native?{authentication:'native'}:resolveConnector(node);
+  const listingBound=(id,revision)=>native?node.listingIds?.includes(id)&&(revision===undefined||revision===node.listingRevision):id===node.listingId&&(revision===undefined||revision===node.listingRevision);
+  let prepared=prepareOnly&&native;
   if(connector.authentication==='none')noKey=true;
   if (node.suspended === true) throw new ClientError('node_suspended');
   const continuous = requestedContinuous ?? node.availability === 'hot';
@@ -49,7 +52,7 @@ export async function startProvider(networkInput, nodeId, { maxCalls = 5, maxOut
   let claimed = false, allocation, closing, statusPoll, renewal, keepalive, touchRetry, reconnectTimer, authenticationTimer, leaseTimer;
   let relayGeneration, relayLeaseUntil = 0, socketEpoch = 0, backoff = 0, lastTouch = 0, lastGuestPoll = 0, cleanupRequired = false, teardownVerified;
   let lastUpstreamFailure;
-  const control = [];
+  const control = [],nativeCheckIds=[];
   let complete; const done = new Promise(resolve => { complete = resolve; });
   let activation = [];
   const abort = new AbortController();
@@ -88,6 +91,7 @@ export async function startProvider(networkInput, nodeId, { maxCalls = 5, maxOut
         if (!pending.cancelled && relayReady && pending.socket === socket) socket.send(JSON.stringify({type:'diagnostic',requestId:timing.requestId,phase:'upstream',outcome:timing.outcome,statusCode:timing.statusCode,headersMs:timing.headersMs,totalMs:timing.totalMs}));
       } else if (req.method === 'POST' && req.url === '/result') {
         const result = JSON.parse(bytes);
+        if(pending?.qualification){if(result.requestId!==pending.id)throw Error('qualification_binding');const check=pending;pending=undefined;check.resolve(result);res.writeHead(200,{'content-type':'application/json'}).end('{"ok":true}');return;}
         if (!pending || result.type !== 'result' || result.requestId !== pending.id || typeof result.text !== 'string' || !Number.isSafeInteger(result.inputTokens) || !Number.isSafeInteger(result.outputTokens)) throw new Error('result_binding');
         if (!pending.cancelled && relayReady && pending.socket === socket) socket.send(JSON.stringify(result)); pending = undefined;
         if (!continuous && calls >= maxCalls) void stop({ trigger: 'request_limit' });
@@ -96,6 +100,7 @@ export async function startProvider(networkInput, nodeId, { maxCalls = 5, maxOut
         pending = undefined; lifecycle.event('request', { status: 'cancelled' });
       } else if (req.method === 'POST' && req.url === '/failed') {
         const result = JSON.parse(bytes);
+        if(result.scope==='request'&&pending?.qualification&&result.requestId===pending.id){const check=pending;pending=undefined;check.reject(Object.assign(new ClientError(result.code??'provider_outcome_unknown'),{provider:node.provider,model:check.binding.model,statusCode:check.upstreamStatus??null}));res.writeHead(200,{'content-type':'application/json'}).end('{"ok":true}');return;}
         if (result.scope === 'request' && pending && result.requestId === pending.id) {
           const frame = { type: 'request_failed', requestId: pending.id, sessionId: pending.binding.sessionId, bindingRevision: pending.binding.bindingRevision, sequence: pending.binding.sequence, code: upstreamFailureCodes.includes(result.code)?result.code:'provider_outcome_unknown' };
           if (!ProviderRequestFailure(frame)) throw Error('request_failure_binding');
@@ -113,8 +118,10 @@ export async function startProvider(networkInput, nodeId, { maxCalls = 5, maxOut
   // the approved upstream; this process never decrypts or constructs credentials.
   const tunnels = new Set();
   broker.on('connect', (req, socket, head) => {
-    if(stopped || req.url !== '/upstream' || req.headers.authorization !== `Bearer ${capability}` || head.length || tunnels.size >= 2) { socket.destroy(); return; }
-    const target=binding.url;
+    const allowed=native?(node.nativeModels??[]).map(m=>new URL(m.endpoint).origin):[];
+    const requestedOrigin=allowed.find(origin=>req.url==='/upstream/'+encodeURIComponent(origin));
+    if(stopped || (native?!requestedOrigin:req.url !== '/upstream') || req.headers.authorization !== `Bearer ${capability}` || head.length || tunnels.size >= 2) { socket.destroy(); return; }
+    const target=native?new URL(requestedOrigin):binding.url;
     const upstream=connect({host:target.hostname,port:Number(target.port)||443,lookup(host,options,callback){
       lookup(host,options,(error,addresses,family)=>{
         if(error){callback(error,addresses,family);return;}
@@ -137,6 +144,7 @@ export async function startProvider(networkInput, nodeId, { maxCalls = 5, maxOut
     starting = true;
     try {
       copied = await mkdtemp(join(tmpdir(), 'adr-provider-'));
+      if(native){await (await import('./provider-runtime.mjs')).verifyProviderRuntime();await cp(new URL('../provider-runtime/',import.meta.url),copied,{recursive:true});}
       for (const [from, to] of [['guest/provider-console.mjs', 'provider-console.mjs'], ['provider-broker.mjs', 'provider-broker.mjs'], ['coding-wire.mjs','coding-wire.mjs'], ['provider-setup.mjs', 'provider-setup.mjs']]) await copyFile(new URL(from, import.meta.url), join(copied, to));
       await mkdir(join(copied,'generated'),{recursive:true});
       for(const file of ['connectors.mjs'])await copyFile(new URL('./generated/'+file,import.meta.url),join(copied,'generated',file));
@@ -144,6 +152,7 @@ export async function startProvider(networkInput, nodeId, { maxCalls = 5, maxOut
       await writeFile(join(copied, 'config.json'), JSON.stringify({ control: `http://host.microsandbox.internal:${broker.address().port}`, capability, noKey, node: binding.loopback ? {...node,localEngine:true,endpoint:node.endpoint.replace(binding.url.hostname,'host.microsandbox.internal')} : {...node,tunnel:{port:broker.address().port,capability}}, maxCalls, maxOutputTokens, continuous }), { mode: 0o600 });
       allocation = createGuest(runtime, [broker.address().port, ...(enginePort ? [enginePort] : [])], copied, undefined, { signal: warmSignal, continuous });
       guest = await allocation;
+      if(native)await runtime.run(guest,['node','-e',"const [a,b]=process.versions.node.split('.').map(Number);if(a<22||(a===22&&b<19))throw Error('pi_node_22_19_required');"],{signal:warmSignal});
       warmSignal.throwIfAborted();
       if(noKey) await runtime.run(guest,['node','/workspace/provider-console.mjs'],{signal:warmSignal,timeoutSeconds:20});
       else await runtime.attachConsole(guest, ['node', '/workspace/provider-console.mjs'], { ...consoleOptions, signal: warmSignal });
@@ -177,7 +186,7 @@ export async function startProvider(networkInput, nodeId, { maxCalls = 5, maxOut
   }
   async function inspectStatus() {
     node = await network.request(`/v2/providers/nodes/${nodeId}`, { signal: bounded(intervals.networkTimeout ?? 10000) });
-    if (stopped) return;
+    if (stopped||prepared) return;
     if (node.suspended === true || node.status !== 'published') { await stop({ trigger: node.suspended ? 'node_suspended' : 'node_paused', remote: false }); return; }
     if (node.providerRunId && node.providerRunId !== providerRunId) { await stop({ trigger: 'run_superseded', remote: false }); return; }
     if (node.availability === 'cold' && !guestReady) {
@@ -195,8 +204,9 @@ export async function startProvider(networkInput, nodeId, { maxCalls = 5, maxOut
     } else void stop({ trigger: phase === 'renewal' ? 'relay_auth_failed' : 'provider_control_failed', error });
   }
   async function renewRelay() {
+    if(prepared){const claim=await network.request(`/v2/providers/nodes/${nodeId}/prepare`,{method:'POST',body:{providerRunId},signal:bounded(10000)});if(claim.providerRunId!==providerRunId)throw new ClientError('provider_run_contract_required');return;}
     if (stopped || socket?.readyState === Socket.CONNECTING || authenticationTimer) return;
-    const ticket = await network.request(`/v2/providers/nodes/${nodeId}/relay-ticket`, { method: 'POST', body: { providerRunId,...(node.connector?{connectorProtocol:CONNECTOR_PROTOCOL}:{}) }, signal: bounded(intervals.networkTimeout ?? 10000) });
+    const ticket = await network.request(`/v2/providers/nodes/${nodeId}/relay-ticket`, { method: 'POST', body: { providerRunId,...(native?{connectorProtocol:'pi_native_v1'}:node.connector?{connectorProtocol:CONNECTOR_PROTOCOL}:{}) }, signal: bounded(intervals.networkTimeout ?? 10000) });
     if (stopped) return;
     if (ticket.providerRunId !== providerRunId || !/^[A-Za-z0-9_-]{43}$/.test(ticket.ticket ?? '')) throw new ClientError('provider_run_contract_required');
     claimed = true;
@@ -243,17 +253,40 @@ export async function startProvider(networkInput, nodeId, { maxCalls = 5, maxOut
         cancelRequest(); return;
       }
       if (frame.type === 'handshake') {
-        if (pending || !Handshake(frame) || frame.bindingRevision !== node.listingId || frame.providerInstallationId !== node.installationId || frame.listingRevision !== node.listingRevision || frame.deadlineUnixMs <= now()) throw new ClientError('handshake_rejected');
+        if (pending || !Handshake(frame) || !listingBound(frame.bindingRevision,frame.listingRevision) || frame.providerInstallationId !== node.installationId || frame.deadlineUnixMs <= now()) throw new ClientError('handshake_rejected');
         pending = { id: frame.challengeId, binding: frame, frame, socket: ws }; return;
       }
-      if (pending || !(frame.protocol==='coding_v1'?CodingInferenceRequest(frame):InferenceRequest(frame)) || frame.bindingRevision !== node.listingId || frame.maxOutputTokens > maxOutputTokens || (!continuous && calls >= maxCalls)) throw new ClientError('frame_rejected');
+      if (pending || !(native?PiInferenceRequest(frame):frame.protocol==='coding_v1'?CodingInferenceRequest(frame):InferenceRequest(frame)) || !listingBound(frame.bindingRevision) || frame.maxOutputTokens > maxOutputTokens || (!continuous && calls >= maxCalls)) throw new ClientError('frame_rejected');
       calls++; pending = { id: frame.requestId, binding: frame, frame, socket: ws };
     })().catch(error => { if(current())void stop({ trigger: 'relay_frame_failed', error }); }); });
+  }
+  async function startNative() {
+    if(!native||!prepared||stopped||!guestReady)throw new ClientError('pi_provider_not_prepared');
+    const probe={type:'function',function:{name:'adr_probe',description:'Return the supplied value unchanged.',parameters:{type:'object',properties:{value:{type:'string'}},required:['value'],additionalProperties:false}}};
+    for(const model of node.nativeModels){
+      let previous;
+      for(const phase of ['tool','roundtrip']){
+        if(now()-lastGuestPoll>15000)throw new ClientError('provider_worker_unresponsive');
+        const check=await network.request(`/v2/providers/nodes/${nodeId}/pi-checks`,{method:'POST',body:{providerRunId,model:model.model,phase},key:randomUUID(),signal:bounded(10000)});
+        nativeCheckIds.push(check.id);
+        const messages=phase==='tool'?[{role:'user',content:'Call adr_probe with value "ready" exactly once.',timestamp:0}]:[{role:'user',content:'Call adr_probe with value "ready" exactly once.',timestamp:0},previous.nativeMessage,{role:'toolResult',toolCallId:previous.toolCalls[0].id,toolName:'adr_probe',content:[{type:'text',text:'ready'}],isError:false,timestamp:0},{role:'user',content:'Reply ready without calling a tool.',timestamp:0}];
+        const frame={type:'qualification',requestId:check.id,model:model.model,provider:node.provider,api:model.api,messageFormat:'pi_context_v1',qualification:phase,messages,tools:[probe],maxOutputTokens:check.outputBound,deadlineUnixMs:check.deadline,thinking:false,upstreamBudget:{inputBound:check.inputBound,reservedMicrousd:check.upstreamReserved,...check.rates}};
+        const result=await new Promise((resolve,reject)=>{const timer=setTimeout(()=>{if(pending?.id===check.id)pending=undefined;reject(new ClientError('upstream_timeout'));},Math.max(1,check.deadline-now()));pending={id:check.id,qualification:true,binding:frame,frame,resolve:r=>{clearTimeout(timer);resolve(r);},reject:e=>{clearTimeout(timer);reject(e);}};});
+        const tools=phase==='tool'?result.toolCalls?.length===1&&result.toolCalls[0].function.name==='adr_probe':result.toolCalls?.length===0&&result.text.trim().length>0;
+        const completed=await network.request(`/v2/providers/nodes/${nodeId}/pi-checks/complete`,{method:'POST',body:{id:check.id,usage:result.nativeUsage,streaming:true,tools,completed:result.nativeMessage?.stopReason!=='length'},signal:bounded(10000)});
+        if(!completed.passed)throw new ClientError('pi_compatibility_check_failed');previous=result;
+      }
+    }
+    await network.request(`/v2/providers/nodes/${nodeId}/publish`,{method:'POST',body:{},key:randomUUID(),signal:bounded(10000)});
+    node=await network.request(`/v2/providers/nodes/${nodeId}`);
+    control.push({type:'bind',listingIds:node.listingIds,listingRevision:node.listingRevision});
+    prepared=false;await renewal.run();await statusPoll.run();return snapshot();
   }
   async function stop({ trigger = 'operator_stop', error, signal, remote = true } = {}) {
     if (closing) return closing;
     if (error) failure('failure', error, 'provider_failed');
     lifecycle.stop(trigger, { signal });
+    if(pending?.qualification){pending.reject(new ClientError('provider_stopped'));pending=undefined;}
     stopped = true; guestReady = false; relayReady = false; for(const tunnel of tunnels)tunnel.destroy(); abort.abort();
     statusPoll?.stop(); renewal?.stop(); keepalive?.stop(); for(const timer of [deadline,touchRetry,reconnectTimer,authenticationTimer,leaseTimer])clearTimeout(timer); socket?.close();
     for (const [name,handler] of signalHandlers) process.removeListener(name,handler);
@@ -263,6 +296,7 @@ export async function startProvider(networkInput, nodeId, { maxCalls = 5, maxOut
       const outcome = async (phase, work) => { try { await work(); outcomes.push({phase,status:'succeeded'});lifecycle.event(phase,{status:'succeeded'}); } catch(e){outcomes.push({phase,status:'failed',code:e.code??'provider_cleanup_failed'});lifecycle.event(phase,{status:'failed',code:e.code??'provider_cleanup_failed'});} };
       await allocation?.catch(()=>{});
       await outcome('guest_removal', async () => { if(guest && runtime.owned.has(guest))await runtime.remove(guest); });
+      if(native&&nativeCheckIds.length&&outcomes.find(o=>o.phase==='guest_removal')?.status==='succeeded')await outcome('check_execution_release',()=>network.request(`/v2/providers/nodes/${nodeId}/pi-checks/teardown`,{method:'POST',body:{guestTeardownVerified:true,attemptIds:nativeCheckIds},signal:AbortSignal.timeout(10000)}));
       await outcome('broker_cleanup', async () => { broker.closeAllConnections(); if(broker.listening)await new Promise(resolve=>broker.close(resolve)); });
       if (remote && claimed) {
         try { await network.request(`/v2/providers/nodes/${nodeId}/stop`, { method: 'POST', body: { scope: 'run', providerRunId, trigger }, signal: AbortSignal.timeout(30000) }); outcomes.push({phase:'remote_stop',status:'succeeded'});lifecycle.event('remote_stop',{status:'succeeded'}); }
@@ -281,15 +315,18 @@ export async function startProvider(networkInput, nodeId, { maxCalls = 5, maxOut
   try {
     await new Promise(resolve => broker.listen(0, '0.0.0.0', resolve));
     for (const [name,handler] of signalHandlers) process.once(name,handler);
-    const ticket = await network.request(`/v2/providers/nodes/${nodeId}/relay-ticket`, { method:'POST', body:{providerRunId,...(node.connector?{connectorProtocol:CONNECTOR_PROTOCOL}:{})}, signal:bounded(intervals.networkTimeout ?? 10000) });
+    if(prepared){const claim=await network.request(`/v2/providers/nodes/${nodeId}/prepare`,{method:'POST',body:{providerRunId},signal:bounded(10000)});if(claim.providerRunId!==providerRunId)throw new ClientError('provider_run_contract_required');claimed=true;}
+    if(!prepared){
+    const ticket = await network.request(`/v2/providers/nodes/${nodeId}/relay-ticket`, { method:'POST', body:{providerRunId,...(native?{connectorProtocol:'pi_native_v1'}:node.connector?{connectorProtocol:CONNECTOR_PROTOCOL}:{})}, signal:bounded(intervals.networkTimeout ?? 10000) });
     if (ticket.providerRunId !== providerRunId) throw new ClientError('provider_run_contract_required');
     claimed = true; lifecycle.event('run', { status: 'claimed' }); announce({status:'starting'});
+    }
     renewal = backgroundOperation(renewRelay, intervals.renewal ?? 10000, error=>operationFailed('renewal',error));
     statusPoll = backgroundOperation(inspectStatus, intervals.status ?? 3000, error=>operationFailed('status',error));
     if (!continuous) deadline = setTimeout(onSignal, 540000);
     if (node.availability === 'hot') await warm();
     if (!stopped) { await statusPoll.run(); await renewal.run(); }
-    return { done, stop, warm, lifecycle, get status() { return snapshot(); } };
+    return { done, stop, warm, start: startNative, lifecycle, get status() { return snapshot(); } };
   } catch (error) { await stop({trigger:'startup_failed',error});throw error; }
 }
 export async function serveProvider(network, nodeId, options = {}) { const controller = await startProvider(network, nodeId, options); return controller.done; }

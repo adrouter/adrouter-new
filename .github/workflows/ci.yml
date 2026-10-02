@@ -40,6 +40,8 @@ jobs:
           echo "$RUNNER_TEMP/adr-fixture-tools" >> "$GITHUB_PATH"
       - name: Build and verify the locked coding fixture
         run: node scripts/build-coding-runtime.mjs .coding-source --verify
+      - name: Build the pinned native provider runtime
+        run: npm run provider:build
       - run: npm run check
       - run: npm pack --dry-run --ignore-scripts
       # Source checks are not real KVM or installed-artifact acceptance.

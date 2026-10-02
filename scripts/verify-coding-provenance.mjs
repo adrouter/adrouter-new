@@ -13,5 +13,5 @@ for(const file of ['coding-entry.mjs','coding-provider.mjs','coding-controls.mjs
 if(!Buffer.from(await readFile(join(root,'src/coding-wire.mjs'))).equals(await readFile(join(directory,'guest/coding-wire.mjs'))))throw Error('coding_wire_source_drift');
 console.log(JSON.stringify({status:'passed',revision:metadata.revision,files:Object.keys(metadata.files).length,licenses:true,legacyInstallationRequired:false}));
 
-for(const f of ['workspace-policy.mjs','coding-display.mjs'])if(!(await readFile(join(root,'src',f))).equals(await readFile(join(directory,f))))throw Error('coding_display_policy_drift');
+for(const f of ['workspace-policy.mjs','coding-display.mjs','pi-context.mjs','money.mjs'])if(!(await readFile(join(root,'src',f))).equals(await readFile(join(directory,f))))throw Error('coding_display_policy_drift');
 for(const arch of ['arm64','x64'])for(const f of ['fd','rg','fd-LICENSE-MIT','fd-LICENSE-APACHE'])if(!metadata.files[`tools/${arch}/${f}`])throw Error('coding_tool_payload_missing');
