@@ -25,8 +25,8 @@ const network={request:async(path,options={})=>{
   if(path.startsWith('/v2/listings/'))return {id:session.listingId,revision:session.listingRevision,model:session.model,inputRate:'1000',outputRate:'2000'};
   if(path.endsWith('/stop')){stops++;session.state='settled';return {...session};}
   if(path.endsWith('/inference')){
-    dispatches++;session.requestSequence++;
-    const toolCalls=dispatches===1?[call('read1','read',{path:'main.py'}),call('ls1','ls',{path:'.'})]:dispatches===2?[call('deny1','write',{path:'denied.txt',content:'denied change'}),call('blue1','write',{path:'index.html',content:'<body style="background:blue">synthetic website</body>\n'}),call('write1','write',{path:'main.py',content:'print("after")\n'}),call('write2','write',{path:'added.py',content:'assert 2 + 2 == 4\n'}),call('bash1','bash',{command:'rm remove.txt && python3 added.py && git --version && rg after main.py',timeout:120})]:[];
+    dispatches++;session.requestSequence++;if(process.env.ADR_NATIVE_PROGRESS_FILE)await writeFile(process.env.ADR_NATIVE_PROGRESS_FILE,JSON.stringify({dispatches}),{mode:0o600});
+    const toolCalls=dispatches===1?[call('read1','read',{path:'main.py'}),call('ls1','ls',{path:'.'})]:dispatches===2?[call('deny1','write',{path:'denied.txt',content:'denied change'}),call('blue1','write',{path:'index.html',content:'<body style="background:blue">synthetic website</body>\n'}),call('write1','write',{path:'main.py',content:'print("after")\n'}),call('write2','write',{path:'added.py',content:'assert 2 + 2 == 4\n'}),call('bash1','bash',{command:'if true; then\n  rm remove.txt\n  python3 added.py\nfi\ngit --version\nrg after main.py',timeout:120})]:[];
     return {requestId:options.body.requestId,text:toolCalls.length?'':'Synthetic coding complete.',thinking:'',toolCalls,usage:{inputTokens:8,outputTokens:8}};
   }
   if(statusUnavailable)throw Object.assign(Error('synthetic_status_unavailable'),{code:'marketplace_unavailable',status:503});return {...session};
