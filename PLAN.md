@@ -359,3 +359,6 @@ Alpha.20 runtime rebuilt through the checked-in builder. Final source validation
 
 ### Alpha.20 Pages preservation and release input
 Pre-push authenticated project metadata retains adrouter-dashboard, Git Provider No, deployment b02ef6ec-e125-439a-b31d-94d274e7ea9f/source 1985053. Push only codex/adrv2-reliability-20261001 to the explicit canonical GitHub URL. Preserve Pages settings/deployment/assets and closed admissions; no WebUI upload is planned. Final artifact is built from the committed clean release input; native acceptance and hosted replacement remain separate.
+
+### Alpha.20 frozen product and verifier follow-up
+Product 04d85dbaf2a49526b986b02453ecec5af3a0a2ae packed once; 23,531 files match the isolated installation. Source CI passes on macOS/Ubuntu. Helpers now explicitly load the installed product for final-cell/attribute and adversarial controlled-PTY checks. These verifier-only changes do not replace alpha.20 product bytes. Native lifecycle soak and hosted replacement remain pending.

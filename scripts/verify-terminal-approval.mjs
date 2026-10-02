@@ -1,7 +1,10 @@
 // Real controlled PTY adversarial redraw test. All content is synthetic.
 import assert from 'node:assert/strict';
-import { TerminalUI } from '../src/tui-screen.mjs';
-import { TerminalCoordinator } from '../src/terminal-coordinator.mjs';
+import {pathToFileURL} from 'node:url';
+import {join} from 'node:path';
+const root=process.env.ADR_ACCEPTANCE_CLIENT_ROOT;const entry=file=>root?pathToFileURL(join(root,'src',file)).href:new URL('../src/'+file,import.meta.url).href;
+const {TerminalUI}=await import(entry('tui-screen.mjs'));
+const {TerminalCoordinator}=await import(entry('terminal-coordinator.mjs'));
 const ui=new TerminalUI(),coordinator=new TerminalCoordinator(ui);
 let overwritten=0,review;
 const write=process.stdout.write.bind(process.stdout);
