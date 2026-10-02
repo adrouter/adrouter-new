@@ -622,7 +622,7 @@ Deliver verified private client bytes and an honest, reproducible compatibility 
 - [x] Run full client checks and provenance verification, then pack a new unused immutable private version from the clean product commit. Verify exact isolated-install bytes.
 - [x] Run installed Apple Silicon VM/PTY gates with `ADR_ACCEPTANCE_CLIENT_ROOT` pointing to that installation. Require actual read-content assertions, approval outcomes, final terminal cells and existing lifecycle preservation checks.
 - [x] Review the final diff, remove temporary debugging, update affected documentation and record any remaining limitations. No Router deployment is needed for this client-only scope; preserve hosted API/Pages/database identities.
-- [x] Switch the launcher after installed acceptance. Retain previous artifacts, profiles and saved work; loaded processes retain their own version. 
+- [x] Switch the launcher after installed acceptance. Retain previous artifacts, profiles and saved work; loaded processes retain their own version.
 - [ ] Complete operator-led live GLM checks separately and keep other gateway claims scoped to evidence.
 
 ### Relevant Files
