@@ -6,11 +6,11 @@ export function estimateCredits(usage, rates) {
 export class CodingDisplay {
   constructor(session,rates) {
     estimateCredits({inputTokens:0,outputTokens:0},rates);
-    this.sessionId=session.id;this.rates=rates;this.total=BigInt(session.charged??'0');this.requests=new Set();this.pending=false;this.unknown=false;
+    this.sessionId=session.id;this.computeName=rates.name??'Compute';this.model=rates.model??'unavailable';this.inputTokens=0;this.outputTokens=0;this.rates=rates;this.total=BigInt(session.charged??'0');this.requests=new Set();this.pending=false;this.unknown=false;
   }
-  complete(id,usage){if(!this.requests.has(id)){this.total+=estimateCredits(usage,this.rates);this.requests.add(id);}this.pending=false;}
+  complete(id,usage){if(!this.requests.has(id)){this.total+=estimateCredits(usage,this.rates);this.requests.add(id);this.inputTokens+=usage.inputTokens;this.outputTokens+=usage.outputTokens;}this.pending=false;}
   failed(code){this.pending=false;if(/unknown|incomplete|stream_invalid/.test(code??''))this.unknown=true;}
-  view(){return {sessionId:this.sessionId,label:`Estimated ${this.total} test credits${this.pending?' · usage pending':this.unknown?' · unresolved usage excluded':''}`,rates:`Input ${this.rates.inputRate} / output ${this.rates.outputRate} test credits per 1M tokens`};}
+  view(){return {sessionId:this.sessionId,computeName:this.computeName,model:this.model,inputTokens:this.inputTokens,outputTokens:this.outputTokens,completedRequests:this.requests.size,label:`Estimated ${this.total} test credits${this.pending?' · usage pending':this.unknown?' · unresolved usage excluded':''}`,rates:`Input ${this.rates.inputRate} / output ${this.rates.outputRate} test credits per 1M tokens`};}
 }
 export function inferenceErrorMessage(code,cancelled=false) {
   if(cancelled||['cancelled','runtime_cancelled'].includes(code))return 'Inference cancelled. No request was replayed.';
@@ -25,4 +25,10 @@ export function thinkingExplanation({accepted=false,providerEnabled=false,modelS
   if(!providerEnabled&&modelSupported===true)return 'The provider disabled thinking. Enable support and publish a new listing, then accept a new session.';
   if(!accepted)return 'The accepted session lacks thinking support. Accept a new session with thinking enabled by the provider.';
   return 'Thinking is available in this session and starts off. Choose a thinking level to enable it.';
+}
+
+export function codingFooter(value,width=80) {
+  if(!value)return 'Session metadata unavailable';
+  const compact=width<100;
+  return `${compact?'S':'Session'} ${compact?value.sessionId.slice(0,8):value.sessionId} · ${value.computeName}/${value.model} · ${compact?'I':'Input'} ${value.inputTokens} ${compact?'O':'Output'} ${value.outputTokens} · ${value.label}`;
 }

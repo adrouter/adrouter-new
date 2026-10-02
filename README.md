@@ -188,3 +188,12 @@ Saved coding work offers Review, Apply, Export and interrupted-application recov
 `/workspace` opens host review after the current response completes. Continue coding retains the same agent, draft and transcript. Inline tool approval remains host controlled; commands and diffs retain formatting and added/removed markers. Compute expiry disables inference while saved work remains reviewable.
 
 Recognized official DeepSeek Flash supply refreshes conservative tariff qualification automatically from bounded official evidence. Owner refresh is available in provider controls or `provider tariff-refresh NODE_ID --duration 3600`. Custom supply keeps manual qualification. Accepted session tariffs and capabilities remain immutable; thinking is provider opt-in and starts off for buyers. This private alpha version does not enable npm publication or public admissions.
+
+
+## Private alpha.20
+
+Stopped sessions can be hidden from My sessions and restored from Deleted. This changes buyer-account visibility only; saved work, receipts, holds and pending settlement remain available. Stop active sessions separately. The CLI supports `sessions --view deleted` and `session delete|restore SESSION_ID`.
+
+Authorized API and Self-hosted are the supply choices. Router-owned generated presets offer DeepSeek and MiMo with editable exact model IDs; Custom OpenAI-compatible setup exposes bounded authentication, output-token, streaming-usage and thinking controls. The provider enters the opaque key only inside the guest. Accepted connector/tariff/capability settings remain bound to the session. Unknown outcomes are held without replay or guessed settlement.
+
+Host approvals keep Deny/Allow/Details below the scrollable preview, default to Deny and reset their owned terminal cells on repaint. Page Up/Page Down scroll previews or contextual descriptions; F opens full contextual details. The pinned runtime supplies tool syntax highlighting and cell widths, with monochrome support. Provider activity polls every five seconds while visible, with uptime each second; legacy usage totals show unavailable.

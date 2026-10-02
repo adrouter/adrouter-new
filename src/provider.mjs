@@ -1,8 +1,9 @@
+import { resolveConnector, CONNECTOR_PROTOCOL, upstreamFailureCodes } from './connectors.mjs';
 import { connect } from 'node:net';
 import { lookup } from 'node:dns';
 import { createServer } from 'node:http';
 import { randomBytes, randomUUID } from 'node:crypto';
-import { readFile, writeFile, mkdtemp, copyFile, rm } from 'node:fs/promises';
+import { readFile, writeFile, mkdtemp, copyFile, rm, mkdir } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { CodingInferenceRequest, InferenceRequest, Handshake, HandshakeResult, ProviderRelayReady, ProviderRequestFailure } from './generated/validators.mjs';
@@ -31,11 +32,13 @@ export async function startProvider(networkInput, nodeId, { maxCalls = 5, maxOut
   if (!Number.isInteger(maxCalls) || maxCalls < 1 || maxCalls > 30 || !Number.isInteger(maxOutputTokens) || maxOutputTokens < 1 || maxOutputTokens > 8192) throw new ClientError('provider_exposure_bound_invalid');
   const network = Object.create(networkInput); network.actor = 'provider';
   let node = await network.request(`/v2/providers/nodes/${nodeId}`);
+  const connector=resolveConnector(node);
+  if(connector.authentication==='none')noKey=true;
   if (node.suspended === true) throw new ClientError('node_suspended');
   const continuous = requestedContinuous ?? node.availability === 'hot';
   if (continuous && node.availability !== 'hot') throw new ClientError('continuous_hot_only');
   const binding = validateBinding(node);
-  if(noKey && node.supplyClass !== 'self_hosted')throw new ClientError('provider_credential_required');
+  if(noKey && node.supplyClass !== 'self_hosted' && connector.authentication!=='none')throw new ClientError('provider_credential_required');
   const enginePort = binding.loopback ? Number(binding.url.port) : undefined;
   if(binding.loopback && (!enginePort || enginePort < 1024))throw new ClientError('self_hosted_port_required');
   const runtime = providedRuntime ?? (runtimeConfig ? new SandboxRuntime(runtimeConfig) : await configuredRuntime()); await runtime.verify();
@@ -92,9 +95,9 @@ export async function startProvider(networkInput, nodeId, { maxCalls = 5, maxOut
       } else if (req.method === 'POST' && req.url === '/failed') {
         const result = JSON.parse(bytes);
         if (result.scope === 'request' && pending && result.requestId === pending.id) {
-          const frame = { type: 'request_failed', requestId: pending.id, sessionId: pending.binding.sessionId, bindingRevision: pending.binding.bindingRevision, sequence: pending.binding.sequence, code: 'provider_outcome_unknown' };
+          const frame = { type: 'request_failed', requestId: pending.id, sessionId: pending.binding.sessionId, bindingRevision: pending.binding.bindingRevision, sequence: pending.binding.sequence, code: upstreamFailureCodes.includes(result.code)?result.code:'provider_outcome_unknown' };
           if (!ProviderRequestFailure(frame)) throw Error('request_failure_binding');
-          failure('request', { code: 'provider_outcome_unknown' }, 'provider_outcome_unknown');
+          failure('request', { code: frame.code }, 'provider_outcome_unknown');
           if (!pending.cancelled && relayReady && pending.socket === socket) socket.send(JSON.stringify(frame)); pending = undefined;
         } else if (result.scope === 'provider' && ['control_unavailable','handshake_rejected','frame_rejected'].includes(result.code)) void stop({ trigger: 'guest_failed', error: new ClientError(result.code) });
         else throw Error('provider_failure_binding');
@@ -132,6 +135,9 @@ export async function startProvider(networkInput, nodeId, { maxCalls = 5, maxOut
     try {
       copied = await mkdtemp(join(tmpdir(), 'adr-provider-'));
       for (const [from, to] of [['guest/provider-console.mjs', 'provider-console.mjs'], ['provider-broker.mjs', 'provider-broker.mjs'], ['coding-wire.mjs','coding-wire.mjs'], ['provider-setup.mjs', 'provider-setup.mjs']]) await copyFile(new URL(from, import.meta.url), join(copied, to));
+      await mkdir(join(copied,'generated'),{recursive:true});
+      for(const file of ['connectors.mjs'])await copyFile(new URL('./generated/'+file,import.meta.url),join(copied,'generated',file));
+      await copyFile(new URL('./connectors.mjs',import.meta.url),join(copied,'connectors.mjs'));
       await writeFile(join(copied, 'config.json'), JSON.stringify({ control: `http://host.microsandbox.internal:${broker.address().port}`, capability, noKey, node: binding.loopback ? {...node,localEngine:true,endpoint:node.endpoint.replace(binding.url.hostname,'host.microsandbox.internal')} : {...node,tunnel:{port:broker.address().port,capability}}, maxCalls, maxOutputTokens, continuous }), { mode: 0o600 });
       allocation = createGuest(runtime, [broker.address().port, ...(enginePort ? [enginePort] : [])], copied, undefined, { signal: warmSignal, continuous });
       guest = await allocation;
@@ -187,7 +193,7 @@ export async function startProvider(networkInput, nodeId, { maxCalls = 5, maxOut
   }
   async function renewRelay() {
     if (stopped || socket?.readyState === Socket.CONNECTING || authenticationTimer) return;
-    const ticket = await network.request(`/v2/providers/nodes/${nodeId}/relay-ticket`, { method: 'POST', body: { providerRunId }, signal: bounded(intervals.networkTimeout ?? 10000) });
+    const ticket = await network.request(`/v2/providers/nodes/${nodeId}/relay-ticket`, { method: 'POST', body: { providerRunId,...(node.connector?{connectorProtocol:CONNECTOR_PROTOCOL}:{}) }, signal: bounded(intervals.networkTimeout ?? 10000) });
     if (stopped) return;
     if (ticket.providerRunId !== providerRunId || !/^[A-Za-z0-9_-]{43}$/.test(ticket.ticket ?? '')) throw new ClientError('provider_run_contract_required');
     claimed = true;
@@ -272,7 +278,7 @@ export async function startProvider(networkInput, nodeId, { maxCalls = 5, maxOut
   try {
     await new Promise(resolve => broker.listen(0, '0.0.0.0', resolve));
     for (const [name,handler] of signalHandlers) process.once(name,handler);
-    const ticket = await network.request(`/v2/providers/nodes/${nodeId}/relay-ticket`, { method:'POST', body:{providerRunId}, signal:bounded(intervals.networkTimeout ?? 10000) });
+    const ticket = await network.request(`/v2/providers/nodes/${nodeId}/relay-ticket`, { method:'POST', body:{providerRunId,...(node.connector?{connectorProtocol:CONNECTOR_PROTOCOL}:{})}, signal:bounded(intervals.networkTimeout ?? 10000) });
     if (ticket.providerRunId !== providerRunId) throw new ClientError('provider_run_contract_required');
     claimed = true; lifecycle.event('run', { status: 'claimed' }); announce({status:'starting'});
     renewal = backgroundOperation(renewRelay, intervals.renewal ?? 10000, error=>operationFailed('renewal',error));

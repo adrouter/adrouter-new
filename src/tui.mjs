@@ -1,3 +1,5 @@
+import { connectorCatalog, resolveConnector, CONNECTOR_PROTOCOL } from './connectors.mjs';
+import { ProviderActivityMonitor, providerActivityLines } from './provider-activity.mjs';
 import { recoverableStatusFailure } from './buyer-lifecycle.mjs';
 import { MarketplaceDisplay } from './marketplace-display.mjs';
 import { usdToMicrousd, formatUsd } from './money.mjs';
@@ -193,16 +195,31 @@ export async function runTui(options = {}, dependencies = {}) {
     actor('provider');
     const draftKey = `${store.profile ?? 'default'}:${network.origin}`;
     const savedDraft = setupDrafts.get(draftKey);
-    const preset = savedDraft ? 'resume' : await ui.menu('List compute · 1 of 3', [item('deepseek', 'DeepSeek Flash · official API', 'Prefill your selected test provider. Uses the documented deepseek-flash request ID.'), item('custom', 'Other authorized API'), item('self', 'Self-hosted inference')], { subtitle: 'Keys stay with you. Only public listing metadata is submitted.' });
-    if (!preset) return;
-    // Operator-selected test configuration, not a claim about general model capabilities.
-    let draft = savedDraft ?? (preset === 'deepseek' ? { name: 'DeepSeek Flash - hot compute', model: 'deepseek-flash', endpoint: 'https://api.deepseek.com/chat/completions', supplyClass: 'authorized_api' } : { supplyClass: preset === 'self' ? 'self_hosted' : 'authorized_api' });
+    const supply=savedDraft?'resume':await ui.menu('List compute · 1 of 3',[item('authorized_api','Authorized API','DeepSeek, MiMo or a custom OpenAI-compatible API.'),item('self_hosted','Self-hosted','Your own public endpoint or reviewed loopback inference engine.'),item('back','Back')]);
+    if(!supply||supply==='back')return;
+    const preset=savedDraft?'resume':supply==='authorized_api'?await ui.menu('Choose authorized API',[...connectorCatalog.presets.map(p=>item(p.id,p.name)),item('custom','Custom OpenAI-compatible'),item('back','Back')]):'self';
+    if(!preset||preset==='back')return;
+    const selectedPreset=connectorCatalog.presets.find(p=>p.id===preset);
+    let draft=savedDraft??{supplyClass:supply,...(selectedPreset?{name:selectedPreset.name+' - hot compute',model:selectedPreset.model,endpoint:selectedPreset.endpoint}:{}),connector:structuredClone(connectorCatalog.profiles.find(p=>p.id===(selectedPreset?.profile??'openai-compatible-v1')))};
+    if(!savedDraft&&['custom','self'].includes(preset)){
+      const options=await ui.form('OpenAI-compatible adapter',[
+        {name:'authentication',label:'Authentication',choices:['bearer','api_key','x_api_key','none'],help:'Header format only. The key is entered inside the provider guest.'},
+        {name:'outputTokenParameter',label:'Output token parameter',choices:['max_tokens','max_completion_tokens']},
+        {name:'streamingUsage',label:'Streaming usage',choices:['include_usage','native'],help:'Validated final usage is required. Missing usage remains unresolved.'},
+        {name:'thinking',label:'Thinking controls',choices:['none','type','reasoning_effort']},
+        {name:'reasoningHistory',label:'Reasoning history',choices:['off','on']},
+      ],{...draft.connector,reasoningHistory:'off'});
+      if(!options)return;Object.assign(draft.connector,options,{reasoningHistory:options.reasoningHistory==='on'});
+      try{resolveConnector(draft);}catch(e){await ui.page('Unsupported adapter',errorLines(e));return;}
+    }
     setupDrafts.set(draftKey, draft);
     for (;;) {
       draft.thinking??=draft.capabilities?.includes('thinking_v1')?'supported':'off';
-      const edited = await ui.form('List compute · 2 of 3', providerFields, draft, 'Defaults are editable. Only public listing metadata is submitted.');
+      const fields=providerFields.map(f=>f.name==='model'&&selectedPreset?{...f,choices:undefined,help:'Exact editable model ID. Preset choices: '+selectedPreset.models.join(', ')}:f);
+      const edited = await ui.form('List compute · 2 of 3', fields, draft, 'Defaults are editable. Only public listing metadata is submitted.');
       if (!edited) return;
       const {thinking,...metadata}=edited;delete draft.thinking;Object.assign(draft,metadata);draft.capabilities=['coding_v1','streaming_v1','tools_v1',...(thinking==='supported'?['thinking_v1']:[])];draft.contextWindowTokens=32768;
+      if(thinking==='supported'&&draft.connector?.thinking==='none'){await ui.page('Thinking controls required',['Select a compatible thinking control before advertising support.']);return;}
       if (!MarketplaceDraft(draft)) { await ui.page('Check listing fields', ['Use printable metadata and integer test-credit prices.']); continue; }
       const decision = await ui.menu('List compute · 3 of 3', [item('edit', 'Edit details'), item('create', 'Create draft and configure provider'), item('cancel', 'Cancel')], { lines: [draft.name, `${draft.model} · ${draft.availability}`, draft.endpoint, `Thinking: ${draft.capabilities.includes('thinking_v1')?'supported (buyer opt-in)':'off'}`, `Supply: ${words(draft.supplyClass)}`, `Input ${draft.inputRate} / output ${draft.outputRate} test credits per 1M tokens`, '', 'Publish your listing and qualify its current tariff before your private evaluation.'] });
       if (decision === 'edit') continue;
@@ -263,7 +280,8 @@ export async function runTui(options = {}, dependencies = {}) {
       if (providersRunning.get(node.id)?.status.stopped) providersRunning.delete(node.id);
       currentProviderId = node.id;
       const exposure=await get('/providers/budget');
-      const selection = await ui.menu(created ? 'Your listing is drafted' : node.name, [
+      const monitor=new ProviderActivityMonitor(network,node.id,()=>ui.pending?.redraw?.());await monitor.start();
+      let selection;try{selection = await ui.menu(created ? 'Your listing is drafted' : node.name, [
         item('setup', 'Continue setup', 'Runtime → limits → publication → tariff → guest → relay', providersRunning.has(node.id)),
         item('launch', node.availability === 'cold' ? 'Start cold control' : 'Launch hot VM', 'Keep this TUI open while providing.', providersRunning.has(node.id)),
         ...(providersRunning.get(node.id)?.status.activation.length ? [item('activate', 'Activate reserved buyer session', 'Launch the VM and enter the key before the 120-second deadline.')] : []),
@@ -273,7 +291,7 @@ export async function runTui(options = {}, dependencies = {}) {
         item('pause', 'Pause listing'), item('stop', 'Stop serving and close sessions'),
         ...(node.status === 'paused' ? [item('delete', 'Delete paused listing', providersRunning.has(node.id) ? 'Stop serving in this terminal first.' : 'Permanent removal requires finished sessions and settlement. Receipts remain available.', providersRunning.has(node.id))] : []),
         item('refresh', 'Refresh status'), item('back', 'Back'),
-      ], { lines: [`Model: ${node.model}`, `Suspended: ${node.suspended ? 'yes' : 'no'} · Listing: ${node.status}`, `VM: ${providersRunning.get(node.id)?.status.guestReady ? 'ready' : 'not running'}`, `Backend: ${node.ready && Number(node.leaseUntil)>Date.now() && providersRunning.get(node.id)?.status.guestReady && providersRunning.get(node.id)?.status.relayReady ? 'Hot · Ready' : node.availability === 'cold' && Number(node.leaseUntil) > Date.now() ? 'cold · control online' : 'offline'}`, `Activity: ${providersRunning.get(node.id)?.status.calls??0} dispatched requests`, `Remaining upstream authority: ${formatUsd(exposure.remainingMicrousd)}`, `Outstanding exposure: ${formatUsd(exposure.outstandingMicrousd)}`, `Provider: ${node.id}`,`Listing: ${node.listingId??'not published'}`,`Session: ${node.activeSessionId??'none'}`,`Thinking: ${node.capabilities?.includes('thinking_v1')?'supported':'off'}`],footer:providersRunning.has(node.id)?'↑↓ Move  Enter Choose  Esc / Ctrl+C Stop provider VM':'↑↓ Move  Enter Choose  Esc Back' });
+      ], { tick:true,lines:()=>[...providerActivityLines(monitor.view()),`Model: ${node.model}`, `Suspended: ${node.suspended ? 'yes' : 'no'} · Listing: ${node.status}`, `VM: ${providersRunning.get(node.id)?.status.guestReady ? 'ready' : 'not running'}`, `Backend: ${node.ready && Number(node.leaseUntil)>Date.now() && providersRunning.get(node.id)?.status.guestReady && providersRunning.get(node.id)?.status.relayReady ? 'Hot · Ready' : node.availability === 'cold' && Number(node.leaseUntil) > Date.now() ? 'cold · control online' : 'offline'}`, `Activity: ${providersRunning.get(node.id)?.status.calls??0} dispatched requests`, `Remaining upstream authority: ${formatUsd(exposure.remainingMicrousd)}`, `Outstanding exposure: ${formatUsd(exposure.outstandingMicrousd)}`, `Provider: ${node.id}`,`Listing: ${node.listingId??'not published'}`,`Session: ${node.activeSessionId??'none'}`,`Thinking: ${node.capabilities?.includes('thinking_v1')?'supported':'off'}`],footer:providersRunning.has(node.id)?'↑↓ Move  Enter Choose  Esc / Ctrl+C Stop provider VM':'↑↓ Move  Enter Choose  Esc Back' });}finally{monitor.stop();}
       currentProviderId = undefined; created = false;
       if(!selection&&providersRunning.has(node.id)){await providersRunning.get(node.id).stop();providersRunning.delete(node.id);continue;}
       if (!selection || selection === 'back') return;
@@ -338,7 +356,8 @@ export async function runTui(options = {}, dependencies = {}) {
     config=await get('/network/config',true);listing=await get(`/listings/${listing.id}`,true);
     access=quoteAccess(config,listing);if(access.disabled)throw new ClientError(access.code);
     if(privateMode!==(!config.admissions&&config.privateRehearsal)||coding!==(!!config.capabilities?.includes('coding_v1')&&listing.capabilities?.includes('coding_v1')))throw new ClientError('quote_policy_changed');
-    const quote = await post('/quotes', { listingId: listing.id, maximumCharge: bounds.budget, maxOutputTokens: Number(bounds.output), durationSeconds: Number(bounds.duration), ...(coding?{protocol:'coding_v1',requestLimit:100}:{}), ...mode });
+    resolveConnector(listing);
+    const quote = await post('/quotes', { ...(listing.connector?{connectorProtocol:CONNECTOR_PROTOCOL}:{}), listingId: listing.id, maximumCharge: bounds.budget, maxOutputTokens: Number(bounds.output), durationSeconds: Number(bounds.duration), ...(coding?{protocol:'coding_v1',requestLimit:100}:{}), ...mode });
     if (!await confirm('Review your quote', [...listingLines(listing), '', `Maximum reserved: ${quote.maximumCharge} test credits`, `Output limit: ${quote.maxOutputTokens} tokens`, `Session duration: ${quote.durationSeconds} seconds`, `Shared inference dispatches: ${quote.requestLimit??5}`, `Quote expires: ${date(quote.expiresAt)}`, `Cold activation deadline: ${quote.activationDeadlineSeconds || 0} seconds. Expired activation refunds the reservation.`], 'Accept and reserve test credits')) return;
     const session = await post('/sessions', { quoteId: quote.id, accept: true, ...mode }, `accept_${quote.id}`);
     if (privateMode) {
@@ -479,18 +498,21 @@ export async function runTui(options = {}, dependencies = {}) {
   async function sessionDetail(id) {
     for (;;) {
       const session = await get(`/sessions/${id}`);
-      const choice = await ui.menu('Test-credit session', [item('agent', 'Start buyer coding agent', 'Select files, approve tools and export a reviewed workspace.', !['ready','active'].includes(session.state)), item('events', 'Activity and recovery'), item('stop', 'Stop and release unused credits'), item('refresh', 'Refresh'), item('back', 'Back')], { lines: [`Status: ${words(session.state)}`, `Reserved access: ${session.funded} · Charged: ${session.charged}`, `Unresolved liability: ${session.reserved} · Refunded: ${session.refunded}`, `Expires: ${date(session.expiresAt)}`, `Reference: ${session.id}`, '', 'Reconnect restores status. Paid requests and tool actions are never replayed.'] });
+      const choice = await ui.menu('Test-credit session', [item('agent', 'Start buyer coding agent', 'Select files, approve tools and export a reviewed workspace.', !['ready','active'].includes(session.state)), item('events', 'Activity and recovery'), item('stop', 'Stop and release unused credits'), ...(session.buyerDeletedAt?[item('restore','Restore to My sessions')]:session.stoppedAt||['settled','refunded'].includes(session.state)?[item('delete','Delete from My sessions','Hides this stopped session. Saved work, receipts, holds and settlement remain.')]:[]), item('refresh', 'Refresh'), item('back', 'Back')], { lines: [`Status: ${words(session.state)}`, `Reserved access: ${session.funded} · Charged: ${session.charged}`, `Unresolved liability: ${session.reserved} · Refunded: ${session.refunded}`, `Expires: ${date(session.expiresAt)}`, `Reference: ${session.id}`, '', 'Reconnect restores status. Paid requests and tool actions are never replayed.'] });
       if (!choice || choice === 'back') return;
+      if(['delete','restore'].includes(choice)){await post(`/sessions/${id}/${choice}`,{});return;}
       if (choice === 'agent') await buyerAgent(session);
       if (choice === 'events') { const events = await get(`/sessions/${id}/events`); await ui.page('Session activity', events.length ? events.map(e => `${date(e.at)} · ${words(e.type)}`) : ['No activity yet.']); }
       if (choice === 'stop' && await confirm('Stop session?', ['Known unused credits will be returned. Unknown inference outcomes stay held.'])) await post(`/sessions/${id}/stop`);
     }
   }
   async function sessions() {
-    actor('buyer');
-    const values = await get('/sessions');
-    const choice = await ui.menu('My sessions', [...values.map(s => item(s.id, `${words(s.state)} · ${s.charged}/${s.funded} credits · ${s.id.slice(0, 8)}`,[`Session: ${s.id}`,`Listing: ${s.listingId}`,`State: ${words(s.state)} · Charged ${s.charged} test credits`,`Expires: ${date(s.expiresAt)}`])), item('back', 'Back')], { subtitle: values.length ? 'Inspect, recover status or stop a session.' : 'No sessions yet. Browse compute to get a quote.' });
-    if (choice && choice !== 'back') await sessionDetail(choice);
+    actor('buyer');let deleted=false;
+    for(;;){
+      const values=await get('/sessions'+(deleted?'?view=deleted':''));
+      const choice=await ui.menu(deleted?'Deleted sessions':'My sessions',[item('view',deleted?'My sessions':'Deleted'),...values.map(s=>item(s.id,`${words(s.state)} · ${s.charged}/${s.funded} credits · ${s.id.slice(0,8)}`,[`Session: ${s.id}`,`Listing: ${s.listingId}`,`State: ${words(s.state)}`,`Expires: ${date(s.expiresAt)}`])),item('back','Back')],{subtitle:deleted?'Restore a session. Saved work and accounting remain available.':'Inspect a session or stop it separately before hiding it.'});
+      if(!choice||choice==='back')return;if(choice==='view'){deleted=!deleted;continue;}await sessionDetail(choice);
+    }
   }
   async function receipts() {
     actor('buyer'); const values = await get('/receipts');

@@ -26,7 +26,7 @@ export const usage = `adr-cli — adr-v2 compute marketplace (test credits, no c
   market [--model TEXT] [--supply authorized_api|self_hosted] [--after CURSOR]
   market inspect LISTING_ID
   connect LISTING_ID --budget UNITS [--accept]
-  sessions | session inspect|resume|stop SESSION_ID | receipts
+  sessions [--view deleted] | session inspect|resume|stop|delete|restore SESSION_ID | receipts
   provider create | listings | inspect NODE_ID | publish NODE_ID | pause NODE_ID | stop NODE_ID | serve NODE_ID
   provider capabilities NODE_ID --thinking off|supported
   provider delete NODE_ID --confirm-delete
@@ -147,8 +147,9 @@ export async function run(args, dependencies = {}) {
     else throw new ClientError('unknown_command');
   } else if (command === 'connect') {
     const listingId = requireId(sub);
+    const listing=await get(`/listings/${listingId}`,true);
     const mode = o['private-rehearsal'] ? { mode: 'private_rehearsal', acknowledgeProvisional: !!o['acknowledge-provisional'] } : {};
-    const quote = await post('/quotes', { listingId, maximumCharge: o.budget ?? (o['private-rehearsal'] ? '100' : '1000'), maxOutputTokens: Number(o['max-output'] ?? '1024'), durationSeconds: Number(o.duration ?? (o.coding?'3600':'300')), ...(o.coding?{protocol:'coding_v1',requestLimit:Number(o['max-calls']??100)}:{}), ...mode }); output({ quote });
+    const quote = await post('/quotes', { ...(listing.connector?{connectorProtocol:'openai_compatible_v1'}:{}), listingId, maximumCharge: o.budget ?? (o['private-rehearsal'] ? '100' : '1000'), maxOutputTokens: Number(o['max-output'] ?? '1024'), durationSeconds: Number(o.duration ?? (o.coding?'3600':'300')), ...(o.coding?{protocol:'coding_v1',requestLimit:Number(o['max-calls']??100)}:{}), ...mode }); output({ quote });
     let accept = !!o.accept;
     if (!accept && !json && process.stdin.isTTY) accept = await choose('Reserve this bounded test-credit quote?', ['Cancel', 'Accept quote']) === 1;
     if (!accept) { output({ status: 'quote_not_accepted', quoteId: quote.id }); return; }
@@ -163,9 +164,10 @@ export async function run(args, dependencies = {}) {
     if(interactive&&process.stdin.isTTY&&process.stdout.isTTY){const {TerminalUI}=await import('./tui-screen.mjs'),{TerminalCoordinator}=await import('./terminal-coordinator.mjs');ui=new TerminalUI();coordinator=new TerminalCoordinator(ui);}
     const buyer=await openCodingBuyer(network,sessionId,{root:manifest.root,files:manifest.files.map(f=>f.path),trusted:true,profile:o.profile??'buyer',resumeId:o.resume,coordinator,...(coordinator?{approve:(a,p)=>coordinator.approve(a,p)}:{})});
     try{if(ui)ui.start();const code=()=>buyer.interactive({prompt:o.prompt??'',mode:o.mode??'interactive'});if(ui)await ui.suspend(code);else await code();output({...await buyer.save(),...(buyer.lifecycle.approvalRequired?{status:'approval_required'}:{})});}finally{ui?.stop();output(await buyer.close());}
-  } else if (command === 'sessions') output(await get('/sessions'));
+  } else if (command === 'sessions') output(await get('/sessions'+(o.view==='deleted'?'?view=deleted':'')));
   else if (command === 'session') {
-    if (sub === 'stop') output(await post(`/sessions/${requireId(id)}/stop`));
+    if (['delete','restore'].includes(sub)) output(await post(`/sessions/${requireId(id)}/${sub}`,{}));
+    else if (sub === 'stop') output(await post(`/sessions/${requireId(id)}/stop`));
     else if (sub === 'inspect' || sub === 'resume') output({ session: await get(`/sessions/${requireId(id)}`), events: await get(`/sessions/${requireId(id)}/events`), ...(sub === 'resume' ? { recovery: 'state_restored_no_inference_or_tool_replay' } : {}) });
     else throw new ClientError('unknown_command');
   } else if (command === 'receipts') output(await get('/receipts'));

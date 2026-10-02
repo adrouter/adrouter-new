@@ -1,3 +1,4 @@
+import { resolveConnector, connectorHeaders } from './connectors.mjs';
 import { UpstreamCodingStream } from './coding-wire.mjs';
 import { connect as tlsConnect } from 'node:tls';
 import { Agent, request as httpsRequest } from 'node:https';
@@ -38,19 +39,21 @@ export function tunnelAgent(node, url) {
   return agent;
 }
 export function upstreamBody(node, frame) {
-  const url = new URL(node.endpoint);
-  // The connector contract carries text/tool messages, not reasoning history.
-  // DeepSeek defaults to thinking, whose tool continuation requires that history.
-  const plainDeepSeek = url.protocol === 'https:' && url.hostname === 'api.deepseek.com';
-  return { model: node.model, messages: frame.messages, max_tokens: frame.maxOutputTokens,
-    ...(frame.tools?.length ? { tools: frame.tools } : {}),
-    ...(plainDeepSeek ? { thinking: { type: frame.thinking ? 'enabled' : 'disabled' } } : {}), stream: frame.protocol === 'coding_v1', ...(frame.protocol === 'coding_v1' ? {stream_options:{include_usage:true}} : {}) };
+  const profile=resolveConnector(node);
+  if(frame.connector&&Object.keys(profile).some(k=>resolveConnector({connector:frame.connector})[k]!==profile[k]))throw new ClientError('connector_binding_mismatch');
+  if(frame.thinking&&profile.thinking==='none')throw new ClientError('capability_mismatch');
+  const messages=frame.messages.map(m=>{if(profile.reasoningHistory&&frame.thinking)return m;const {reasoning_content:_reasoning,...plain}=m;return plain;});
+  return {model:node.model,messages,[profile.outputTokenParameter]:frame.maxOutputTokens,
+    ...(frame.tools?.length?{tools:frame.tools}:{}),
+    ...(profile.thinking==='type'?{thinking:{type:frame.thinking?'enabled':'disabled'}}:profile.thinking==='reasoning_effort'?{reasoning_effort:frame.thinking?'medium':'none'}:{}),
+    stream:frame.protocol==='coding_v1',...(frame.protocol==='coding_v1'&&profile.streamingUsage==='include_usage'?{stream_options:{include_usage:true}}:{})};
 }
 // Fixed approved endpoint, model and headers. Neither relay nor guest can choose
 // a URL, header, redirect, tool or arbitrary proxy target. DNS is checked at the
 // connection's lookup, not in an earlier rebindable preflight.
 export function upstreamInference(node, key, frame, signal, onTiming = () => {}, onEvent = () => {}) {
   const { url, loopback } = validateBinding(node);
+  const profile=resolveConnector(node),authentication=!node.connector&&loopback&&!key?{}:connectorHeaders(profile,key);
   const authority = frame.upstreamBudget;
   const inputBound = Buffer.byteLength(JSON.stringify({ messages: frame.messages, ...(frame.tools?.length ? { tools: frame.tools } : {}) })) + frame.messages.length * 64 + 1024;
   if (!authority || inputBound > authority.inputBound || !['reservedMicrousd','inputMicrousdPerMillion','outputMicrousdPerMillion'].every(k => /^(0|[1-9][0-9]{0,18})$/.test(authority[k]))) throw new ClientError('upstream_authority_required');
@@ -60,12 +63,12 @@ export function upstreamInference(node, key, frame, signal, onTiming = () => {},
   const bytes = JSON.stringify(upstreamBody(node, frame));
   return new Promise((resolve, reject) => {
     const started = Date.now(); let statusCode = null, headersMs = null, finished = false;
-    const deadline = setTimeout(() => { request.destroy(); fail(); }, deadlineMs);
+    const deadline = setTimeout(() => { request.destroy(); fail('upstream_timeout'); }, deadlineMs);
     const timing = outcome => { if(finished)return; finished=true;clearTimeout(deadline);onTiming({phase:'upstream',outcome,statusCode,headersMs,totalMs:Date.now()-started}); };
-    const fail = () => { timing('unknown'); reject(new ClientError('upstream_failed_outcome_unknown')); };
+    const fail = (code='upstream_failed_outcome_unknown') => {if(finished)return;timing('unknown');reject(new ClientError(typeof code==='string'?code:'upstream_failed_outcome_unknown'));};
     const request = (url.protocol === 'https:' ? httpsRequest : httpRequest)(url, {
       method: 'POST', signal, timeout: deadlineMs, agent: tunnelAgent(node,url),
-      headers: { 'content-type': 'application/json', 'content-length': Buffer.byteLength(bytes), ...(key ? { authorization: `Bearer ${key}` } : {}) },
+      headers: { 'content-type': 'application/json', 'content-length': Buffer.byteLength(bytes), ...authentication },
       lookup(hostname, options, callback) {
         lookup(hostname, options, (error, addresses, family) => {
           if (error) { callback(error, addresses, family); return; }
@@ -76,10 +79,15 @@ export function upstreamInference(node, key, frame, signal, onTiming = () => {},
       },
     }, response => {
       statusCode=response.statusCode; headersMs=Date.now()-started;
-      if (response.statusCode !== 200) { response.resume(); fail(); return; }
+      if(response.statusCode!==200){
+        if([401,403].includes(response.statusCode)){response.resume();fail('upstream_authentication_failed');return;}
+        if(response.statusCode===429){response.resume();fail('upstream_rate_limited');return;}
+        if(response.statusCode===400||response.statusCode===404){let errorBytes='';response.on('data',chunk=>{errorBytes+=chunk.toString('utf8');if(Buffer.byteLength(errorBytes)>8192){response.destroy();fail();}});response.once('end',()=>{let error;try{error=JSON.parse(errorBytes)?.error;}catch{}fail(error?.param==='model'||['model_not_found','invalid_model'].includes(error?.code)?'upstream_invalid_model':'upstream_failed_outcome_unknown');});response.once('error',()=>fail());return;}
+        response.resume();fail();return;
+      }
       const stream = frame.protocol === 'coding_v1' ? new UpstreamCodingStream(frame.requestId,frame.tools.map(t=>t.function.name),onEvent) : undefined;
       const chunks = []; let size = 0; let queue=Promise.resolve();
-      response.on('data', chunk => { if(stream){response.pause();queue=queue.then(()=>stream.feed(chunk)).then(()=>response.resume()).catch(()=>{response.destroy();fail();});return;} size += chunk.length; if (size > 1024 * 1024) { response.destroy(); fail(); } else chunks.push(chunk); });
+      response.on('data', chunk => { if(stream){response.pause();queue=queue.then(()=>stream.feed(chunk)).then(()=>response.resume()).catch(()=>{response.destroy();fail('upstream_malformed_response');});return;} size += chunk.length; if (size > 1024 * 1024) { response.destroy(); fail(); } else chunks.push(chunk); });
       response.once('error', fail);
       response.once('end', async () => {
         try {
@@ -88,13 +96,13 @@ export function upstreamInference(node, key, frame, signal, onTiming = () => {},
           const data = JSON.parse(Buffer.concat(chunks).toString('utf8'));
           const text = data.choices?.[0]?.message?.content ?? '';
           const toolCalls = data.choices?.[0]?.message?.tool_calls ?? [];
-          if (!Array.isArray(toolCalls) || toolCalls.length > 8 || (toolCalls.length && !frame.tools?.length) || toolCalls.some(t => t.type !== 'function' || typeof t.id !== 'string' || !/^[A-Za-z0-9_-]{1,96}$/.test(t.id) || !['read_file','search','write_file','delete_file','run_command'].includes(t.function?.name) || typeof t.function.arguments !== 'string' || t.function.arguments.length > 65536)) { fail(); return; }
+          if (!Array.isArray(toolCalls) || toolCalls.length > 8 || (toolCalls.length && !frame.tools?.length) || toolCalls.some(t => t.type !== 'function' || typeof t.id !== 'string' || !/^[A-Za-z0-9_-]{1,96}$/.test(t.id) || !frame.tools?.some(tool=>tool.function?.name===t.function?.name) || typeof t.function.arguments !== 'string' || t.function.arguments.length > 65536)) { fail(); return; }
           const inputTokens = data.usage?.prompt_tokens; const outputTokens = data.usage?.completion_tokens;
           if (typeof text !== 'string' || Buffer.byteLength(text) > 131072 || !Number.isSafeInteger(inputTokens) || inputTokens < 0 || inputTokens > inputBound || !Number.isSafeInteger(outputTokens) || outputTokens < 0 || outputTokens > frame.maxOutputTokens) { fail(); return; }
           timing('succeeded'); resolve({ type: 'result', requestId: frame.requestId, text, toolCalls, inputTokens, outputTokens });
-        } catch { fail(); }
+        } catch { fail('upstream_malformed_response'); }
       });
     });
-    request.once('error', fail); request.once('timeout', () => { request.destroy(); fail(); }); request.end(bytes);
+    request.once('error', fail); request.once('timeout', () => { request.destroy(); fail('upstream_timeout'); }); request.end(bytes);
   });
 }

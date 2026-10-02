@@ -88,7 +88,7 @@ export class Network {
     const bytes = body === undefined ? undefined : JSON.stringify(body);
     let nonce;
     for (let attempt = 0; attempt < 2; attempt++) {
-      const headers = { 'X-Adr-Coding-Protocol':'coding_v1', accept: onEvent ? 'application/x-ndjson' : 'application/json', ...(bytes === undefined ? {} : { 'Content-Type': 'application/json' }), ...(this.local ? { 'X-Adr-Local-Actor': this.actor } : {}), ...(key ? { 'Idempotency-Key': key } : {}) };
+      const headers = { 'X-Adr-Coding-Protocol':'coding_v1','X-Adr-Connector-Protocol':'openai_compatible_v1', accept: onEvent ? 'application/x-ndjson' : 'application/json', ...(bytes === undefined ? {} : { 'Content-Type': 'application/json' }), ...(this.local ? { 'X-Adr-Local-Actor': this.actor } : {}), ...(key ? { 'Idempotency-Key': key } : {}) };
       if (identity) {
         headers.DPoP = proof(identity, method, this.origin + path, bytes, nonce, token);
         if (bytes !== undefined) headers['Content-Digest'] = `sha-256=:${digest(bytes).toString('base64')}:`;
@@ -114,7 +114,7 @@ export class Network {
     const identity = await this.store.withLock(async () => {
       const identity = await this.store.read();
       if (!identity || identity.origin !== this.origin) throw new ClientError('login_required');
-      const cleanup = options.method === 'POST' && /^\/v2\/(?:providers\/nodes\/[^/]+\/(?:pause|stop|delete)|sessions\/[^/]+\/stop|admin\/evaluation-sessions\/[^/]+\/stop|admin\/sessions\/[^/]+\/release-execution)$/.test(path);
+      const cleanup = options.method === 'POST' && /^\/v2\/(?:providers\/nodes\/[^/]+\/(?:pause|stop|delete)|sessions\/[^/]+\/(?:stop|delete|restore)|admin\/evaluation-sessions\/[^/]+\/(?:stop|delete|restore)|admin\/sessions\/[^/]+\/release-execution)$/.test(path);
       if (cleanup) return identity;
       if (identity.refreshPending) throw new ClientError('refresh_outcome_unknown_reenroll_required');
       if (Date.now() >= identity.expiresAt - 30000) {

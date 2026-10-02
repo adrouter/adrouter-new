@@ -1,6 +1,6 @@
 {
   "name": "@adrouter/adr-cli",
-  "version": "0.1.0-alpha.19",
+  "version": "0.1.0-alpha.20",
   "private": true,
   "description": "adr-v2 test-credit compute marketplace terminal",
   "type": "module",
@@ -44,5 +44,8 @@
   "dependencies": {
     "ajv": "8.20.0",
     "ignore": "7.0.5"
+  },
+  "devDependencies": {
+    "@xterm/headless": "5.5.0"
   }
 }

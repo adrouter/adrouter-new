@@ -27,12 +27,12 @@ export function readHiddenKey(input = process.stdin, output = process.stdout) {
       for (const char of chunk.toString('utf8')) {
         if (char === '\x03' || char === '\x04') { finish('credential_entry_cancelled'); return; }
         if (char === '\r' || char === '\n') {
-          finish(/^[\x21-\x7e]{16,512}$/.test(value) ? null : 'credential_format_invalid'); return;
+          finish(/^[\x20-\x7e]{1,4096}$/.test(value) ? null : 'credential_format_invalid'); return;
         }
         if (char === '\x7f' || char === '\b') value = value.slice(0, -1);
-        else if (/^[\x21-\x7e]$/.test(char)) value += char;
+        else if (/^[\x20-\x7e]$/.test(char)) value += char;
         else { finish('credential_format_invalid'); return; }
-        if (value.length > 512) { finish('credential_format_invalid'); return; }
+        if (value.length > 4096) { finish('credential_format_invalid'); return; }
       }
     };
     input.setRawMode(true);

@@ -1,3 +1,4 @@
+import { presentToolLine } from './tool-presentation.mjs';
 import { spawn, spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { renderScreen } from './tui-screen.mjs';
@@ -10,7 +11,7 @@ export function approvalLines(action) {
   if (['write', 'edit'].includes(action.name)) return [`File: ${args.path}`, ...(action.diff ?? [`- ${args.oldText ?? ''}`, `+ ${args.newText ?? args.content ?? ''}`])];
   return [action.name, ...JSON.stringify(args, null, 2).split('\n')];
 }
-export const reviewLines=action=>approvalLines(action).map(text=>({text,kind:text.startsWith('+')?'added':text.startsWith('-')?'removed':text.startsWith('@@')?'heading':undefined}));
+export const reviewLines=action=>approvalLines(action).map((text,index)=>presentToolLine(text,{kind:text.startsWith('+')?'added':text.startsWith('-')?'removed':text.startsWith('@@')?'heading':undefined,path:action.args?.path,command:['bash','operator_command'].includes(action.name)&&text.startsWith('│ '),title:index===0}));
 export class TerminalModes {
   constructor(){this.states=new Map();this.tail='';}
   observe(bytes){const text=this.tail+bytes.toString('utf8');for(const m of text.matchAll(/\x1b\[\?(1049|1000|1002|1003|1006|2004|25)([hl])/g))this.states.set(m[1],m[2]);this.tail=text.slice(-80);}
@@ -25,7 +26,7 @@ export class TerminalCoordinator {
   approve(action,permission){
     const pending=this.tail.then(async()=>{
       if(Date.now()>=permission.expiresAt)return false;
-      const inline=this.attached&&this.state==='coding',modes=this.modes?.restore();let draw;
+      const inline=this.attached&&this.state==='coding',modes=this.modes?.restore();let draw,ownedStart;
       this.reviewing=true;
       const expiry=setTimeout(()=>this.ui.pending?.resolve(null),Math.max(1,permission.expiresAt-Date.now()));
       try{
@@ -38,15 +39,16 @@ export class TerminalCoordinator {
             if(screen)this.ui.screen=screen;
             if(!this.ui.started||!this.ui.screen)return;
             const rows=Math.max(2,this.ui.output.rows||24),height=Math.min(rows,Math.max(8,Math.floor(rows*.55)));
-            this.ui.output.write(`\x1b[${rows-height+1};1H`+renderScreen({...this.ui.screen,context:'Host approval · conversation above',sidebar:[]},this.ui.output.columns||80,height,this.ui.color));
+            const start=Math.min(ownedStart??rows,rows-height+1);ownedStart=start;
+            this.ui.output.write('\x1b[0m'+Array.from({length:rows-start+1},(_,i)=>`\x1b[${start+i};1H\x1b[2K`).join('')+`\x1b[${rows-height+1};1H`+renderScreen({...this.ui.screen,context:'Host approval · conversation above',sidebar:[]},this.ui.output.columns||80,height,this.ui.color));
           };
         }
         let details=false;
         for(;;){
           const choice=await this.ui.menu('Approve this action once?',[
             {value:'deny',label:'Deny'},{value:'allow',label:'Allow once'},{value:'details',label:details?'Collapse details':'Expand details'},
-          ],{lines:[action.name,...reviewLines(action).slice(0,10),...(details?[`Project: ${action.root??'/workspace'}`,`Snapshot: ${action.snapshotRevision??'live tool'}`,`Content digest: ${permission.digest}`]:[])]});
-          if(choice==='details'){details=!details;if(details)await this.ui.page('Full action details',[...reviewLines(action),`Session: ${action.sessionId}`,`Digest: ${permission.digest}`]);continue;}
+          ],{fixedActions:true,footer:'↑↓ / Tab Action  Enter Choose  PgUp/PgDn Preview  Esc Deny',lines:[presentToolLine(action.name,{title:true}),...reviewLines(action),...(details?[`Project: ${action.root??'/workspace'}`,`Snapshot: ${action.snapshotRevision??'live tool'}`,`Content digest: ${permission.digest}`]:[])]});
+          if(choice==='details'){details=!details;continue;}
           return choice==='allow'&&Date.now()<permission.expiresAt;
         }
       }finally{

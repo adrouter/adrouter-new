@@ -1,11 +1,14 @@
 {
   "schemaVersion": 1,
   "repository": "https://github.com/HappyCool121/adrouter-dashboard",
-  "revision": "60b4456c58dbdf6c094dbbed61806a9bbd0bbab1",
+  "revision": "45b44a7d57ff3a7d6cde5a9b8b167d1a7776a2a8",
   "source": "backend/contracts/marketplace-v2.mjs",
-  "sourceSha256": "a3a066e125abbeed3c8c71a9e5b6023531a9622a6d05aecc7cce5a0b640b48d0",
-  "generatorRevision": "d8c4eca69519751e7e7b1fca722af89b30864f94",
-  "generatorSha256": "9cba846b9695d3ef4266f7b522bdef39f79d750683b86682a483f8f0441cc1fc",
-  "validatorsSha256": "e6409f571c494b69e1f48597f20b1c734efc372a96479c27c2e483dc9ab40ec7",
+  "sourceSha256": "b2042f4118abf946856cbb03787cbf51865c346d237eae4a9829fe6702ead88a",
+  "generatorRevision": "b1775411384ae429604490a95fdb0ce87831fb5e",
+  "generatorSha256": "0148576d2be7437998187c99f37b94fc578955c1ac87da734f7cc3a84d9eb956",
+  "validatorsSha256": "577de7de28548284bdf3012ed3c9bcd5e4fc6ad874cc1789757e98e895f015ac",
+  "connectorsSha256": "19db8d57571ac2417ed16e804a20782ef5b1608b6a8652443defe2311d1bae9a",
+  "catalogSha256": "37de3133ee4f957ea0d3deb45d119723d60f4eb8f19c7638249753ede10870d9",
+  "catalogRevision": "bded174ae04c54c0b22f5ce41e8d652749653c65",
   "contractId": "https://adrouter.co/contracts/marketplace/2.0.0"
 }

@@ -7,6 +7,7 @@ for (const revision of [metadata.revision, metadata.generatorRevision]) assert.m
 for (const digest of [metadata.sourceSha256, metadata.generatorSha256, metadata.validatorsSha256]) assert.match(digest, /^[a-f0-9]{64}$/);
 const bytes = await readFile(new URL('../src/generated/validators.mjs', import.meta.url));
 assert.equal(createHash('sha256').update(bytes).digest('hex'), metadata.validatorsSha256);
+if(metadata.connectorsSha256)assert.equal(createHash('sha256').update(await readFile(new URL('../src/generated/connectors.mjs',import.meta.url))).digest('hex'),metadata.connectorsSha256);
 // Full cross-repository drift verification is the Router generator's --check.
 // This local check detects accidental projection corruption, not source trust.
 console.log('generated validator integrity passed');

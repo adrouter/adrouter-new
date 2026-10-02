@@ -259,3 +259,103 @@ The retained alpha.18 provider stopped normally; guest and broker cleanup were i
 Step A implementation/regressions: done. Step B and C implementation/source/synthetic validation: done; operator live behavior remains review. Step D preparation, installation and rollout: done; real-provider acceptance remains review. Every real-provider/operator gate stays NOT TESTED until supplied evidence; no blanket acceptance signoff. The preserved npm waiver applies only to private acceptance. See the appended reliability receipt and outputs/adr-acceptance-repairs-2026-10-02/acceptance-status.json for individual pending gates.
 
 Release-order deviation: the relay was restored before the hash parser completed comparison. The hashes had been retrieved; omitted zero exit code/literal newline handling caused parser rejection. Corrected comparison matched all eleven modules. The provider remained paused and admissions closed; financial digests stayed unchanged. This is not recorded as a pre-restore verification pass.
+
+
+# Plan: Private alpha.20 acceptance repairs and general API support — 2 October 2026
+
+## Goal
+Implement the supplied alpha.20 plan for client terminal, guest adapters, generated contracts and private artifact.
+
+## Context
+Continue the clean designated canonical clones on codex/adrv2-reliability-20261001. Preserve prior plan sections. Alpha.19 Apply and thinking are operator-reported live PASS; approval rendering and highlighting remain open. Missing timestamps/session associations remain unconfirmed.
+
+## Research Summary
+Kickoff authenticated Fly app/registry/recovery image, Pages project/deployment/Git Provider No, active Supabase project and linked SELECT 1, canonical GitHub refs/push access passed. npm E401 retains the explicit private-install waiver; publication disabled. Router protection lookup is plan-limited and unchanged. Official MiMo first-call documentation specifies api-key, max_completion_tokens and reasoning_content continuation; exact current model/thinking/pricing documentation requires verification.
+
+## Constraints
+No schema migration, database reset, public publication, promotion, expanded admissions, financial reconciliation, inference replay or secret inspection. Preserve running provider, identities, saved work, limits, holds and liabilities. Generate contracts from committed Router source and runtime through the pinned builder.
+
+## Out of Scope
+Legacy source, public channels, participant data and unrelated UI or infrastructure.
+
+## Reversibility
+Use additive JSON metadata and negotiated connector fields. Preserve alpha.19 shapes and old artifacts. Build once from clean commits; rollout drains/replaces the sole existing Machine and preserves Pages.
+
+## Step A: Contracts, persistence and supply adapters
+### Status
+`in_progress`
+### Tasks
+- [ ] Buyer-owned idempotent stopped-session delete/restore and Deleted view, visibility only.
+- [ ] Versioned bounded Router connector descriptors and accepted immutable bindings; reject unsupported profiles before launch.
+- [ ] Owner-scoped provider activity and official DeepSeek/MiMo qualification.
+- [ ] Guest-only opaque keys, adapter thinking/tools/usage/errors and generic synthetic coverage.
+### Relevant Files
+Router backend/src/marketplace, backend/scripts/generate-marketplace-contract.mjs; client src/provider-broker.mjs, src/guest, src/generated, test.
+### Expected Changes
+Add source-owned contracts, JSON metadata and bounded adapters; generate validators.
+### Do Not Modify
+Legacy clients, schema, account identities, financial authority, ignored secrets.
+### Commands
+Owning Router typecheck/tests/contracts/build and client npm run check.
+### Acceptance Criteria
+- [ ] Ownership/duplicates/active rejection and persistence preserve accounting.
+- [ ] Old/new clients, immutable sessions, distinct failures and no replay pass.
+### Validation Results
+Not run.
+
+## Step B: Terminal and navigation
+### Status
+`todo`
+### Tasks
+- [ ] Clear full approval panel, reset attributes, cell-width layout, fixed controls/default Deny.
+- [ ] Pinned highlighter for approvals/transcript, safe controls, monochrome.
+- [ ] Lower sidebar descriptions, compact/full details, overflow arrows, contextual Back and buyer footer.
+- [ ] Provider metrics every five seconds and uptime each second while visible.
+### Relevant Files
+Client src/terminal.mjs, src/tui-screen.mjs, src/tui.mjs, src/terminal-coordinator.mjs, scripts/build-coding-runtime.mjs and regression verifiers.
+### Expected Changes
+Scoped presentation changes and final-cell/attribute tests.
+### Do Not Modify
+Approval expiry/action bindings, coding process, provider navigation/Stop distinction.
+### Commands
+Client npm run check; npm run coding:verify; targeted terminal regressions.
+### Acceptance Criteria
+- [ ] Repeated arrows/Tab/details/scroll/resize/Unicode and color/mono retain correct final cells and actions.
+- [ ] Same-process Continue and status refresh preserve terminal state.
+### Validation Results
+Not run.
+
+## Step C: Final verification and cleanup
+### Status
+`todo`
+### Tasks
+- [ ] Full owning-project checks and disposable PostgreSQL persistence.
+- [ ] Verify alpha.20 unused; freeze clean recorded commits, pack once, isolate install and verify bytes/provenance.
+- [ ] Installed VM/PTY and eleven-minute idle acceptance.
+- [ ] Reverify preflight, preserve Pages, drain/replace/verify same Machine before relay restore.
+- [ ] Activate launcher after verification and append individual reliability outcomes.
+- [ ] Review final diff, remove temporary debugging and record limitations.
+### Acceptance Criteria
+- [ ] Private artifact and hosted source identities verified independently.
+- [ ] Operator live gates remain separate from synthetic outcomes; unnamed second provider requires later live qualification.
+### Validation Results
+Not run.
+
+## Follow-up Work
+Operator-led DeepSeek/MiMo UI acceptance after private artifact and hosted verification.
+
+## Decision Log
+| Date | Decision | Rationale | Impact |
+| --- | --- | --- | --- |
+| 2026-10-02 | Stopped-session deletion changes buyer visibility only | Explicit supplied plan | Restore preserves saved work and accounting |
+| 2026-10-02 | Authorized API / Self-hosted top-level choices; general OpenAI-compatible adapters | Explicit supplied plan | Custom exact models and bounded settings |
+| 2026-10-02 | Retain Back with multiple actions and buyer thinking initially off | Explicit supplied defaults | Predictable navigation and capability use |
+
+
+### Alpha.20 source validation checkpoint
+Implementation steps A/B are complete for local source. Client check passed 128 tests; runtime builder and provenance passed 23,471 files. Final-cell/attribute regressions use the pinned @xterm/headless 5.5.0 dev dependency, explicitly scoped to terminal verification. Router typecheck/full tests/60 marketplace cases/auth/6 contracts/build pass; OpenAPI validates with 90 warnings. Disposable PostgreSQL and pgTAP passed seven persistence/concurrency cases, including buyer delete/restore across restart without changing held budget. Source CI, exact installed artifact/native acceptance and hosted replacement remain pending. MiMo official pricing retrieval parsed the current real-time overseas cache-miss/output row; this is evidence retrieval, not live-provider qualification.
+
+Alpha.20 runtime rebuilt through the checked-in builder. Final source validation is repeated after the final scoped review; all changes are limited to this plan. Private tarball/installation and operator live acceptance remain separate.
+
+### Alpha.20 Pages preservation and release input
+Pre-push authenticated project metadata retains adrouter-dashboard, Git Provider No, deployment b02ef6ec-e125-439a-b31d-94d274e7ea9f/source 1985053. Push only codex/adrv2-reliability-20261001 to the explicit canonical GitHub URL. Preserve Pages settings/deployment/assets and closed admissions; no WebUI upload is planned. Final artifact is built from the committed clean release input; native acceptance and hosted replacement remain separate.

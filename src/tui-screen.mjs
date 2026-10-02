@@ -1,3 +1,4 @@
+import { visibleWidth, truncateToWidth, wrapTextWithAnsi } from '../coding-runtime/node_modules/@adrouter/tui/dist/utils.js';
 import { spawnSync } from 'node:child_process';
 import { renderBanner } from './brand.mjs';
 import { fuzzyFilter } from './vendor/pi/fuzzy.mjs';
@@ -7,23 +8,26 @@ import { readFile } from 'node:fs/promises';
 
 const { version } = JSON.parse(await readFile(new URL('../package.json', import.meta.url), 'utf8'));
 const clean = value => safeText(value).replace(/[\r\n\t]/g, ' ');
-const clip = (value, width) => [...clean(value)].slice(0, Math.max(0, width)).join('');
-export function wrapText(value, width) {
-  const lines = [];
-  for (const paragraph of safeText(value).split('\n')) {
-    const chars = [...paragraph];
-    if (!chars.length) lines.push('');
-    while (chars.length) lines.push(chars.splice(0, Math.max(1, width)).join(''));
-  }
-  return lines;
+const clip = (value,width) => truncateToWidth(clean(value),Math.max(0,width),'').replace(/\x1b\[[0-9;]*m/g,'');
+export { visibleWidth };
+export function wrapText(value,width) {return safeText(value).split('\n').flatMap(line=>wrapTextWithAnsi(line.replaceAll('\t','    '),Math.max(1,width)).map(v=>truncateToWidth(v,Math.max(1,width),'').replace(/\x1b\[[0-9;]*m/g,'')));}
+const styledWrap=(line,width)=>wrapTextWithAnsi(line.styled,Math.max(1,width)).map(styled=>({...line,text:styled.replace(/\x1b\[[0-9;]*m/g,''),styled}));
+export function scrollRows(lines,capacity,offset) {
+  offset=Math.max(0,Math.min(Math.max(0,lines.length-capacity),offset));
+  const result=lines.slice(offset,offset+capacity);
+  if(offset>0&&result.length)result[0]='↑';
+  if(offset+capacity<lines.length&&result.length)result[result.length-1]='↓';
+  return result;
 }
 
 // All untrusted labels and values are plain text. Only this renderer emits ANSI.
-export function renderScreen({ title, subtitle = '', lines = [], details = [], focus = 0, footer = '', context = '', sidebar = [] }, columns = 80, rows = 24, color = true) {
+export function renderScreen({ title, subtitle = '', lines = [], details = [], focus = 0, footer = '', context = '', sidebar = [],actions=[],detailFocus=0 }, columns = 80, rows = 24, color = true) {
   if(sidebar.length && columns>=112 && !title.toLowerCase().includes('approv')) {
     const sideWidth=30,leftWidth=columns-sideWidth-3;
-    const left=renderScreen({title,subtitle,lines,details,focus,footer,context},leftWidth,rows,color).split('\r\n');
-    return left.map((line,i)=>{const visible=line.replace(/\x1b\[[0-9;]*m/g,'').length;return line+' '.repeat(Math.max(1,leftWidth-visible))+'│ '+clip(sidebar[i]??'',sideWidth);}).join('\r\n');
+    const left=renderScreen({title,subtitle,lines,focus,footer,context,actions},leftWidth,rows,color).split('\r\n');
+    const status=sidebar.slice(0,Math.max(0,rows-9)),description=details.flatMap(v=>wrapText(v,sideWidth)),room=Math.max(1,Math.min(8,rows-status.length-3));
+    const side=[...status,...Array(Math.max(0,rows-2-status.length-room)).fill(''),'─'.repeat(sideWidth),...scrollRows(description,room,detailFocus)];
+    return left.map((line,i)=>{const visible=visibleWidth(line);return line+' '.repeat(Math.max(1,leftWidth-visible))+'│ '+clip(side[i]??'',sideWidth);}).join('\r\n');
   }
   const width = Math.max(1, columns - 2); const height = Math.max(1, rows - 1);
   const blue = text => color ? `${/truecolor|24bit/.test(process.env.COLORTERM ?? '') ? '\x1b[38;2;63;101;245m' : '\x1b[38;5;63m'}${text}\x1b[0m` : text;
@@ -37,19 +41,22 @@ export function renderScreen({ title, subtitle = '', lines = [], details = [], f
   if (subtitle) result.push(...wrapText(subtitle, width));
   result.push('');
   // A compact header must leave room to interact even after a terminal resize.
-  while (result.length > Math.max(2, height - 5)) result.splice(0, 1);
-  const pinned=details.flatMap(v=>wrapText(v,width)).slice(0,Math.min(5,Math.max(0,height-result.length-3)));
-  const capacity = Math.max(1, height - result.length - 2 - pinned.length);
+  if(actions.length&&result.at(-1)==='')result.pop();
+  while (result.length > Math.max(1, height - Math.max(5,actions.length+3))) result.splice(0, 1);
+  const description=details.flatMap(v=>wrapText(v,width));
+  const pinned=scrollRows(description,Math.min(3,Math.max(0,height-result.length-3-actions.length)),detailFocus);
+  const capacity = Math.max(1, height - result.length - 2 - pinned.length - actions.length);
   const offset = Math.max(0, Math.min(Math.max(0, lines.length - capacity), focus - Math.floor(capacity / 2)));
-  for (const [index, line] of lines.slice(offset, offset + capacity).entries()) {
+  for (const [index, line] of scrollRows(lines,capacity,offset).entries()) {
     const text = typeof line === 'object' ? line.text : line;
     const selected = typeof line === 'object' && line.selected;
-    let rendered = clip(text, width);
+    let rendered = color&&typeof line==='object'&&line.styled?truncateToWidth(line.styled,width,''):clip(text,width);
     if(color && typeof line==='object' && ['added','removed','heading'].includes(line.kind)) rendered=`\x1b[${line.kind==='added'?'32':line.kind==='removed'?'31':'36'}m${rendered}\x1b[0m`;
-    result.push(selected && color ? `\x1b[7m${rendered.padEnd(width)}\x1b[0m` : rendered);
+    result.push(selected && color ? `\x1b[7m${rendered+' '.repeat(Math.max(0,width-visibleWidth(rendered)))}\x1b[0m` : rendered);
   }
-  while (result.length < height - 2 - pinned.length) result.push('');
+  while (result.length < height - 2 - pinned.length - actions.length) result.push('');
   result.push(...pinned);
+  for(const action of actions){const text=clip(action.text,width);result.push(color&&action.selected?'\x1b[7m'+text+' '.repeat(Math.max(0,width-visibleWidth(text)))+'\x1b[0m':text);}
   result.push(blue('─'.repeat(width)), clip(footer, width));
   return result.slice(0, height).join('\r\n');
 }
@@ -57,7 +64,7 @@ export function renderScreen({ title, subtitle = '', lines = [], details = [], f
 export class TerminalUI {
   constructor({ input = process.stdin, output = process.stdout, color = !process.env.NO_COLOR, reducedMotion = process.env.ADR_REDUCED_MOTION === '1' } = {}) {
     this.input = input; this.output = output; this.color = color && process.env.TERM !== 'dumb'; this.context = '';this.sidebar=[];this.reducedMotion=reducedMotion;
-    this.resize = () => this.draw();
+    this.resize = () => this.pending?.redraw?this.pending.redraw():this.draw();
     this.onKey = (text, key = {}) => {
       if (key.ctrl && key.name === 'c') { this.pending?.resolve(null); return; }
       this.pending?.key(text, key);
@@ -89,7 +96,7 @@ export class TerminalUI {
   terminate() { this.terminated = true; this.stop(); }
   draw(screen) {
     if (screen) this.screen = screen;
-    if (this.started && this.screen) this.output.write('\x1b[H\x1b[2J' + renderScreen({ ...this.screen, context: this.context, sidebar:this.sidebar }, this.output.columns || 80, this.output.rows || 24, this.color));
+    if (this.started && this.screen) this.output.write('\x1b[0m\x1b[H\x1b[2J' + renderScreen({ ...this.screen, context: this.context, sidebar:this.sidebar }, this.output.columns || 80, this.output.rows || 24, this.color));
   }
   interact(key, draw) {
     if (this.terminated) return Promise.reject(new ClientError('cancelled'));
@@ -100,23 +107,30 @@ export class TerminalUI {
       draw();
     });
   }
-  async menu(title, options, { subtitle = '', lines = [], footer='↑↓ Move  Enter Choose  Type to filter  Esc Back  Ctrl+C Cancel' } = {}) {
-    let selected = 0; let search = '';
+  async menu(title, options, { subtitle = '', lines = [], fixedActions=false, tick=false, footer='↑↓ Move  Enter Choose  Type to filter  Esc Back  Ctrl+C Cancel' } = {}) {
+    let selected = 0; let search = '',previewFocus=0,detailFocus=0,fullDetails=false;
+    options=options.filter(o=>!(typeof o==='object'&&o.value==='back'&&options.filter(v=>v.value!=='back').length===1));
     const items = options.map((item, index) => typeof item === 'string' ? { label: item, value: index } : item);
     const visible = () => fuzzyFilter(items, search, item => clean(`${item.label} ${item.detail ?? ''}`));
     const draw = () => {
       const choices = visible(); selected = Math.min(selected, Math.max(0, choices.length - 1));
-      const body = lines.flatMap(line => wrapText(typeof line==='object'?line.text:line, Math.max(10, (this.output.columns || 80) - 2)).map(text=>typeof line==='object'?{...line,text}:text));
+      const bodyWidth=Math.max(1,(this.output.columns||80)-2-(this.sidebar.length&&(this.output.columns||80)>=112&&!fixedActions?33:0));
+      const body = (typeof lines==='function'?lines():lines).flatMap(line => typeof line==='object'&&line.styled?styledWrap(line,bodyWidth):wrapText(typeof line==='object'?line.text:line,bodyWidth).map(text=>typeof line==='object'?{...line,text}:text));
       const start = body.length;
-      choices.forEach((item, index) => body.push({ text: `${selected === index ? '›' : ' '} ${item.label}${item.disabled ? ' · unavailable' : ''}`, selected: selected === index }));
+      const actions=[];choices.forEach((item, index) => (fixedActions?actions:body).push({ text: `${selected === index ? '›' : ' '} ${item.label}${item.disabled ? ' · unavailable' : ''}`, selected: selected === index }));
       if (!choices.length) body.push('No matching options. Backspace clears the search.');
       if(search)body.push(`Filter: ${search}`);
-      this.draw({ title, subtitle, lines: body, focus: start + selected, details:choices[selected]?.details??(choices[selected]?.detail?[choices[selected].detail]:[]), footer });
+      const details=choices[selected]?.details??(choices[selected]?.detail?[choices[selected].detail]:[]);
+      if(fullDetails){this.draw({title:'Full details',lines:details.flatMap(v=>wrapText(v,Math.max(1,(this.output.columns||80)-2))),focus:detailFocus,footer:'↑↓ / PgUp/PgDn Scroll  F / Enter / Esc Close details'});return;}
+      this.draw({title,subtitle,lines:body,actions,focus:fixedActions?previewFocus:start+selected,detailFocus,details:fullDetails?[]:details,footer:footer+(details.length?'  F Full details · PgUp/PgDn Details':'')});
     };
-    return this.interact((text, key, finish) => {
+    const interaction=this.interact((text, key, finish) => {
       const choices = visible();
+      if(fullDetails){if(['escape','return'].includes(key.name)||text==='f')fullDetails=false;else if(['up','pageup'].includes(key.name))detailFocus=Math.max(0,detailFocus-(key.name==='up'?1:5));else if(['down','pagedown'].includes(key.name))detailFocus+=key.name==='down'?1:5;draw();return;}
       if (key.name === 'escape') { finish(null); return; }
-      if (key.name === 'up') selected = (selected + choices.length - 1) % Math.max(1, choices.length);
+      if(key.name==='pageup'||key.name==='pagedown'){const delta=key.name==='pageup'?-5:5;if(fixedActions)previewFocus=Math.max(0,previewFocus+delta);else detailFocus=Math.max(0,detailFocus+delta);}
+      else if(text==='f'&&!fixedActions){fullDetails=!fullDetails;detailFocus=0;}
+      else if (key.name === 'up') selected = (selected + choices.length - 1) % Math.max(1, choices.length);
       else if (key.name === 'down' || key.name === 'tab') selected = (selected + 1) % Math.max(1, choices.length);
       else if (key.name === 'return' && choices[selected]) {
         if (!choices[selected].disabled) { finish(choices[selected].value); return; }
@@ -125,6 +139,8 @@ export class TerminalUI {
       else if (text && !key.ctrl && !key.meta && /^[\x20-\x7e]+$/.test(text)) { search = (search + text).slice(0, 80); selected = 0; }
       draw();
     }, draw);
+    if(this.pending)this.pending.redraw=draw;const timer=tick?setInterval(draw,1000):undefined;
+    try{return await interaction;}finally{clearInterval(timer);}
   }
   async form(title, fields, initial = {}, subtitle = '') {
     const values = Object.fromEntries(fields.map(f => [f.name, String(initial[f.name] ?? f.default ?? '')]));

@@ -39,11 +39,11 @@ if (process.argv[2] !== '--worker') {
         if (context.cancelled) { await controlRequest('/cancelled', { requestId: frame.requestId }); return; }
         if (lastTiming) await controlRequest('/timing', lastTiming);
         await controlRequest('/result', result);
-      } catch {
+      } catch(error) {
         if (context.cancelled) await controlRequest('/cancelled', { requestId: frame.requestId }).catch(() => {});
         else {
           if (lastTiming) await controlRequest('/timing', lastTiming).catch(() => {});
-          await controlRequest('/failed', { scope: 'request', requestId: frame.requestId, code: 'provider_outcome_unknown' }).catch(() => {});
+          await controlRequest('/failed', { scope: 'request', requestId: frame.requestId, code: error.code??'provider_outcome_unknown' }).catch(() => {});
         }
       } finally { if (active === context) active = undefined; }
     };

@@ -67,7 +67,8 @@ test('DeepSeek guided default submits valid metadata and resumes edits after can
   const ui={start(){},stop(){},task:(_title,fn)=>fn(new AbortController().signal,()=>{}),page:async()=>{},
     menu:async title=>{
       if(title==='What would you like to do?')return ++homeVisits<=2?'create':'exit';
-      if(title==='List compute · 1 of 3')return 'deepseek';
+      if(title==='List compute · 1 of 3')return 'authorized_api';
+      if(title==='Choose authorized API')return 'deepseek';
       if(title==='List compute · 3 of 3')return 'create';
       return null;
     },

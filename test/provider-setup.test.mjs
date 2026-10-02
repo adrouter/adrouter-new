@@ -25,7 +25,7 @@ test('hidden input never echoes the key and restores terminal mode', async () =>
   assert.equal(tty.input.listenerCount('data'), 0);
 });
 test('cancel, oversized input and noninteractive input fail without exposing input', async () => {
-  for (const data of [synthetic + '\x03', 'x'.repeat(513)]) {
+  for (const data of [synthetic + '\x03', 'x'.repeat(4097)]) {
     const tty = terminal();
     const pending = readHiddenKey(tty.input, tty.output);
     tty.input.emit('data', Buffer.from(data));
