@@ -41,7 +41,7 @@ test('Back and Ctrl+C preserve listing form edits for continuation', async () =>
     input.emit('keypress','Retained',{});input.emit('keypress','',{name:'c',ctrl:true});assert.equal(await pending,null);assert.equal(draft.name,'Retained');
   } finally {ui.stop();}
 });
-test('logout and bounded stop bypass disabled refresh using fresh proof, never clear on failed revoke', async () => {
+test('logout and bounded stop bypass disabled refresh using fresh proof, clear local authentication even when revocation fails', async () => {
   const keys=generateKeyPairSync('ed25519');
   const identity={origin:'https://api.example.test',privateKey:keys.privateKey.export({format:'jwk'}),publicKey:keys.publicKey.export({format:'jwk'}),access_token:'synthetic',installation_id:'fixture',expiresAt:1,refreshPending:true};
   let cleared=false; const calls=[];
@@ -51,22 +51,22 @@ test('logout and bounded stop bypass disabled refresh using fresh proof, never c
   await network.logout();assert.equal(cleared,true);assert.equal(calls.length,2);assert.ok(calls.every(c=>c.options.headers.DPoP));
   assert.ok(calls.every(c=>!c.url.includes('oauth')));
   cleared=false;network.fetcher=async()=>Response.json({code:'invalid_access_token'},{status:401});
-  await assert.rejects(network.logout(),/invalid_access_token/);assert.equal(cleared,false);
-  await assert.rejects(network.request('/v2/providers/nodes/fixture/publish',{method:'POST',body:{}}),/reenroll_required/);
+  const result=await network.logout();assert.equal(result.revocationConfirmed,false);assert.equal(cleared,true);
+  await assert.rejects(network.request('/v2/providers/nodes/fixture/publish',{method:'POST',body:{}}),/login_required/);
 });
 test('listing shows hot readiness only from backend-confirmed readiness', () => {
   assert.ok(!listingLines({availability:'hot',ready:false}).join('\n').includes('Hot · ready'));
   assert.ok(listingLines({availability:'hot',ready:true}).join('\n').includes('Hot · ready'));
 });
 
-test('native setup selects several models with shared limits and contains no manual protocol or host key fields',async()=>{
+test('built-in setup selects several models with shared limits and no mandatory advanced fields',async()=>{
  const {runTui}=await import('../src/tui.mjs');let visits=0,picks=0,posted;
- const config={protocol:'2.0.0',product:'adr-v2',settlement:'test_credits',cashValue:false,admissions:false,privateRehearsal:false,privateOwnerEvaluation:true,supplyClasses:['authorized_api','self_hosted'],connectorProfile:'inference_connector_v1',maxNodeSessions:1,relay:'wss_single_instance',agentExecution:'buyer_vm_v1',capabilities:['allowance_v1','provider_budget_v1','cold_activation_v1','pi_native_v1'],activationDeadlineSeconds:120};
+ const config={protocol:'2.0.0',product:'adr-v2',settlement:'test_credits',cashValue:false,admissions:false,privateRehearsal:false,privateOwnerEvaluation:true,supplyClasses:['authorized_api','self_hosted'],connectorProfile:'inference_connector_v1',maxNodeSessions:1,relay:'wss_single_instance',agentExecution:'buyer_vm_v1',capabilities:['allowance_v1','provider_budget_v1','cold_activation_v1','pi_native_v1','pi_native_v2'],activationDeadlineSeconds:120};
  const ui={start(){},stop(){},task:(_t,fn)=>fn(new AbortController().signal,()=>{}),page:async()=>{},menu:async(title,options)=>{
-  if(title==='What would you like to do?')return ++visits===1?'create':'exit';if(title==='List compute · 1 of 3')return 'authorized_api';if(title==='Choose provider'){assert.ok(!options.some(o=>o.value==='custom'));return 'deepseek';}if(title==='Choose models'){const choices=options.filter(o=>!['continue','back'].includes(o.value));return picks<2?choices[picks++].value:'continue';}return null;
+  if(title==='What would you like to do?')return ++visits===1?'create':'exit';if(title==='List compute · 1 of 3')return 'authorized_api';if(title==='Connection type')return 'builtin';if(title==='Review connection')return 'save';if(title==='Choose provider'){assert.ok(!options.some(o=>o.value==='custom'));return 'deepseek';}if(title==='Choose offered models'){const choices=options.filter(o=>!['continue','back','manual'].includes(o.value));return picks<2?choices[picks++].value:'continue';}return null;
  },form:async(title,fields)=>{assert.equal(title,'Shared provider limits');assert.equal(fields.some(f=>/key|endpoint|authentication|protocol/i.test(f.name)),false);return Object.fromEntries(fields.map(f=>[f.name,f.default]));}};
  const network={local:true,origin:'http://127.0.0.1:8790',request:async(path,options)=>{if(path.endsWith('/network/config'))return config;if(path==='/v2/providers/nodes'){posted=options.body;throw Object.assign(Error('synthetic stop before key entry'),{code:'synthetic_stop'});}throw Error('unexpected request');}};
- await runTui({}, {network,ui,store:{profile:'provider'}});assert.equal(posted.connectorProtocol,'pi_native_v1');assert.equal(posted.models.length,2);assert.equal(posted.totalTokens,'1000000');assert.equal('connector'in posted,false);assert.equal('endpoint'in posted,false);
+ await runTui({}, {network,ui,store:{profile:'provider'}});assert.equal(posted.connectorProtocol,'pi_native_v2');assert.equal(posted.models.length,2);assert.equal(posted.totalTokens,'1000000');assert.equal('connector'in posted,false);assert.equal('endpoint'in posted,false);
 });
 
 test('self-hosted legacy connector retains exact namespaced model and all adapter settings across Back/Edit before creation',async()=>{

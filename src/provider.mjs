@@ -1,3 +1,4 @@
+import {credentialVolume} from './credential-volume.mjs';
 import { resolveConnector, CONNECTOR_PROTOCOL, upstreamFailureCodes } from './connectors.mjs';
 import { connect } from 'node:net';
 import { lookup } from 'node:dns';
@@ -17,13 +18,14 @@ export async function configuredRuntime() {
   const config = process.env.ADROUTER_NEW_RUNTIME_EXECUTABLE ? { executable: process.env.ADROUTER_NEW_RUNTIME_EXECUTABLE, library: process.env.ADROUTER_NEW_RUNTIME_LIBRARY, home: process.env.ADROUTER_NEW_RUNTIME_HOME } : await loadRuntimeConfig();
   return new SandboxRuntime(config ?? {});
 }
-export async function createGuest(runtime, hostPorts, copyDirectory, endpoint, { signal, continuous = false, kind = 'node' } = {}) {
+export function verifiedVaultMounts(mounts,vault){return Array.isArray(mounts)&&mounts.length===1&&mounts[0].type==='DiskImage'&&mounts[0].format==='Raw'&&mounts[0].host===vault.path&&mounts[0].guest==='/credentials';}
+export async function createGuest(runtime, hostPorts, copyDirectory, endpoint, { signal, continuous = false, kind = 'node', vault } = {}) {
   const images = JSON.parse(await readFile(new URL('../runtime/guest-images.json', import.meta.url)));
-  const name = await runtime.create({ image: images[kind].reference, hostPorts, copyDirectory, endpoint, durationSeconds: 540, continuous, signal, ...(kind==='coding'?{memoryMiB:1024,rootDiskGiB:4}:{}) });
+  const name = await runtime.create({ image: images[kind].reference, hostPorts, copyDirectory, endpoint, durationSeconds: 540, continuous, signal, ...(vault?{credentialVolume:vault}:{}), ...(kind==='coding'?{memoryMiB:1024,rootDiskGiB:4}:{}) });
   try {
     signal?.throwIfAborted();
     const info = await runtime.inspect(name);
-    if (info.config.manifest_digest !== images[kind][`linux-${process.arch}`] || info.config.mounts.length || info.config.network.policy.default_egress !== 'deny') throw new ClientError('guest_identity_or_policy_mismatch');
+    if (info.config.manifest_digest !== images[kind][`linux-${process.arch}`] || (vault?!verifiedVaultMounts(info.config.mounts,vault):info.config.mounts.length) || info.config.network.policy.default_egress !== 'deny') throw new ClientError('guest_identity_or_policy_mismatch');
     signal?.throwIfAborted(); return name;
   }catch(error){try{error.sandboxName=name;}catch{}await runtime.remove(name).catch(()=>{});throw error;}
 }
@@ -32,7 +34,7 @@ export async function startProvider(networkInput, nodeId, { prepareOnly = false,
   if (!Number.isInteger(maxCalls) || maxCalls < 1 || maxCalls > 30 || !Number.isInteger(maxOutputTokens) || maxOutputTokens < 1 || maxOutputTokens > 8192) throw new ClientError('provider_exposure_bound_invalid');
   const network = Object.create(networkInput); network.actor = 'provider';
   let node = await network.request(`/v2/providers/nodes/${nodeId}`);
-  const native=node.connectorProtocol==='pi_native_v1';
+  const native=['pi_native_v1','pi_native_v2'].includes(node.connectorProtocol);
   const connector=native?{authentication:'native'}:resolveConnector(node);
   const listingBound=(id,revision)=>native?node.listingIds?.includes(id)&&(revision===undefined||revision===node.listingRevision):id===node.listingId&&(revision===undefined||revision===node.listingRevision);
   let prepared=prepareOnly&&native;
@@ -48,7 +50,7 @@ export async function startProvider(networkInput, nodeId, { prepareOnly = false,
   const providerRunId = randomUUID();
   const lifecycle = new ProviderLifecycle({ nodeId, providerRunId, profile: network.store?.profile ?? 'provider', directory: diagnosticsDirectory, now });
   const capability = randomBytes(32).toString('base64url');
-  let guest, copied, socket, deadline, pending, guestReady = false, relayReady = false, stopped = false, starting = false, calls = 0;
+  let vault, guest, copied, socket, deadline, pending, guestReady = false, relayReady = false, stopped = false, starting = false, calls = 0;
   let claimed = false, allocation, closing, statusPoll, renewal, keepalive, touchRetry, reconnectTimer, authenticationTimer, leaseTimer;
   let relayGeneration, relayLeaseUntil = 0, socketEpoch = 0, backoff = 0, lastTouch = 0, lastGuestPoll = 0, cleanupRequired = false, teardownVerified;
   let lastUpstreamFailure;
@@ -77,6 +79,7 @@ export async function startProvider(networkInput, nodeId, { prepareOnly = false,
       let reply = { ok: true };
       if (req.method === 'POST' && req.url === '/ready' && bytes === '{"ready":true}') { guestReady = true; lastGuestPoll = now(); }
       else if (req.method === 'GET' && req.url === '/work') { lastGuestPoll = now(); reply = stopped ? { type: 'stop' } : control.shift() ?? pending?.frame ?? null; if (reply === pending?.frame) pending.frame = undefined; }
+      else if(req.method==='POST'&&req.url==='/discovered'){const data=JSON.parse(bytes);if(!pending?.discovery||data.requestId!==pending.id)throw Error('discovery_binding');const request=pending;pending=undefined;if(data.error)request.reject(new ClientError(['upstream_authentication_failed','model_discovery_unavailable'].includes(data.error)?data.error:'model_discovery_unavailable'));else if(Array.isArray(data.models)&&data.models.length<=256&&data.models.every(m=>typeof m==='string'&&/^[\x20-\x7e]{1,256}$/.test(m)))request.resolve({models:data.models});else request.reject(new ClientError('model_discovery_unavailable'));}
       else if (req.method === 'POST' && req.url === '/handshake-result') {
         const result = JSON.parse(bytes);
         if (!pending || !HandshakeResult(result) || pending.id !== result.challengeId || Object.keys(pending.binding).some(k => k !== 'type' && pending.binding[k] !== result[k])) throw new Error('handshake_binding');
@@ -143,14 +146,15 @@ export async function startProvider(networkInput, nodeId, { prepareOnly = false,
     if (stopped || starting || guest) throw new ClientError('guest_already_started');
     starting = true;
     try {
+      if(node.connectorProtocol==='pi_native_v2')vault=await credentialVolume(network,runtime,node);
       copied = await mkdtemp(join(tmpdir(), 'adr-provider-'));
       if(native){await (await import('./provider-runtime.mjs')).verifyProviderRuntime();await cp(new URL('../provider-runtime/',import.meta.url),copied,{recursive:true});}
       for (const [from, to] of [['guest/provider-console.mjs', 'provider-console.mjs'], ['provider-broker.mjs', 'provider-broker.mjs'], ['coding-wire.mjs','coding-wire.mjs'], ['provider-setup.mjs', 'provider-setup.mjs']]) await copyFile(new URL(from, import.meta.url), join(copied, to));
       await mkdir(join(copied,'generated'),{recursive:true});
       for(const file of ['connectors.mjs'])await copyFile(new URL('./generated/'+file,import.meta.url),join(copied,'generated',file));
       await copyFile(new URL('./connectors.mjs',import.meta.url),join(copied,'connectors.mjs'));
-      await writeFile(join(copied, 'config.json'), JSON.stringify({ control: `http://host.microsandbox.internal:${broker.address().port}`, capability, noKey, node: binding.loopback ? {...node,localEngine:true,endpoint:node.endpoint.replace(binding.url.hostname,'host.microsandbox.internal')} : {...node,tunnel:{port:broker.address().port,capability}}, maxCalls, maxOutputTokens, continuous }), { mode: 0o600 });
-      allocation = createGuest(runtime, [broker.address().port, ...(enginePort ? [enginePort] : [])], copied, undefined, { signal: warmSignal, continuous });
+      await writeFile(join(copied, 'config.json'), JSON.stringify({ control: `http://host.microsandbox.internal:${broker.address().port}`, capability, noKey, persistentCredentials:!!vault, node: binding.loopback ? {...node,localEngine:true,endpoint:node.endpoint.replace(binding.url.hostname,'host.microsandbox.internal')} : {...node,tunnel:{port:broker.address().port,capability}}, maxCalls, maxOutputTokens, continuous }), { mode: 0o600 });
+      allocation = createGuest(runtime, [broker.address().port, ...(enginePort ? [enginePort] : [])], copied, undefined, { signal: warmSignal, continuous, vault });
       guest = await allocation;
       if(native)await runtime.run(guest,['node','-e',"const [a,b]=process.versions.node.split('.').map(Number);if(a<22||(a===22&&b<19))throw Error('pi_node_22_19_required');"],{signal:warmSignal});
       warmSignal.throwIfAborted();
@@ -158,6 +162,7 @@ export async function startProvider(networkInput, nodeId, { prepareOnly = false,
       else await runtime.attachConsole(guest, ['node', '/workspace/provider-console.mjs'], { ...consoleOptions, signal: warmSignal });
       warmSignal.throwIfAborted();
       if (!guestReady) throw new ClientError('guest_start_failed');
+      if(vault)await network.request(`/v2/providers/nodes/${nodeId}/credential-status`,{method:'POST',body:{status:'stored',expectedRevision:node.nativeRevision},signal:bounded(10000)});
       if (continuous) {
         await runtime.touch(guest,{signal:bounded(intervals.touchTimeout ?? 10000)});
         lastTouch = now();
@@ -171,7 +176,7 @@ export async function startProvider(networkInput, nodeId, { prepareOnly = false,
           else { clearTimeout(touchRetry); touchRetry = setTimeout(() => void keepalive.run(), intervals.touchRetry ?? 5000); }
         });
       }
-      lifecycle.event('vm', { status: 'ready' }); announce({ status: 'warm', credentials: 'guest_memory_only' });
+      lifecycle.event('vm', { status: 'ready' }); announce({ status: 'warm', credentials: vault?'guest_disk_retained':'guest_memory_only' });
     } catch (error) {
       failure('startup', error, 'provider_start_failed');
       if (!stopped) await stop({ trigger: 'startup_failed', error });
@@ -206,7 +211,7 @@ export async function startProvider(networkInput, nodeId, { prepareOnly = false,
   async function renewRelay() {
     if(prepared){const claim=await network.request(`/v2/providers/nodes/${nodeId}/prepare`,{method:'POST',body:{providerRunId},signal:bounded(10000)});if(claim.providerRunId!==providerRunId)throw new ClientError('provider_run_contract_required');return;}
     if (stopped || socket?.readyState === Socket.CONNECTING || authenticationTimer) return;
-    const ticket = await network.request(`/v2/providers/nodes/${nodeId}/relay-ticket`, { method: 'POST', body: { providerRunId,...(native?{connectorProtocol:'pi_native_v1'}:node.connector?{connectorProtocol:CONNECTOR_PROTOCOL}:{}) }, signal: bounded(intervals.networkTimeout ?? 10000) });
+    const ticket = await network.request(`/v2/providers/nodes/${nodeId}/relay-ticket`, { method: 'POST', body: { providerRunId,...(native?{connectorProtocol:node.connectorProtocol}:node.connector?{connectorProtocol:CONNECTOR_PROTOCOL}:{}) }, signal: bounded(intervals.networkTimeout ?? 10000) });
     if (stopped) return;
     if (ticket.providerRunId !== providerRunId || !/^[A-Za-z0-9_-]{43}$/.test(ticket.ticket ?? '')) throw new ClientError('provider_run_contract_required');
     claimed = true;
@@ -270,7 +275,7 @@ export async function startProvider(networkInput, nodeId, { prepareOnly = false,
         const check=await network.request(`/v2/providers/nodes/${nodeId}/pi-checks`,{method:'POST',body:{providerRunId,model:model.model,phase},key:randomUUID(),signal:bounded(10000)});
         nativeCheckIds.push(check.id);
         const messages=phase==='tool'?[{role:'user',content:'Call adr_probe with value "ready" exactly once.',timestamp:0}]:[{role:'user',content:'Call adr_probe with value "ready" exactly once.',timestamp:0},previous.nativeMessage,{role:'toolResult',toolCallId:previous.toolCalls[0].id,toolName:'adr_probe',content:[{type:'text',text:'ready'}],isError:false,timestamp:0},{role:'user',content:'Reply ready without calling a tool.',timestamp:0}];
-        const frame={type:'qualification',requestId:check.id,model:model.model,provider:node.provider,api:model.api,messageFormat:'pi_context_v1',qualification:phase,messages,tools:[probe],maxOutputTokens:check.outputBound,deadlineUnixMs:check.deadline,thinking:false,upstreamBudget:{inputBound:check.inputBound,reservedMicrousd:check.upstreamReserved,...check.rates}};
+        const frame={type:'qualification',requestId:check.id,model:model.model,provider:node.provider,api:model.api,...(node.connectorProtocol==='pi_native_v2'?{nativeRevision:node.nativeRevision,endpoint:model.endpoint}:{}),messageFormat:'pi_context_v1',qualification:phase,messages,tools:[probe],maxOutputTokens:check.outputBound,deadlineUnixMs:check.deadline,thinking:false,upstreamBudget:{inputBound:check.inputBound,reservedMicrousd:check.upstreamReserved,...check.rates}};
         const result=await new Promise((resolve,reject)=>{const timer=setTimeout(()=>{if(pending?.id===check.id)pending=undefined;reject(new ClientError('upstream_timeout'));},Math.max(1,check.deadline-now()));pending={id:check.id,qualification:true,binding:frame,frame,resolve:r=>{clearTimeout(timer);resolve(r);},reject:e=>{clearTimeout(timer);reject(e);}};});
         const tools=phase==='tool'?result.toolCalls?.length===1&&result.toolCalls[0].function.name==='adr_probe':result.toolCalls?.length===0&&result.text.trim().length>0;
         const completed=await network.request(`/v2/providers/nodes/${nodeId}/pi-checks/complete`,{method:'POST',body:{id:check.id,usage:result.nativeUsage,streaming:true,tools,completed:result.nativeMessage?.stopReason!=='length'},signal:bounded(10000)});
@@ -286,7 +291,7 @@ export async function startProvider(networkInput, nodeId, { prepareOnly = false,
     if (closing) return closing;
     if (error) failure('failure', error, 'provider_failed');
     lifecycle.stop(trigger, { signal });
-    if(pending?.qualification){pending.reject(new ClientError('provider_stopped'));pending=undefined;}
+    if(pending?.qualification||pending?.discovery){pending.reject(new ClientError('provider_stopped'));pending=undefined;}
     stopped = true; guestReady = false; relayReady = false; for(const tunnel of tunnels)tunnel.destroy(); abort.abort();
     statusPoll?.stop(); renewal?.stop(); keepalive?.stop(); for(const timer of [deadline,touchRetry,reconnectTimer,authenticationTimer,leaseTimer])clearTimeout(timer); socket?.close();
     for (const [name,handler] of signalHandlers) process.removeListener(name,handler);
@@ -305,7 +310,7 @@ export async function startProvider(networkInput, nodeId, { prepareOnly = false,
       outcomes.push(await lifecycle.finish(outcomes));
       const failed = outcomes.some(o=>o.status==='failed'),removed=outcomes.find(o=>o.phase==='guest_removal').status==='succeeded';
       cleanupRequired = failed; teardownVerified = removed;
-      const result = { status: failed ? 'cleanup_required' : 'stopped', completedCalls: calls, credentials: removed ? 'discarded' : 'teardown_unverified', providerRunId, firstFailure: lifecycle.firstFailure, stopTrigger: lifecycle.stopTrigger, outcomes };
+      const result = { status: failed ? 'cleanup_required' : 'stopped', completedCalls: calls, credentials: removed ? (vault?'guest_disk_retained':'discarded') : 'teardown_unverified', providerRunId, firstFailure: lifecycle.firstFailure, stopTrigger: lifecycle.stopTrigger, outcomes };
       announce(result); complete(result); return result;
     })();
     return closing;
@@ -317,7 +322,7 @@ export async function startProvider(networkInput, nodeId, { prepareOnly = false,
     for (const [name,handler] of signalHandlers) process.once(name,handler);
     if(prepared){const claim=await network.request(`/v2/providers/nodes/${nodeId}/prepare`,{method:'POST',body:{providerRunId},signal:bounded(10000)});if(claim.providerRunId!==providerRunId)throw new ClientError('provider_run_contract_required');claimed=true;}
     if(!prepared){
-    const ticket = await network.request(`/v2/providers/nodes/${nodeId}/relay-ticket`, { method:'POST', body:{providerRunId,...(native?{connectorProtocol:'pi_native_v1'}:node.connector?{connectorProtocol:CONNECTOR_PROTOCOL}:{})}, signal:bounded(intervals.networkTimeout ?? 10000) });
+    const ticket = await network.request(`/v2/providers/nodes/${nodeId}/relay-ticket`, { method:'POST', body:{providerRunId,...(native?{connectorProtocol:node.connectorProtocol}:node.connector?{connectorProtocol:CONNECTOR_PROTOCOL}:{})}, signal:bounded(intervals.networkTimeout ?? 10000) });
     if (ticket.providerRunId !== providerRunId) throw new ClientError('provider_run_contract_required');
     claimed = true; lifecycle.event('run', { status: 'claimed' }); announce({status:'starting'});
     }
@@ -326,7 +331,21 @@ export async function startProvider(networkInput, nodeId, { prepareOnly = false,
     if (!continuous) deadline = setTimeout(onSignal, 540000);
     if (node.availability === 'hot') await warm();
     if (!stopped) { await statusPoll.run(); await renewal.run(); }
-    return { done, stop, warm, start: startNative, lifecycle, get status() { return snapshot(); } };
+    return { done, stop, warm, start: startNative, discover:async()=>{if(!prepared||!guestReady||pending)throw new ClientError('provider_stop_required');const requestId=randomUUID();return new Promise((resolve,reject)=>{const timer=setTimeout(()=>{if(pending?.id===requestId)pending=undefined;reject(new ClientError('model_discovery_unavailable'));},20000);pending={id:requestId,discovery:true,binding:{type:'discover'},frame:{type:'discover',requestId},resolve:r=>{clearTimeout(timer);resolve(r);},reject:e=>{clearTimeout(timer);reject(e);}};});}, lifecycle, get status() { return snapshot(); } };
   } catch (error) { await stop({trigger:'startup_failed',error});throw error; }
 }
 export async function serveProvider(network, nodeId, options = {}) { const controller = await startProvider(network, nodeId, options); return controller.done; }
+
+export async function disconnectProviderApi(network,nodeId,{runtimeConfig,runtime:providedRuntime}={}) {
+  const node=await network.request(`/v2/providers/nodes/${nodeId}/disconnect`,{method:'POST',body:{confirm:true},key:randomUUID()});
+  const runtime=providedRuntime??(runtimeConfig?new SandboxRuntime(runtimeConfig):await configuredRuntime());await runtime.verify();
+  let vault;try{vault=await credentialVolume(network,runtime,node,{create:false});}catch(error){if(error.code!=='credential_volume_missing')throw error;await network.request(`/v2/providers/nodes/${nodeId}/credential-status`,{method:'POST',body:{status:'removed',expectedRevision:node.nativeRevision}});return {status:'disconnected',upstreamKeyRevoked:false};}let guest,copied;
+  try {
+    copied=await mkdtemp(join(tmpdir(),'adr-disconnect-'));
+    await copyFile(new URL('./guest-credentials.mjs',import.meta.url),join(copied,'guest-credentials.mjs'));
+    guest=await createGuest(runtime,[],copied,undefined,{vault});
+    await runtime.run(guest,['node','--input-type=module','-e',"import {GuestCredentialStore} from '/workspace/guest-credentials.mjs'; await new GuestCredentialStore().disconnect();"],{timeoutSeconds:20});
+    await network.request(`/v2/providers/nodes/${nodeId}/credential-status`,{method:'POST',body:{status:'removed',expectedRevision:node.nativeRevision}});
+    return {status:'disconnected',upstreamKeyRevoked:false};
+  }finally{if(guest&&runtime.owned.has(guest))await runtime.remove(guest);if(copied)await rm(copied,{recursive:true,force:true});}
+}

@@ -2,7 +2,7 @@ import { request } from 'node:https';
 import { Readable, Transform } from 'node:stream';
 import { tunnelAgent } from './provider-broker.mjs';
 const fail=code=>Object.assign(Error(code),{code});
-export function restrictedPiFetch(node,model,signal,onResponse=()=>{}) {
+export function restrictedPiFetch(node,model,signal,onResponse=()=>{},{discovery=false}={}) {
   const approved=new URL(model.endpoint);let dispatched=false;
   return async (input,init={})=>{
     // One SDK dispatch per authority reservation. Also fences retries performed
@@ -10,10 +10,10 @@ export function restrictedPiFetch(node,model,signal,onResponse=()=>{}) {
     if(dispatched)throw fail('upstream_retry_forbidden');
     const req=input instanceof Request?input:new Request(input,init);
     const url=new URL(req.url),method=init.method??req.method;
-    if(url.origin!==approved.origin||!url.pathname.startsWith(approved.pathname.replace(/\/$/, '')+'/')||url.username||url.password||url.hash||method!=='POST')throw fail('pi_destination_rejected');
+    if(url.origin!==approved.origin||!url.pathname.startsWith(approved.pathname.replace(/\/$/, '')+'/')||url.username||url.password||url.hash||(discovery?(method!=='GET'||url.pathname!==approved.pathname.replace(/\/$/,'')+'/models'):method!=='POST'))throw fail('pi_destination_rejected');
     if(!node.tunnel)throw fail('pi_restricted_transport_required');
     signal?.throwIfAborted();dispatched=true;
-    const body=init.body??await req.text();if(typeof body!=='string'||Buffer.byteLength(body)>1024*1024)throw fail('pi_request_limit');
+    const body=discovery?undefined:init.body??await req.text();if(!discovery&&(typeof body!=='string'||Buffer.byteLength(body)>1024*1024))throw fail('pi_request_limit');
     const headers=new Headers(init.headers??req.headers);headers.delete('host');headers.delete('content-length');headers.set('accept-encoding','identity');
     const agent=tunnelAgent({...node,tunnel:{...node.tunnel,path:'/upstream/'+encodeURIComponent(approved.origin)}},url);
     return new Promise((resolve,reject)=>{

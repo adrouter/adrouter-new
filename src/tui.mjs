@@ -43,6 +43,11 @@ const problems = {
   workspace_selection_invalid:'Project directory: import between 1 and 5000 eligible files.',
   workspace_total_limit:'Project directory: eligible files exceed the 128 MiB import limit. Choose a smaller project.',
   action_approval_required:'This action needs host approval. Headless coding cannot open a native approval dialog.',
+  model_discovery_unavailable: 'This endpoint does not provide supported model discovery. Add the exact model ID and its verified metadata manually.',
+  pi_thinking_off_unsupported: 'The endpoint returned thinking while thinking was off. Edit the adapter settings or choose a model that supports thinking off.',
+  provider_token_allowance_exhausted: 'The remaining shared token allowance cannot cover this request. Consumed usage and unresolved reservations still count.',
+  provider_credit_allowance_exhausted: 'The remaining shared AdRouter credit allowance cannot cover this request.',
+  provider_shared_history_unavailable: 'Historical allowance usage is unavailable. Reconcile it before serving; it cannot be reset to zero.',
   marketplace_owner_only: 'Sign in with the configured owner account. Other accounts cannot use this private marketplace.',
   marketplace_access_disabled: 'Owner access is disabled. Revoke this installation in the dashboard if sign-out cannot refresh it.',
   login_required: 'Sign in to AdRouter to continue.',
@@ -106,14 +111,16 @@ export const providerFields = [
 
 export async function runTui(options = {}, dependencies = {}) {
   const ui = dependencies.ui ?? new TerminalUI(); let store = dependencies.store ?? new AuthStore(undefined, options.profile ?? 'default');
-  let network = dependencies.network; let config; let runtimeConfig; const providersRunning = new Map(); const setupDrafts = new Map(); const limitDrafts = new Map(); const deletionKeys = new Map(); let currentProviderId;let verifiedIdentity,identityAt=0,identityError,authState='signed_out';
+  let network = dependencies.network; let config; let runtimeConfig; const providersRunning = new Map(); const setupDrafts = new Map(); const limitDrafts = new Map(); const deletionKeys = new Map(); let currentProviderId;let verifiedIdentity,identityAt=0,identityError,authState='signed_out',identityGeneration=0;
+  const readAuth=async()=>{try{return await store.read();}catch(error){if(error.code!=='state_unavailable')throw error;return {scope:'',unavailable:true};}};
   const display=new MarketplaceDisplay(()=>network,lines=>{ui.sidebar=lines;if(!ui.pending||ui.started)ui.draw?.();});
-  const clearIdentity=()=>{authState='signed_out';verifiedIdentity=undefined;identityAt=0;identityError=undefined;ui.context=`Signed out · ${store.profile} · ${network.origin}`;};
+  const clearIdentity=()=>{identityGeneration++;authState='signed_out';verifiedIdentity=undefined;identityAt=0;identityError=undefined;ui.context=`Signed out · ${store.profile} · ${network.origin}`;};
   const refreshIdentity=async scope=>{
     if(network.local){ui.context=`Local identity · ${store.profile} · ${network.origin}`;return;}
-    if(verifiedIdentity&&Date.now()-identityAt<60000)return;
+    if(authState==='checking'||verifiedIdentity&&Date.now()-identityAt<60000)return;
+    const generation=identityGeneration,identityNetwork=network;
     authState='checking';
-    try{const value=await network.request(scope.includes("marketplace:operator")?"/v2/admin/me":scope.includes("marketplace:buyer")?"/v2/me":"/v2/providers/me");authState='signed_in';verifiedIdentity=value;identityError=undefined;identityAt=Date.now();ui.context=`${value.email??"Email unavailable"} · ${store.profile}/${value.roles.join(",")} · ${network.origin}`;}catch(error){authState=error.code==='installation_revoked'?'revoked':authRecoveryCodes.has(error.code)?'recovery_required':'temporarily_unavailable';verifiedIdentity=undefined;identityAt=0;identityError=error;ui.context=`Sign-in needs attention · ${store.profile} · ${network.origin}`;}
+    try{const value=await identityNetwork.request(scope.includes("marketplace:operator")?"/v2/admin/me":scope.includes("marketplace:buyer")?"/v2/me":"/v2/providers/me",{signal:AbortSignal.timeout(5000)});if(generation!==identityGeneration)return;authState='signed_in';verifiedIdentity=value;identityError=undefined;identityAt=Date.now();ui.context=`${value.email??"Email unavailable"} · ${store.profile}/${value.roles.join(",")} · ${network.origin}`;}catch(error){if(generation!==identityGeneration)return;authState=error.code==='installation_revoked'?'revoked':authRecoveryCodes.has(error.code)?'recovery_required':'temporarily_unavailable';verifiedIdentity=undefined;identityAt=0;identityError=error;ui.context=`Sign-in needs attention · ${store.profile} · ${network.origin}`;}
   };
   const actor = role => { if (network.local) network.actor = role; };
   const get = async (path, publicAccess = false) => {
@@ -135,7 +142,7 @@ export async function runTui(options = {}, dependencies = {}) {
       store = new AuthStore(store.home, 'operator');
       network = new Network({origin:network.origin,local:network.local,store});
       clearIdentity();
-      if (await store.read()) return;
+      if (await readAuth()) return;
     }
     let verification;
     const openSafari = (_text, key) => {
@@ -248,32 +255,33 @@ export async function runTui(options = {}, dependencies = {}) {
     }
   }
   async function createNativeListing(existing) {
-    if(!config.capabilities?.includes('pi_native_v1'))throw new ClientError('pi_native_client_required');
-    const draftKey='native:'+store.profile+':'+network.origin,state=setupDrafts.get(draftKey)??(existing?{provider:existing.provider,models:existing.models,limits:{...existing,...existing.fields,maxOutputTokens:String(existing.maxOutputTokens)}}:{models:[],limits:{}});setupDrafts.set(draftKey,state);
-    const providerId=state.provider??await ui.menu('Choose provider',[...piCatalog.providers.map(p=>item(p.id,p.name)),item('back','Back')]);
-    if(!providerId||providerId==='back')return;
-    state.provider=providerId;const provider=piCatalog.providers.find(p=>p.id===providerId),selected=new Set(state.models);
-    for(;;){
-      const model=await ui.menu('Choose models',[item('continue',`Continue with ${selected.size} models`,'One connection, one guest, one shared execution slot.',!selected.size),...provider.models.map(m=>item(m.id,`${selected.has(m.id)?'[x]':'[ ]'} ${m.name}`,m.unavailableReason??`${m.id} · ${m.api} · ${m.contextWindow} context tokens`,!!m.unavailableReason)),item('back','Back')]);
-      if(!model||model==='back'){state.provider=undefined;return;}
-      if(model==='continue')break;
-      if(selected.has(model))selected.delete(model);else if(selected.size<16)selected.add(model);state.models=[...selected];
+    if(!config?.capabilities?.includes('pi_native_v2'))throw new ClientError('pi_native_client_required');
+    const draftKey='native:'+store.profile+':'+network.origin;
+    const state=setupDrafts.get(draftKey)??{provider:existing?.provider,models:existing?.models??[],discoveredModels:existing?.discoveredModels??[],connection:structuredClone(existing?.connection??{kind:'builtin',modelDefinitions:[],headerNames:[]}),limits:existing?{...existing,...existing.fields,maxOutputTokens:String(existing.maxOutputTokens)}:{}};setupDrafts.set(draftKey,state);
+    if(!state.provider){const kind=await ui.menu('Connection type',[item('builtin','Built-in provider'),item('custom','Custom API','Use a supported Pi protocol with your endpoint and model IDs.'),item('back','Back')]);if(!kind||kind==='back')return;state.connection.kind=kind;
+      if(kind==='builtin'){state.provider=await ui.menu('Choose provider',[...piCatalog.providers.map(p=>item(p.id,p.name)),item('back','Back')]);if(!state.provider||state.provider==='back'){state.provider=undefined;return;}}
+      else {const value=await ui.form('Custom API',[{name:'provider',label:'Connection provider ID',validate:v=>/^[a-z][a-z0-9-]{0,63}$/.test(v)?'':'Use a lowercase identifier.'},{name:'baseUrl',label:'HTTPS API base URL',maxLength:2048,validate:v=>{try{const u=new URL(v);return u.protocol==='https:'&&!u.username&&!u.password&&!u.search&&!u.hash?'':'Use an HTTPS URL without credentials or query.';}catch{return 'Enter an HTTPS base URL.';}}},{name:'api',label:'Pi API protocol',choices:['openai-completions','openai-responses','anthropic-messages','google-generative-ai','mistral-conversations','azure-openai-responses'],default:'openai-completions'}]);if(!value)return;state.provider=value.provider;Object.assign(state.connection,{baseUrl:value.baseUrl,api:value.api});}
     }
-    const values=await ui.form('Shared provider limits',[
-      {name:'name',label:'Connection name',default:provider.name,validate:required},
-      ...provider.fields.map(f=>({...f,validate:v=>new RegExp(f.pattern).test(v)?'':'Enter the required provider identifier.'})),
-      {name:'totalTokens',label:'Total tokens across all models',default:'1000000',validate:integer(1,999999999999)},
-      {name:'testCredits',label:'Total test credits across all models',default:'10000',validate:integer(1,999999999)},
-      {name:'maxOutputTokens',label:'Maximum output per request',default:'1024',validate:integer(128,Math.min(8192,...provider.models.filter(m=>selected.has(m.id)).map(m=>m.maxTokens)))},
-      {name:'inputRate',label:'Input test credits per million tokens',default:'1000',validate:integer(0,999999999)},
-      {name:'outputRate',label:'Output test credits per million tokens',default:'3000',validate:integer(0,999999999)},
-    ],state.limits,'Limits are shared and cumulative. Restarting does not reset consumed or held amounts.');
-    if(!values)return;Object.assign(state.limits,values);
+    const provider=piCatalog.providers.find(p=>p.id===state.provider)??{name:state.provider,models:[],fields:[]},selected=new Set(state.models);
+    for(;;){
+      const known=[...provider.models,...state.connection.modelDefinitions.filter(m=>!provider.models.some(x=>x.id===m.id)).map(m=>({...m,name:m.name??m.id,api:m.api??state.connection.api}))];
+      const action=await ui.menu('Choose offered models',[item('continue',`Continue with ${selected.size} models`,'Only selected models can be published.',!selected.size),item('manual','Add model by ID','Use this when discovery is unavailable or the model is absent.'),...state.discoveredModels.filter(id=>!known.some(m=>m.id===id)).map(id=>item('discovered:'+id,id,'Discovered model; define verified metadata before offering.')),...known.map(m=>item(m.id,`${selected.has(m.id)?'[x]':'[ ]'} ${m.name}`,m.unavailableReason??`${m.id} · ${m.api}`,!!m.unavailableReason)),item('back','Back')]);
+      if(!action||action==='back')return;if(action==='continue')break;
+      if(action==='manual'||action.startsWith('discovered:')){
+        const values=await ui.form('Manual model definition',[{name:'id',label:'Exact model ID',default:action.startsWith('discovered:')?action.slice(11):'',maxLength:256,validate:required},{name:'contextWindow',label:'Context tokens',default:'32768',validate:integer(4096,131072)},{name:'maxTokens',label:'Maximum output tokens',default:'4096',validate:integer(128,8192)},...['input','output','cacheRead','cacheWrite'].map(name=>({name,label:`${name} USD per million tokens`,validate:v=>v.trim()!==''&&Number.isFinite(Number(v))&&Number(v)>=0?'':'Enter the verified rate; unknown is not zero.'})),{name:'thinking',label:'Thinking support',choices:['none','optional','required'],default:'none'}]);if(!values)continue;if(values.thinking==='required'){await ui.page('Thinking off is required',['This model cannot be offered until its endpoint supports thinking off.']);continue;}
+        state.connection.modelDefinitions=state.connection.modelDefinitions.filter(m=>m.id!==values.id);state.connection.modelDefinitions.push({id:values.id,contextWindow:Number(values.contextWindow),maxTokens:Number(values.maxTokens),cost:Object.fromEntries(['input','output','cacheRead','cacheWrite'].map(k=>[k,Number(values[k])])),thinking:values.thinking});selected.add(values.id);
+      }else if(selected.has(action))selected.delete(action);else if(selected.size<16)selected.add(action);state.models=[...selected];
+    }
+    const values=await ui.form('Shared provider limits',[{name:'name',label:'Connection name',default:provider.name,validate:required},...provider.fields.map(f=>({...f,validate:v=>new RegExp(f.pattern).test(v)?'':'Enter the provider identifier.'})),{name:'totalTokens',label:'Total tokens across offered models',default:'1000000',validate:integer(1,999999999999)},{name:'testCredits',label:'Total AdRouter credits',default:'10000',validate:integer(1,999999999)},{name:'maxOutputTokens',label:'Maximum output per request',default:'1024',validate:integer(128,8192)}],state.limits,'Limits are cumulative. Consumed usage and unresolved reservations survive restarts.');if(!values)return;Object.assign(state.limits,values);
+    state.limits.inputRate??='1000';state.limits.outputRate??='3000';
+    const choice=await ui.menu('Review connection',[item('save','Save connection','Saving performs no inference.'),item('advanced','Advanced settings','Endpoint, adapter, header names, compatibility and credit rates.'),item('back','Back')]);if(!choice||choice==='back')return;
+    if(choice==='advanced'){
+      const advanced=await ui.form('Advanced connection settings',[{name:'baseUrl',label:'Base URL (blank uses built-in default)',maxLength:2048},{name:'api',label:'API protocol (blank uses model default)'},{name:'headers',label:'Secret header names, comma separated',help:'Values are entered only inside the provider guest.'},{name:'compat',label:'Pi compatibility settings JSON',default:'{}',maxLength:4096,validate:v=>{try{return typeof JSON.parse(v)==='object'&&!Array.isArray(JSON.parse(v))?'':'Enter a JSON object.';}catch{return 'Enter a JSON object.';}}},{name:'inputRate',label:'Input AdRouter credits per million tokens',validate:integer(0,999999999)},{name:'outputRate',label:'Output AdRouter credits per million tokens',validate:integer(0,999999999)}],{baseUrl:state.connection.baseUrl??'',api:state.connection.api??'',headers:state.connection.headerNames.join(','),compat:JSON.stringify(state.connection.compat??{}),inputRate:state.limits.inputRate,outputRate:state.limits.outputRate});if(!advanced)return;Object.assign(state.connection,{...(advanced.baseUrl?{baseUrl:advanced.baseUrl}:{}),...(advanced.api?{api:advanced.api}:{}),headerNames:advanced.headers.split(',').map(v=>v.trim()).filter(Boolean),compat:JSON.parse(advanced.compat)});Object.assign(state.limits,{inputRate:advanced.inputRate,outputRate:advanced.outputRate});if(!await confirm('Save connection?',['No inference will run until you choose Start.'],'Save'))return;
+    }
     const fields=Object.fromEntries(provider.fields.map(f=>[f.name,values[f.name]]));
-    const payload={connectorProtocol:'pi_native_v1',name:values.name,provider:providerId,models:[...selected],fields,totalTokens:values.totalTokens,testCredits:values.testCredits,maxOutputTokens:Number(values.maxOutputTokens),inputRate:values.inputRate,outputRate:values.outputRate};
-    if(existing&&!await confirm('Save provider changes?',[`Shared total: ${payload.totalTokens} tokens / ${payload.testCredits} test credits`,'Consumed and outstanding amounts remain reserved. Changed configuration must pass compatibility checks again.'],'Save changes'))return;
-    const node=await post(existing?`/providers/nodes/${existing.id}/native`:'/providers/nodes',existing?{...payload,expectedRevision:existing.nativeRevision??0,confirmIncrease:true}:payload);
-    setupDrafts.delete(draftKey);await guidedNativeProvider(node);if(!existing)await manageNode(node.id,true);
+    const payload={connectorProtocol:'pi_native_v2',name:values.name,provider:state.provider,models:[...selected],fields,connection:state.connection,totalTokens:values.totalTokens,testCredits:values.testCredits,maxOutputTokens:Number(values.maxOutputTokens),inputRate:state.limits.inputRate,outputRate:state.limits.outputRate};
+    if(existing&&!await confirm('Save provider changes?',[`Shared limit: ${payload.totalTokens} tokens / ${payload.testCredits} AdRouter credits`,'Usage and liabilities remain. Changes require qualification again.'],'Save changes'))return;
+    const node=await post(existing?`/providers/nodes/${existing.id}/native`:'/providers/nodes',existing?{...payload,expectedRevision:existing.nativeRevision??0,confirmIncrease:true}:payload);setupDrafts.delete(draftKey);await ui.page('Connection saved',['No inference has run. Start includes chargeable qualification, explicit publication and serving.']);if(!existing)await manageNode(node.id,true);
   }
   async function guidedNativeProvider(node) {
     if(node.suspended)throw new ClientError('node_suspended');
@@ -283,14 +291,14 @@ export async function runTui(options = {}, dependencies = {}) {
     let controller;
     try {
       controller=await ui.suspend(()=>startProvider(network,node.id,{prepareOnly:true,maxOutputTokens:node.maxOutputTokens,runtimeConfig}));
-      const action=await ui.menu('Start provider',[item('start','Start provider','Run bounded streaming and tool checks, publish selected models, then serve.'),item('back','Back')],{lines:[node.name,...node.models.map(m=>'• '+m),`Shared allowance: ${node.sharedAllowance.totalTokens} tokens · ${node.sharedAllowance.testCredits} test credits`,`Output per request: ${node.maxOutputTokens}`,'API key is held only in the isolated guest.','Compatibility checks consume shared limits and upstream spending authority.']});
+      const action=await ui.menu('Start provider',[item('start','Start provider','Run bounded streaming and tool checks, publish selected models, then serve.'),item('back','Back')],{lines:[node.name,...node.models.map(m=>'• '+m),`Shared allowance: ${node.sharedAllowance.totalTokens} tokens · ${node.sharedAllowance.testCredits} AdRouter credits`,`Output per request: ${node.maxOutputTokens}`,'API key is saved only in the isolated provider guest vault and survives Stop.','Compatibility checks consume shared limits and upstream spending authority.']});
       if(action!=='start'){await controller.stop();return;}
       await ui.task('Checking selected models',()=>controller.start());
       providersRunning.set(node.id,controller);void controller.done.then(()=>{if(providersRunning.get(node.id)===controller)providersRunning.delete(node.id);ui.pending?.redraw?.();});
     }catch(error){await controller?.stop();await ui.page('Provider setup needs correction',[...errorLines(error),...nativeFailureLines(error),...(error.provider?[`HTTP ${error.statusCode??'unknown'}`]:[]),'Your configuration is saved. Unknown checks retain their spending reservations.']);}
   }
   async function guidedProvider(node) {
-    if(node.connectorProtocol==='pi_native_v1')return guidedNativeProvider(node);
+    if(['pi_native_v1','pi_native_v2'].includes(node.connectorProtocol))return guidedNativeProvider(node);
     // A server draft is already durable; Back never deletes it.
     const { configuredRuntime } = await import('./provider.mjs');
     const { SandboxRuntime } = await import('./runtime.mjs');
@@ -342,7 +350,7 @@ export async function runTui(options = {}, dependencies = {}) {
       const exposure=await get('/providers/budget');
       const monitor=new ProviderActivityMonitor(network,node.id,()=>ui.pending?.redraw?.());await monitor.start();
       let selection;try{selection = await ui.menu(created ? 'Your listing is drafted' : node.name, [
-        ...(node.connectorProtocol==='pi_native_v1'?[item('editNative','Edit provider configuration','Pause and stop serving before changing models or limits.',!['draft','paused'].includes(node.status)||providersRunning.has(node.id))]:[]),
+        ...(['pi_native_v1','pi_native_v2'].includes(node.connectorProtocol)?[item('editNative','Edit provider configuration','Pause and stop serving before changing models or limits.',!['draft','paused'].includes(node.status)||providersRunning.has(node.id))]:[]),
         item('setup', 'Continue setup', 'Runtime → limits → publication → tariff → guest → relay', providersRunning.has(node.id)),
         item('launch', node.availability === 'cold' ? 'Start cold control' : 'Launch hot VM', 'Keep this TUI open while providing.', providersRunning.has(node.id)),
         ...(providersRunning.get(node.id)?.status.activation.length ? [item('activate', 'Activate reserved buyer session', 'Launch the VM and enter the key before the 120-second deadline.')] : []),
@@ -351,11 +359,15 @@ export async function runTui(options = {}, dependencies = {}) {
         item('thinking','Configure thinking support','Stop serving and pause before changing capabilities.'),
         item('pause', 'Pause listing'), item('stop', 'Stop serving and close sessions'),
         ...(node.status === 'paused' ? [item('delete', 'Delete paused listing', providersRunning.has(node.id) ? 'Stop serving in this terminal first.' : 'Permanent removal requires finished sessions and settlement. Receipts remain available.', providersRunning.has(node.id))] : []),
+        ...(node.connectorProtocol==='pi_native_v2'?[item('discover','Discover endpoint models','Uses saved guest authentication; no inference or automatic publication.'),item('rebind','Reclaim paused connection','Authorize this installation without resetting usage.'),item('disconnect','Disconnect API','Remove the saved guest credential and disable serving.')]:[]),
         item('refresh', 'Refresh status'), item('back', 'Back'),
-      ], { tick:true,lines:()=>[...providerActivityLines(monitor.view()),...providerFailureLines(providersRunning.get(node.id)?.status.lastUpstreamFailure),`Models: ${node.models?.join(', ')??node.model}`, `Suspended: ${node.suspended ? 'yes' : 'no'} · Listing: ${node.status}`, `VM: ${providersRunning.get(node.id)?.status.guestReady ? 'ready' : 'not running'}`, `Backend connection: ${providerConnectionLabel(monitor.view())}`, `Activity: ${providersRunning.get(node.id)?.status.calls??0} dispatched requests`, ...(node.sharedAllowance?[`Shared tokens: ${node.sharedAllowance.consumedTokens} consumed · ${node.sharedAllowance.outstandingTokens} held / ${node.sharedAllowance.totalTokens}`,`Shared test credits: ${node.sharedAllowance.consumedCredits} consumed · ${node.sharedAllowance.outstandingCredits} held / ${node.sharedAllowance.testCredits}`]:[]),`Remaining upstream authority: ${formatUsd(exposure.remainingMicrousd)}`, `Outstanding exposure: ${formatUsd(exposure.outstandingMicrousd)}`, `Provider: ${node.id}`,`Listing: ${node.listingId??'not published'}`,`Thinking: ${node.capabilities?.includes('thinking_v1')?'supported':'off'}`],footer:providersRunning.has(node.id)?'↑↓ Move  Enter Choose  Esc / Ctrl+C Stop provider VM':'↑↓ Move  Enter Choose  Esc Back' });}finally{monitor.stop();}
+      ], { tick:true,lines:()=>[...providerActivityLines(monitor.view()),...providerFailureLines(providersRunning.get(node.id)?.status.lastUpstreamFailure),`Models: ${node.models?.join(', ')??node.model}`, `Suspended: ${node.suspended ? 'yes' : 'no'} · Listing: ${node.status}`, `VM: ${providersRunning.get(node.id)?.status.guestReady ? 'ready' : 'not running'}`, `Backend connection: ${providerConnectionLabel(monitor.view())}`, `Activity: ${providersRunning.get(node.id)?.status.calls??0} dispatched requests`, ...(node.sharedAllowance?[`Shared tokens: ${node.sharedAllowance.consumedTokens} consumed · ${node.sharedAllowance.outstandingTokens} held / ${node.sharedAllowance.totalTokens}`,`AdRouter credits: ${node.sharedAllowance.consumedCredits} consumed · ${node.sharedAllowance.outstandingCredits} reserved/unresolved / ${node.sharedAllowance.testCredits}`,`Remaining: ${node.allowanceSummary?.remainingTokens??'unknown'} tokens · ${node.allowanceSummary?.remainingCredits??'unknown'} AdRouter credits`,...(node.allowanceSummary?.exhaustionReason?[node.allowanceSummary.exhaustionReason]:[])]:[]),`Remaining upstream authority: ${formatUsd(exposure.remainingMicrousd)}`, `Outstanding exposure: ${formatUsd(exposure.outstandingMicrousd)}`, `Provider: ${node.id}`,`Listing: ${node.listingId??'not published'}`,`Thinking: ${node.capabilities?.includes('thinking_v1')?'supported':'off'}`],footer:providersRunning.has(node.id)?'↑↓ Move  Enter Choose  Esc / Ctrl+C Stop provider VM':'↑↓ Move  Enter Choose  Esc Back' });}finally{monitor.stop();}
       currentProviderId = undefined; created = false;
       if(!selection&&providersRunning.has(node.id)){await providersRunning.get(node.id).stop();providersRunning.delete(node.id);continue;}
       if (!selection || selection === 'back') return;
+      if(selection==='discover'){await attempt(async()=>{const {startProvider}=await import('./provider.mjs');let controller;try{controller=await ui.suspend(()=>startProvider(network,node.id,{prepareOnly:true,runtimeConfig,maxOutputTokens:node.maxOutputTokens}));const result=await ui.task('Discovering endpoint models',()=>controller.discover());await controller.stop();await createNativeListing({...node,discoveredModels:result.models});}finally{await controller?.stop();}});continue;}
+      if(selection==='rebind'){await attempt(()=>post(`/providers/nodes/${node.id}/rebind`,{expectedInstallationId:node.installationId}));continue;}
+      if(selection==='disconnect'){if(await confirm('Disconnect API?',['This removes the saved guest credential and disables serving. It does not revoke the upstream key.'],'Disconnect'))await attempt(async()=>{if(providersRunning.has(node.id)){await providersRunning.get(node.id).stop();providersRunning.delete(node.id);}const {disconnectProviderApi}=await import('./provider.mjs');await ui.task('Removing guest credential',()=>disconnectProviderApi(network,node.id,{runtimeConfig}));});continue;}
       if(selection==='editNative'){await attempt(()=>createNativeListing(node));continue;}
       if(selection==='tariffRefresh'){await attempt(()=>post(`/providers/nodes/${node.id}/tariff/refresh`,{durationSeconds:3600}));continue;}
       if(selection==='thinking'){
@@ -419,7 +431,7 @@ export async function runTui(options = {}, dependencies = {}) {
     access=quoteAccess(config,listing);if(access.disabled)throw new ClientError(access.code);
     if(privateMode!==(!config.admissions&&config.privateRehearsal)||coding!==(!!config.capabilities?.includes('coding_v1')&&listing.capabilities?.includes('coding_v1')))throw new ClientError('quote_policy_changed');
     resolveConnector(listing);
-    const quote = await post('/quotes', { ...(listing.connectorProtocol==='pi_native_v1'?{connectorProtocol:'pi_native_v1'}:listing.connector?{connectorProtocol:CONNECTOR_PROTOCOL}:{}), listingId: listing.id, maximumCharge: bounds.budget, maxOutputTokens: Number(bounds.output), durationSeconds: Number(bounds.duration), ...(coding?{protocol:'coding_v1',requestLimit:100}:{}), ...mode });
+    const quote = await post('/quotes', { ...(['pi_native_v1','pi_native_v2'].includes(listing.connectorProtocol)?{connectorProtocol:listing.connectorProtocol}:listing.connector?{connectorProtocol:CONNECTOR_PROTOCOL}:{}), listingId: listing.id, maximumCharge: bounds.budget, maxOutputTokens: Number(bounds.output), durationSeconds: Number(bounds.duration), ...(coding?{protocol:'coding_v1',requestLimit:100}:{}), ...mode });
     if (!await confirm('Review your quote', [...listingLines(listing), '', `Maximum reserved: ${quote.maximumCharge} test credits`, `Output limit: ${quote.maxOutputTokens} tokens`, `Session duration: ${quote.durationSeconds} seconds`, `Shared inference dispatches: ${quote.requestLimit??5}`, `Quote expires: ${date(quote.expiresAt)}`, `Cold activation deadline: ${quote.activationDeadlineSeconds || 0} seconds. Expired activation refunds the reservation.`], 'Accept and reserve test credits')) return;
     const session = await post('/sessions', { quoteId: quote.id, accept: true, ...mode }, `accept_${quote.id}`);
     if (privateMode) {
@@ -635,8 +647,30 @@ export async function runTui(options = {}, dependencies = {}) {
       if (input && await confirm('Grant test credits?', [`${input.amount} test credits to ${input.userId}`, 'No cash value.'])) await post('/admin/grants', input);
     }
   }
+  async function signOut() {
+    if(!await confirm('Sign out?', ['Stop local activity and lock saved provider credentials. Saved work, connections and accounting remain.','Server revocation will be attempted independently of access or refresh health.'],'Sign out'))return;
+    for(const provider of providersRunning.values())await provider.stop({trigger:'sign_out'}).catch(()=>{});
+    providersRunning.clear();
+    const result=await ui.task('Signing out locally',()=>network.logout());clearIdentity();
+    await ui.page('Signed out',[result.message??'Signed out.']);
+  }
+  async function manageInstallations() {
+    let url=network.origin==='https://api-staging.adrouter.co'?'https://app-staging.adrouter.co/installations':undefined;
+    if(!url){const value=await ui.form('Installation management',[{name:'origin',label:'Dashboard HTTPS origin',validate:v=>{try{networkOrigin(v);return '';}catch{return 'Enter the trusted dashboard HTTPS origin.';}}}]);if(!value)return;url=networkOrigin(value.origin)+'/installations';}
+    const action=await ui.menu('Manage installations',[item('open','Open in Safari'),item('back','Back')],{lines:[url,'Sign in to view and revoke account-owned installations. This can finish an unconfirmed server revocation.']});
+    if(action==='open'){if(process.platform==='darwin'){const child=spawn('/usr/bin/open',['-a','Safari',url],{stdio:'ignore'});child.on('error',()=>{});}else await ui.page('Open in your browser',[url]);}
+  }
+  async function accountControls() {
+    const action=await ui.menu('Account',[item('login','Sign in'),item('recover','Repair sign-in'),item('repairLock','Repair interrupted local state'),item('logout','Sign out'),item('profiles','Switch profile'),item('installations','Manage installations'),item('back','Back')],{lines:[`Profile: ${store.profile}`,`Network: ${network.origin}`,`Account: ${verifiedIdentity?.email??verifiedIdentity?.userId??'Not currently verified'}`,`Sign-in: ${words(authState)}`]});
+    if(action==='login')await signIn(store.profile==='operator');
+    else if(action==='recover')await signIn(store.profile==='operator',true);
+    else if(action==='repairLock'){try{await store.repairLock?.();}catch(error){if(error.code!=='auth_lock_owner_unknown')throw error;if(!await confirm('Repair interrupted lock?',['Close every other terminal using this profile first. The interrupted lock has no identifiable owner. Saved authentication and work are preserved.'],'Other clients are closed; repair'))return;await store.repairLock({confirmUnknown:true});}await ui.page('Local state checked',['Use Repair sign-in for an interrupted refresh. Live process locks are never removed.']);}
+    else if(action==='logout')await signOut();
+    else if(action==='profiles')await selectProfile();
+    else if(action==='installations')await manageInstallations();
+  }
   async function selectProfile() {
-    if (providersRunning.size) { await ui.page('Provider is running', ['Keep this profile open and start another terminal with adr-cli --profile operator. Stop providers before switching profiles.']); return; }
+    for(const provider of providersRunning.values())await provider.stop({trigger:'profile_switch'});providersRunning.clear();
     const chosen = await ui.menu('Choose profile', [item('default', 'Default', 'Preserves the original installation'), item('provider', 'Provider', 'Independent provider installation and refresh state'), item('buyer', 'Buyer', 'Independent buyer-only installation and refresh state'), item('operator', 'Operator', 'Independent operator approval'), item('custom', 'Named profile'), item('back', 'Back')]);
     if (!chosen || chosen === 'back') return;
     let profile = chosen;
@@ -644,7 +678,7 @@ export async function runTui(options = {}, dependencies = {}) {
     const next = new AuthStore(store.home, profile);
     const origin = ((await next.read())?.origin ?? await next.readSelection?.()) ?? network.origin;
     clearIdentity();store = next; network = new Network({ origin, local: network.local, actor: options.actor ?? 'buyer', store });
-    config = await get('/network/config', true);
+    config = await attempt(()=>get('/network/config', true));
     ui.context = `${store.profile} · ${network.local ? 'LOCAL · test credits' : network.origin}`;
   }
   let terminating = false;
@@ -652,7 +686,7 @@ export async function runTui(options = {}, dependencies = {}) {
   process.once('SIGTERM', terminate); process.once('SIGINT', terminate);
   ui.start();
   try {
-    if (!options.profile && !dependencies.store && !(await store.read())) {
+    if (!options.profile && !dependencies.store && !(await readAuth())) {
       const role=await ui.menu('Choose your role', [item('buyer','Buyer'),item('provider','Provider'),item('operator','Operator'),item('exit','Exit')]);
       if (!role || role==='exit') return;
       store=new AuthStore(store.home,role);
@@ -660,7 +694,7 @@ export async function runTui(options = {}, dependencies = {}) {
     if (!network) {
       let origin = options.network; let local = !!options.local;
       if (local && !origin) origin = 'http://127.0.0.1:8790';
-      if (!origin) origin = ((await store.read())?.origin ?? await store.readSelection?.());
+      if (!origin) origin = ((await readAuth())?.origin ?? await store.readSelection?.());
       if (!origin) {
         const choice = await ui.menu('Welcome to AdRouter', [item('staging', 'Sign in to AdRouter staging'), item('custom', 'Choose another network'), item('local', 'Local development', 'Uses the loopback test marketplace; no real sign-in or money.'), item('exit', 'Exit')]);
         if (!choice || choice === 'exit') return;
@@ -673,29 +707,33 @@ export async function runTui(options = {}, dependencies = {}) {
     config = await attempt(() => get('/network/config', true));display.start();
     for (;;) {
       if (terminating) return;
-      if (!network.local && !(await store.read())) {clearIdentity();
-        const selection = await ui.menu('Sign in to AdRouter', [item('login', store.profile === 'operator' ? 'Approve operator in browser' : 'Continue in browser', 'Approve this profile with the comparison code.'), ...(store.profile === 'operator' ? [] : [item('operatorLogin', 'Sign in as operator', 'Separate approval; current owner/operator role required.')]), item('profiles', 'Choose profile'), item('diagnostics', 'Network status'), item('exit', 'Exit')], { subtitle: config?.admissions === false ? (config.privateOwnerEvaluation ? config.privateRehearsal ? 'Private two-account rehearsal and owner evaluation. Ordinary purchases are disabled.' : 'Private owner evaluation only. Ordinary purchases are disabled.' : 'This network has marketplace admissions disabled.') : 'Your installation is separate from other AdRouter clients.' });
+      if (!network.local && !(await readAuth())) {clearIdentity();
+        const selection = await ui.menu('Sign in to AdRouter', [item('login', store.profile === 'operator' ? 'Approve operator in browser' : 'Continue in browser', 'Approve this profile with the comparison code.'), ...(store.profile === 'operator' ? [] : [item('operatorLogin', 'Sign in as operator', 'Separate approval; current owner/operator role required.')]), item('account','Account and sign-in'), item('installations','Manage installations'), item('profiles', 'Choose profile'), item('diagnostics', 'Network status'), item('exit', 'Exit')], { subtitle: config?.admissions === false ? (config.privateOwnerEvaluation ? config.privateRehearsal ? 'Private two-account rehearsal and owner evaluation. Ordinary purchases are disabled.' : 'Private owner evaluation only. Ordinary purchases are disabled.' : 'This network has marketplace admissions disabled.') : 'Your installation is separate from other AdRouter clients.' });
         if (!selection || selection === 'exit') return;
-        if (selection === 'profiles') await attempt(selectProfile);
+        if(selection==='account')await attempt(accountControls);
+        else if(selection==='installations')await attempt(manageInstallations);
+        else if (selection === 'profiles') await attempt(selectProfile);
         else if (selection === 'login') await attempt(() => signIn(store.profile === 'operator'));
         else if (selection === 'operatorLogin') await attempt(() => signIn(true));
         else await ui.page('Network status', [network.origin, `Marketplace: ${config ? (config.admissions ? 'accepting' : 'disabled') : 'unavailable'}`]);
         continue;
       }
-      const scope = network.local ? ['marketplace:buyer', 'marketplace:provider', 'marketplace:operator'] : String((await store.read())?.scope ?? '').split(' ');
-      await refreshIdentity(scope);
+      const scope = network.local ? ['marketplace:buyer', 'marketplace:provider', 'marketplace:operator'] : String((await readAuth())?.scope ?? '').split(' ');
+      await Promise.race([refreshIdentity(scope),new Promise(resolve=>setTimeout(resolve,100))]);
       if (['temporarily_unavailable','recovery_required','revoked'].includes(authState)) {
         const code = identityError instanceof ClientError ? identityError.code : 'network_unavailable';
         const selection = await ui.menu('Sign-in needs attention', [
           item('retry', 'Check sign-in again'),
           ...(authRecoveryCodes.has(code) ? [item('recover', 'Repair sign-in in browser', 'Keeps this installation and its provider/session bindings.')] : []),
-          ...(providersRunning.size ? [item('stopProviders', 'Stop running providers')] : [item('logout', 'Sign out and revoke installation')]),
+          item('account','Account and sign-in'),item('installations','Manage installations'),item('logout','Sign out'),...(providersRunning.size?[item('stopProviders','Stop running providers')]:[]),
           item('profiles', 'Choose profile'), item('saved', 'Saved coding work'), item('exit', 'Exit'),
         ], { lines: [code, loginHint(code) || 'The network or account is unavailable. Retry after connectivity or access is restored.', 'Your saved work and provider records are preserved.'] });
         if (!selection || selection === 'exit') return;
         await attempt(async () => {
           if (selection === 'recover') await signIn(scope.includes('marketplace:operator'), true);
-          else if (selection === 'logout' && await confirm('Sign out?', ['Revocation removes access. Use Repair sign-in to keep this installation’s bindings.', 'Saved work and accounting history remain.'])) { await ui.task('Signing out', () => network.logout()); clearIdentity(); }
+          else if(selection==='account')await accountControls();
+          else if(selection==='installations')await manageInstallations();
+          else if(selection==='logout')await signOut();
           else if (selection === 'profiles') await selectProfile();
           else if (selection === 'saved') await savedWork();
           else if (selection === 'stopProviders') { for (const provider of providersRunning.values()) await provider.stop({ trigger: 'auth_recovery' }); providersRunning.clear(); }
@@ -716,12 +754,8 @@ export async function runTui(options = {}, dependencies = {}) {
         else if (selection === 'providers') await providers(); else if (selection === 'sessions') await sessions();
         else if(selection==='saved')await savedWork();else if (selection === 'receipts') await receipts(); else if (selection === 'runtime') await runtimeSetup();
         else if (selection === 'admin') await admin();
-        else if (selection === 'account') {
-          actor('buyer'); const operator = !network.local && (await store.read())?.scope?.includes('marketplace:operator'); const profile = await get(operator ? '/admin/me' : scope.includes('marketplace:buyer') ? '/me' : '/providers/me');
-          const action = await ui.menu('Account', [item('logout', network.local ? 'Return to welcome' : 'Sign out and revoke installation'), item('back', 'Back')], { lines: [`Account: ${profile.userId}`, `Permissions: ${profile.roles.join(', ')}`, `Available: ${profile.account.available} · Held: ${profile.account.held} · Earned: ${profile.account.earned}`, 'All balances are test credits with no cash value.'] });
-          if (action === 'logout' && await confirm('Sign out?', ['Hosted sign-out revokes the installation before clearing local state.'])) {await ui.task('Signing out', () => network.logout());clearIdentity();}
-        } else if (selection === 'status') {
-          config = await get('/network/config', true);
+        else if(selection==='account')await accountControls(); else if (selection === 'status') {
+          config = await attempt(()=>get('/network/config', true));
           await ui.page('Network and implementation status', [network.origin, `Public admissions: ${config.admissions ? 'enabled' : 'disabled'}`, `Private buyer rehearsal: ${config.privateRehearsal ? 'enabled · hot listings can be reserved by the approved buyer' : 'disabled'}`, `Private owner evaluation: ${config.privateOwnerEvaluation ? 'enabled for designated owner' : 'disabled'}`, `Relay: ${words(config.relay)}`, `Buyer agent: ${words(config.agentExecution)}`, 'Provider: guest-only key entry; cold activation deadline 120 seconds.', 'Evaluation results remain provisional until every qualification check is verified. Reviewed export preserves host originals.', 'Runtime acceptance and actual provider acceptance are separate gates.']);
         }
       });

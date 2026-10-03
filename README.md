@@ -32,9 +32,10 @@ installation ID, exact permissions, saved configuration and workload bindings.
 Stop running work through its normal checkpoint/Stop controls before repair.
 
 An uncertain refresh token is never replayed. Temporary failures can be retried;
-local sign-in is retained until revocation is confirmed. Sign-out revokes access
-permanently and preserves saved work and the selected network. A revoked
-installation cannot be recovered; new enrollment needs new provider setup.
+Sign-out clears usable local authentication even while offline and attempts bounded
+key-proven revocation independently. If unconfirmed, Manage installations opens Safari
+to finish revocation after browser sign-in. A replacement installation can reclaim
+an account-owned paused connection without resetting consumption or liabilities.
 
 ## Separate profiles
 
@@ -85,7 +86,8 @@ Cold operation keeps control online. A reservation raises an activation choice i
 the provider dashboard with a 120-second deadline. Launch the guest and enter the
 key before that deadline. Expiry releases credits without an inference charge.
 Keep the foreground TUI open. Back returns to its menu while serving continues;
-Stop or Exit tears down owned guests. A later start requires key entry again.
+Stop or Exit tears down owned guests. Version-2 connections retain their credential
+disk; a freshly authorized restart reuses it. Version-1 connections remain memory-only.
 
 Paused listings expose **Delete paused listing** in My provider listings. Cancel
 is the default; confirmed deletion is permanent and cannot be republished. All
@@ -248,8 +250,12 @@ entitlement; changing thinking is not an authentication fix. Use the checklist i
 New authorized-API setup uses the Router projection of pinned `@earendil-works/pi-ai@1.0.0`
 (revision `a13d35a742c6ef8462812a28fbe1d8c8b7431c32`). Select a metered provider and one or
 more models, then shared cumulative token/test-credit limits and per-request output limits.
-Only provider-required public configuration fields are collected. Keys are entered in the
-isolated guest and remain in memory. Preparing key entry does not publish or serve.
+Choose Built-in provider or Custom API, explicitly select offered models, and set shared
+AdRouter credit/token limits. Compatible custom endpoints use supported Pi adapters; manual
+model definitions work without discovery. Advanced settings contain URL, adapter, secret
+header names, compatibility overrides and credit rates. Header values and API keys are
+entered only in the guest and stored on its account/connection-specific disk. Saving
+performs no inference. Metadata-only discovery never selects or publishes extra models.
 
 Start runs bounded streaming, tool and final-usage checks under both shared allowances and
 the independent upstream spending guard, then publishes immutable model listings. One node
@@ -259,10 +265,18 @@ reset consumed/outstanding allowances. Unknown checks and inference remain reser
 teardown releases execution only. Simulated USD is informational and uses versioned catalog
 prices separately from test credits and upstream spending authority.
 
-Native `pi_native_v1` / `pi_context_v1` negotiation retains native tool data and opaque reasoning
+Native `pi_native_v2` / `pi_context_v1` negotiation retains native tool data and opaque reasoning
 signatures through a replay whitelist. Legacy single-model/self-hosted connections remain
 supported. Older clients receive a compatibility error when attempting a native connection.
-The new flow excludes subscription/coding-plan capacity, OAuth, IAM and custom gateways.
+Version-1 records remain readable. Custom gateways are supported through the six
+implemented Pi protocols; a different protocol requires its adapter. Subscription
+capacity, OAuth and IAM supply remain excluded.
+
+Account, Sign in, Repair, Sign out, Switch profile and Manage installations remain
+accessible without a successful profile request. Sign-out locks the retained vault;
+Disconnect API deletes guest credentials and disables serving without claiming upstream
+key revocation. Neither login nor recovery automatically starts serving. Host diagnostics
+and exports never include the credential disk.
 
 Build the provider payload with `npm run provider:build`; it copies the locked dependency
 closure and MIT attribution, and records file hashes. `verifyProviderRuntime()` checks installed

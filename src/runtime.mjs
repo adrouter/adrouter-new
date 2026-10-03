@@ -76,7 +76,7 @@ export class SandboxRuntime {
     }
   }
 
-  async create({ image, copyDirectory, hostPorts = [], endpoint, memoryMiB = 256, durationSeconds = 180, continuous = false, signal, rootDiskGiB = 1 }) {
+  async create({ image, copyDirectory, hostPorts = [], endpoint, memoryMiB = 256, durationSeconds = 180, continuous = false, signal, rootDiskGiB = 1, credentialVolume }) {
     if (!this.verified) throw new RuntimeError('runtime_not_verified');
     if (!/^([a-z0-9./:_-]+)@sha256:[a-f0-9]{64}$/.test(image)) throw new RuntimeError('immutable_image_required');
     if (!Number.isInteger(memoryMiB) || memoryMiB < 128 || memoryMiB > 2048) throw new RuntimeError('memory_limit_invalid');
@@ -93,11 +93,12 @@ export class SandboxRuntime {
       // The multi-tenant public-only floor disallows the intended local broker.
       // A local connector uses single-tenant with deny-all plus exact broker
       // ports. Offline evaluator guests retain the multi-tenant floor.
-      '--security', 'restricted', '--deployment-profile', hostPorts.length ? 'single-tenant' : 'multi-tenant', '--no-net',
+      '--security', 'restricted', '--deployment-profile', hostPorts.length||credentialVolume ? 'single-tenant' : 'multi-tenant', '--no-net',
       '--root-disk', `${rootDiskGiB}G`, ...(continuous ? [] : ['--max-duration', `${durationSeconds}s`]), '--idle-timeout', '60s',
       '--max-tcp-connections', '8', '--max-udp-connections', '1'];
     for (const port of hostPorts) args.push('--net-rule', `allow@host:tcp:${port}`);
     if (upstream) args.push('--net-rule', `allow@${upstream.hostname}:tcp:${upstream.port || 443}`, '--net-rule', 'allow@dns');
+    if(credentialVolume){if(this.credentialVolumes?.get(credentialVolume.name)!==credentialVolume)throw new RuntimeError('credential_volume_not_verified');args.push('--mount-disk',`${credentialVolume.path}:/credentials`);}
     if (copyDirectory) {
       if (!isAbsolute(copyDirectory) || copyDirectory.includes(':') || !(await lstat(copyDirectory)).isDirectory()) throw new RuntimeError('workspace_copy_invalid');
       // Caller supplies only a sanitized disposable import, never the original tree.

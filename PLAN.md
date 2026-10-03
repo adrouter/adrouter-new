@@ -1,3 +1,75 @@
+# Plan: ADRv2 connection and account specification — 3 October 2026
+
+## Goal
+Implement the approved provider API/model/account specification and deliver the private Mac buyer/provider flow. Scope in this repository: Connection setup, guest credential volumes, account controls, and installed acceptance.
+
+## Context
+User approved the attached implementation plan. Canonical starting inputs are Router 3b3964f07653c6cc9f17c3c1cedf8d284eddfa94 and client ff1a11816527783f7d72ee84eb60e9c84bc09275. Isolated canonical clones preserve original dirty verification work. Earlier plans below remain historical intent.
+
+## Research Summary
+Pi models/providers documentation inspected; implementation must use pinned Pi 1.0.0 executable interfaces. Existing pi_native_v1 has catalog-only selection and memory-only credentials. Production reauthorize needs body digest wiring. No dependency upgrade or SQL migration is planned.
+
+## Constraints
+Preserve guest-only secrets, paused-by-default recovery, shared liabilities, uncertain outcomes, role separation, coding approvals, runtime pins, prior artifacts, and immutable versions. Never replay unknown inference or initialize unknown historical usage to zero. Contract generation follows a committed Router contract. All five platform preflight checks passed after operator login; Router protection endpoints remain plan-limited 403.
+
+## Out of Scope
+Public npm publication, promotion, Linux/KVM qualification, database mutations/reset, Pages upload, unrelated cleanup, protection and access-policy changes.
+
+## Reversibility
+Add version-aware contracts and owner-checked lifecycle operations. Retain v1 readers and prior installs. Deploy only clean committed artifacts and replace the existing sole-relay Machine in place.
+
+## Step A: Contracts, accounting, and authentication
+### Status
+`in_progress`
+### Tasks
+- [ ] Implement expanded pi_native_v2 configuration and strict model/endpoint/revision bindings.
+- [ ] Preserve transactional cumulative allowance admission, expose remaining values, invalidate stale qualification/quotes.
+- [ ] Add paused owner rebind/disconnect, fence old runs, and production signed-body recovery tests.
+### Acceptance Criteria
+- [ ] Custom endpoints work without vendor allowlists; unknown prices/usage fail accurately.
+- [ ] Substitutions, cross-account access, replay and tampering fail; liabilities survive recovery.
+### Validation Results
+Router full typecheck/test/build and OpenAPI validation passed; production app authentication passed with all three roles using a full canonical disposable schema. 76 marketplace tests and contract validation passed. Hosted acceptance remains pending.
+
+## Step B: Client connection and account lifecycle
+### Status
+`todo`
+### Tasks
+- [ ] Expose built-in/custom configuration, explicit model selection and advanced metadata settings.
+- [ ] Persist credentials only on verified account/connection guest disk volumes; Stop retains, logout locks, disconnect deletes guest credential.
+- [ ] Make account/repair/installation controls available offline; serialize atomic auth state and recover orphaned locks.
+- [ ] Extend staged acceptance with exact new artifact identities.
+### Acceptance Criteria
+- [ ] Restart reuses credentials only after fresh owner/installation authorization, without automatically serving.
+- [ ] Offline logout clears usable local state and accurately reports unconfirmed revocation.
+### Validation Results
+Client check passed 598 tests. Pinned coding runtime rebuilt with retained suites. Actual guest disk test passed synthetic persistence, owner denial, replacement binding and Disconnect. Installed artifact/PTY and hosted/live gates remain pending.
+
+## Step C: Final verification and cleanup
+### Status
+`todo`
+### Tasks
+- [ ] Review complete diffs and preserve unrelated verification work.
+- [ ] Run owning full checks, freeze new private artifact, verify hashes and isolated installation.
+- [ ] Recheck platform access, deploy clean Router image with scan and in-place sole-relay replacement, preserve Pages.
+- [ ] Run hosted auth, full 660-second Mac lifecycle and bounded DeepSeek flow; switch launcher after acceptance.
+- [ ] Record synthetic, hosted and real-provider outcomes separately; remove only task-created temporary debugging files.
+### Acceptance Criteria
+- [ ] Installed Mac and hosted Router pass live buyer/provider coding, reviewed apply, Stop/restart and second session.
+### Validation Results
+Not run. Existing alpha.31 evidence cannot certify new bytes.
+
+## Follow-up Work
+Operator guest-only DeepSeek key entry and any sequential Safari approvals occur after preparation. Calculate exposure within existing limits first.
+
+## Decision Log
+| Date | Decision | Rationale | Impact |
+| --- | --- | --- | --- |
+| 2026-10-03 | Isolated canonical clones and additive implementation | Preserve dirty verification work and existing plans | Exact clean release inputs |
+| 2026-10-03 | Preserve Pages abfaca46-e61c-4487-9360-8d6364e734f8 and migration 20261003025031 | Existing UI flows and JSONB suffice | No Pages/database mutation |
+
+---
+
 # Plan: Ghostty approval keyboard recovery — 1 October 2026
 
 ## Goal

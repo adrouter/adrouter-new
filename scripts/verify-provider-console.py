@@ -5,7 +5,7 @@ environment = {k: os.environ[k] for k in ['PATH', 'ADR_ACCEPTANCE_RUNTIME_PATHS'
 process = subprocess.Popen(['node', 'scripts/verify-provider-console.mjs'], stdin=slave, stdout=slave, stderr=slave, env=environment, start_new_session=True)
 before = termios.tcgetattr(slave)
 synthetic = b'synthetic-acceptance-key-123456789'
-captured = b''; sent_key = False; sent_return = False
+captured = b''; sent_key = False; sent_return = False; returns = 0
 deadline = time.monotonic() + 180
 try:
     while time.monotonic() < deadline:
@@ -16,11 +16,14 @@ try:
             captured += chunk
             if b'Provider API key (hidden' in captured and not sent_key:
                 os.write(master, b'\x1b[200~'+synthetic+b'\n\x1b[201~\r'); sent_key = True
-            if b'Guest is ready. Press Ctrl+D' in captured and not sent_return:
-                os.write(master, b'\x04'); sent_return = True
+            if captured.count(b'Guest is ready. Press Ctrl+D') > returns:
+                os.write(master, b'\x04'); sent_return = True; returns += 1
         if process.poll() is not None: break
     assert process.wait(timeout=3) == 0, 'synthetic_console_process_failed'
     assert sent_key and sent_return, 'guest_console_handoff_missing'
+    if environment.get('ADR_NATIVE_PI_ACCEPTANCE') == '2':
+        assert returns == 2, 'restart_handoff_missing'
+        assert captured.count(b'Provider API key (hidden') == 1, 'restart_did_not_reuse_credential'
     assert termios.tcgetattr(slave) == before, 'terminal_modes_not_restored'
     assert synthetic not in captured, 'synthetic_key_was_echoed'
     assert b'synthetic_guest_console_and_teardown_passed' in captured, 'teardown_not_verified'

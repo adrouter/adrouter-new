@@ -2,11 +2,11 @@ export class ProviderSetupError extends Error {
   constructor(code) { super(code); this.code = code; }
 }
 
-export function readHiddenKey(input = process.stdin, output = process.stdout) {
+export function readHiddenKey(input = process.stdin, output = process.stdout, prompt = 'Provider API key (hidden; memory only; Ctrl+C cancels): ') {
   if (!input.isTTY || !output.isTTY || typeof input.setRawMode !== 'function') {
     throw new ProviderSetupError('interactive_terminal_required');
   }
-  output.write('Provider API key (hidden; memory only; Ctrl+C cancels): ');
+  output.write(prompt);
   return new Promise((resolve, reject) => {
     let value = '', escape = '', paste = '', pasting = false, finished = false;
     let escapeTimer;

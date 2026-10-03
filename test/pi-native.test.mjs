@@ -5,19 +5,36 @@ import { nativeLogin,nativeInference,NativeUsageEvidence } from '../src/pi-nativ
 import { piCatalog } from '../src/generated/pi-catalog.mjs';
 import { piMessage,piContext } from '../src/pi-context.mjs';
 import { restrictedPiFetch } from '../src/pi-transport.mjs';
-const key='synthetic-fixture-key';
+import { catalogMatrix } from './helpers/pi-matrix.mjs';
+const key='sk-synthetic-fixture-key';
 const sse=events=>events.map(e=>typeof e==='string'?`data: ${e}\n\n`:`${e.type?.startsWith('message_')||e.type?.startsWith('content_block_')?'event: '+e.type+'\n':''}data: ${JSON.stringify(e)}\n\n`).join('');
 const completion=[{id:'synthetic',choices:[{index:0,delta:{role:'assistant',content:'ready'},finish_reason:null}]},{id:'synthetic',choices:[{index:0,delta:{},finish_reason:'stop'}],usage:{prompt_tokens:10,completion_tokens:2,total_tokens:12}},'[DONE]'];
 const anthropic=[{type:'message_start',message:{id:'msg_fixture',type:'message',role:'assistant',content:[],usage:{input_tokens:10,output_tokens:0}}},{type:'content_block_start',index:0,content_block:{type:'text',text:''}},{type:'content_block_delta',index:0,delta:{type:'text_delta',text:'ready'}},{type:'content_block_stop',index:0},{type:'message_delta',delta:{stop_reason:'end_turn'},usage:{output_tokens:2}},{type:'message_stop'}];
 const responses=[{type:'response.created',response:{id:'resp_fixture',status:'in_progress'}},{type:'response.output_item.added',output_index:0,item:{type:'message',id:'msg_fixture',role:'assistant',content:[]}},{type:'response.content_part.added',output_index:0,content_index:0,part:{type:'output_text',text:'',annotations:[]}},{type:'response.output_text.delta',output_index:0,content_index:0,delta:'ready'},{type:'response.output_text.done',output_index:0,content_index:0,text:'ready'},{type:'response.output_item.done',output_index:0,item:{type:'message',id:'msg_fixture',role:'assistant',content:[{type:'output_text',text:'ready',annotations:[]}]}},{type:'response.completed',response:{id:'resp_fixture',status:'completed',usage:{input_tokens:10,output_tokens:2,total_tokens:12}}}];
-const fixtures=[['deepseek','openai-completions',completion],['openai','openai-responses',responses],['azure-openai-responses','azure-openai-responses',responses],['anthropic','anthropic-messages',anthropic],['google','google-generative-ai',[{candidates:[{content:{role:'model',parts:[{text:'ready'}]},finishReason:'STOP',index:0}],usageMetadata:{promptTokenCount:10,candidatesTokenCount:2,totalTokenCount:12}}]],['mistral','mistral-conversations',completion]];
-function connection(provider,api){const m=piCatalog.providers.find(p=>p.id===provider).models.find(m=>m.api===api&&!m.unavailableReason);return {provider,fields:provider==='azure-openai-responses'?{AZURE_OPENAI_RESOURCE_NAME:'fixture'}:{},maxOutputTokens:512,nativeModels:[{model:m.id,api,endpoint:m.baseUrl}],model:m.id};}
+const google=[{candidates:[{content:{role:'model',parts:[{text:'ready'}]},finishReason:'STOP',index:0}],usageMetadata:{promptTokenCount:10,candidatesTokenCount:2,totalTokenCount:12}}];
+const familyEvents={'openai-completions':completion,'openai-responses':responses,'azure-openai-responses':responses,'anthropic-messages':anthropic,'google-generative-ai':google,'mistral-conversations':completion};
+const matrix=catalogMatrix(piCatalog);
+function connection(provider,api,entry){const c=entry??matrix.find(c=>c.provider===provider&&c.api===api);if(!c)throw Error('matrix_model_missing');return {provider,fields:c.fields,maxOutputTokens:512,nativeModels:[{model:c.model,api,endpoint:c.descriptor.baseUrl}],model:c.model};}
+// Only this synthetic transport may dispatch. A factory that bypasses it fails.
+const realFetch=globalThis.fetch;globalThis.fetch=async()=>{throw Error('unexpected_network_access');};
+test.after(()=>{globalThis.fetch=realFetch;});
+function checkedFetch(n,handler){return async(input,init={})=>{
+ const req=input instanceof Request?input:new Request(input,init),url=new URL(req.url),c=matrix.find(c=>c.provider===n.provider&&c.model===n.model);
+ if(n.provider==='azure-openai-responses'){assert.equal(url.hostname,'fixture-resource.openai.azure.com');assert.match(url.pathname,/responses/);}
+ else if(n.provider==='cloudflare-workers-ai'){assert.equal(url.hostname,'api.cloudflare.com');assert.ok(url.pathname.includes('a'.repeat(32)));}
+ else {const base=new URL(c.descriptor.baseUrl);assert.equal(url.origin,base.origin);assert.ok(url.pathname.startsWith(base.pathname.replace(/\/$/,'')));}
+ assert.equal(req.method,'POST');const headers=new Headers(init.headers??req.headers);
+ assert.ok([...headers].some(([k,v])=>/authorization|api-key/.test(k)&&v.includes(key))||url.searchParams.get('key')===key);
+ return handler(req.url,{...init,headers,body:init.body??await req.text()});
+};}
+// Deliberately fragment every event across transport chunks, including JSON arguments.
+function streamResponse(events){const bytes=new TextEncoder().encode(sse(events));let offset=0;return new Response(new ReadableStream({pull(controller){if(offset===bytes.length){controller.close();return;}const end=Math.min(bytes.length,offset+17);controller.enqueue(bytes.slice(offset,end));offset=end;}}),{headers:{'content-type':'text/event-stream'}});}
 function frame(n){return {requestId:randomUUID(),model:n.model,provider:n.provider,api:n.nativeModels[0].api,messageFormat:'pi_context_v1',messages:[{role:'user',content:'Say ready.',timestamp:0}],tools:[],maxOutputTokens:512,thinking:false,upstreamBudget:{inputBound:8192,reservedMicrousd:'1000000',inputMicrousdPerMillion:'1000000',outputMicrousdPerMillion:'1000000'}};}
-for(const [provider,api,events]of fixtures)test(`${api}: native auth, serialization, streaming, explicit usage and no retries`,async()=>{
- const n=connection(provider,api),auth=await nativeLogin(n,key),calls=[];
- const fetcher=async(input,init)=>{calls.push({url:String(input),body:JSON.parse(init.body),headers:new Headers(init.headers)});return new Response(sse(events),{headers:{'content-type':'text/event-stream'}});};
+for(const c of matrix)test(`${c.id}/text`,async()=>{
+ const {provider,api}=c,events=familyEvents[api],n=connection(provider,api,c),auth=await nativeLogin(n,key),calls=[];
+ const fetcher=async(input,init)=>{const body=JSON.parse(init.body);assert.equal(body.model??body.config?.model??n.model,n.model);const ceiling=body.max_tokens??body.max_completion_tokens??body.max_output_tokens??body.generationConfig?.maxOutputTokens;assert.equal(ceiling,512);calls.push({url:String(input),body,headers:new Headers(init.headers)});return streamResponse(events);};
  try {
-  const result=await nativeInference(n,auth,frame(n),AbortSignal.timeout(5000),()=>{},()=>{},fetcher);
+  const result=await nativeInference(n,auth,frame(n),AbortSignal.timeout(5000),()=>{},()=>{},checkedFetch(n,fetcher));
   assert.equal(result.text,'ready');assert.equal(result.inputTokens,10);assert.equal(result.outputTokens,2);assert.equal(calls.length,1);assert.equal(JSON.stringify(result).includes(key),false);
   assert.ok([...calls[0].headers].some(([k,v])=>/authorization|api-key/.test(k)&&v.includes(key))||calls[0].url.includes(key));
   let failures=0;await assert.rejects(nativeInference(n,auth,frame(n),AbortSignal.timeout(5000),()=>{},()=>{},async()=>{failures++;return new Response('{"error":{"message":"synthetic denied"}}',{status:429,headers:{'content-type':'application/json'}});}));assert.equal(failures,1);
@@ -37,17 +54,19 @@ test('catalog excludes subscription/IAM/custom credential sources and blocked de
  for(const url of ['http://api.example.test/v1/chat','https://evil.test/v1/chat','https://api.example.test/not-approved'])await assert.rejects(transport(url,{method:'POST',body:'{}'}),/destination/);
 });
 
-const toolCompletion=[{id:'synthetic',choices:[{index:0,delta:{tool_calls:[{index:0,id:'call_fixture',type:'function',function:{name:'adr_probe',arguments:'{"value":"ready"}'}}]},finish_reason:null}]},{id:'synthetic',choices:[{index:0,delta:{},finish_reason:'tool_calls'}],usage:{prompt_tokens:10,completion_tokens:2,total_tokens:12}},'[DONE]'];
-const toolAnthropic=[anthropic[0],{type:'content_block_start',index:0,content_block:{type:'tool_use',id:'call_fixture',name:'adr_probe',input:{}}},{type:'content_block_delta',index:0,delta:{type:'input_json_delta',partial_json:'{"value":"ready"}'}},{type:'content_block_stop',index:0},{type:'message_delta',delta:{stop_reason:'tool_use'},usage:{output_tokens:2}},{type:'message_stop'}];
-const toolResponses=[responses[0],{type:'response.output_item.added',output_index:0,item:{type:'function_call',id:'fc_fixture',call_id:'call_fixture',name:'adr_probe',arguments:''}},{type:'response.function_call_arguments.delta',output_index:0,delta:'{"value":"ready"}'},{type:'response.output_item.done',output_index:0,item:{type:'function_call',id:'fc_fixture',call_id:'call_fixture',name:'adr_probe',arguments:'{"value":"ready"}'}},responses.at(-1)];
-for(const [provider,api,textEvents]of fixtures)test(`${api}: native tool round trip and cancellation without replay`,async()=>{
- const n=connection(provider,api),auth=await nativeLogin(n,key),request=frame(n);
+const toolCompletion=[{id:'synthetic',choices:[{index:0,delta:{tool_calls:[{index:0,id:'call_fixture',type:'function',function:{name:'adr_probe',arguments:'{"value":'}}]},finish_reason:null}]},{id:'synthetic',choices:[{index:0,delta:{tool_calls:[{index:0,function:{arguments:'"ready"}'}}]},finish_reason:null}]},{id:'synthetic',choices:[{index:0,delta:{},finish_reason:'tool_calls'}],usage:{prompt_tokens:10,completion_tokens:2,total_tokens:12}},'[DONE]'];
+const toolAnthropic=[anthropic[0],{type:'content_block_start',index:0,content_block:{type:'tool_use',id:'call_fixture',name:'adr_probe',input:{}}},{type:'content_block_delta',index:0,delta:{type:'input_json_delta',partial_json:'{"value":'}},{type:'content_block_delta',index:0,delta:{type:'input_json_delta',partial_json:'"ready"}'}},{type:'content_block_stop',index:0},{type:'message_delta',delta:{stop_reason:'tool_use'},usage:{output_tokens:2}},{type:'message_stop'}];
+const toolResponses=[responses[0],{type:'response.output_item.added',output_index:0,item:{type:'function_call',id:'fc_fixture',call_id:'call_fixture',name:'adr_probe',arguments:''}},{type:'response.function_call_arguments.delta',output_index:0,delta:'{"value":'},{type:'response.function_call_arguments.delta',output_index:0,delta:'"ready"}'},{type:'response.output_item.done',output_index:0,item:{type:'function_call',id:'fc_fixture',call_id:'call_fixture',name:'adr_probe',arguments:'{"value":"ready"}'}},responses.at(-1)];
+for(const c of matrix)test(`${c.id}/tools`,async()=>{
+ const {provider,api}=c,textEvents=familyEvents[api],n=connection(provider,api,c),auth=await nativeLogin(n,key),request=frame(n);
  request.qualification='tool';request.tools=[{type:'function',function:{name:'adr_probe',description:'Synthetic probe',parameters:{type:'object',properties:{value:{type:'string'}},required:['value']}}}];
  const toolEvents=api==='anthropic-messages'?toolAnthropic:api.includes('responses')?toolResponses:api==='google-generative-ai'?[{candidates:[{content:{role:'model',parts:[{functionCall:{id:'call_fixture',name:'adr_probe',args:{value:'ready'}},thoughtSignature:'c3ludGhldGljLXNpZ25hdHVyZQ=='}]},finishReason:'STOP',index:0}],usageMetadata:{promptTokenCount:10,candidatesTokenCount:2,totalTokenCount:12}}]:toolCompletion;
  try{
-  let calls=0;const first=await nativeInference(n,auth,request,AbortSignal.timeout(5000),()=>{},()=>{},async()=>{calls++;return new Response(sse(toolEvents),{headers:{'content-type':'text/event-stream'}});});assert.equal(first.toolCalls.length,1);assert.deepEqual(JSON.parse(first.toolCalls[0].function.arguments),{value:'ready'});
+  let calls=0;const first=await nativeInference(n,auth,request,AbortSignal.timeout(5000),()=>{},()=>{},checkedFetch(n,async()=>{calls++;return streamResponse(toolEvents);}));assert.equal(first.toolCalls.length,1);assert.deepEqual(JSON.parse(first.toolCalls[0].function.arguments),{value:'ready'});
   const second={...request,qualification:'roundtrip',requestId:randomUUID(),messages:[...request.messages,first.nativeMessage,{role:'toolResult',toolCallId:first.toolCalls[0].id,toolName:'adr_probe',content:[{type:'text',text:'ready'}],isError:false,timestamp:0}]};
-  await nativeInference(n,auth,second,AbortSignal.timeout(5000),()=>{},()=>{},async(_input,init)=>{calls++;const body=JSON.parse(init.body);assert.ok(JSON.stringify(body).includes('ready'));if(api==='google-generative-ai')assert.ok(JSON.stringify(body).includes('c3ludGhldGljLXNpZ25hdHVyZQ=='));assert.equal(JSON.stringify(body).includes('cost'),false);return new Response(sse(textEvents),{headers:{'content-type':'text/event-stream'}});});assert.equal(calls,2);
+  await nativeInference(n,auth,second,AbortSignal.timeout(5000),()=>{},()=>{},checkedFetch(n,async(_input,init)=>{calls++;const body=JSON.parse(init.body);assert.ok(JSON.stringify(body).includes('ready'));assert.ok(JSON.stringify(body).includes('adr_probe'));if(api==='anthropic-messages')assert.ok(body.messages.some(m=>Array.isArray(m.content)&&m.content.some(c=>c.type==='tool_result')));else if(api.includes('responses'))assert.ok(body.input.some(m=>m.type==='function_call_output'));else if(api==='google-generative-ai')assert.ok(body.contents.some(m=>m.parts?.some(p=>p.functionResponse)));else assert.ok(body.messages.some(m=>m.role==='tool'));if(api==='google-generative-ai')assert.ok(JSON.stringify(body).includes('c3ludGhldGljLXNpZ25hdHVyZQ=='));assert.equal(JSON.stringify(body).includes('cost'),false);return streamResponse(textEvents);}));assert.equal(calls,2);
+  const third={...request,qualification:undefined,requestId:randomUUID(),messages:[...second.messages,{role:'user',content:'A subsequent turn.',timestamp:1}]};
+  const later=await nativeInference(n,auth,third,AbortSignal.timeout(5000),()=>{},()=>{},checkedFetch(n,async()=>{calls++;return streamResponse(textEvents);}));assert.equal(later.text,'ready');assert.equal(calls,3);
   const abort=new AbortController();abort.abort();let cancelledCalls=0;await assert.rejects(nativeInference(n,auth,request,abort.signal,()=>{},()=>{},async()=>{cancelledCalls++;throw Error('unexpected');}));assert.equal(cancelledCalls,0);
  }finally{await auth.close();}
 });
@@ -55,8 +74,42 @@ for(const [provider,api,textEvents]of fixtures)test(`${api}: native tool round t
 
 test('startup qualification rejects a native call that violates the declared tool schema',async()=>{
  const n=connection('deepseek','openai-completions'),auth=await nativeLogin(n,key),request=frame(n);request.tools=[{type:'function',function:{name:'adr_probe',description:'probe',parameters:{type:'object',properties:{value:{type:'string'}},required:['value']}}}];
- const malformed=structuredClone(toolCompletion);malformed[0].choices[0].delta.tool_calls[0].function.arguments='{"value":42}';
+ const malformed=structuredClone(toolCompletion);malformed.splice(1,1);malformed[0].choices[0].delta.tool_calls[0].function.arguments='{"value":42}';
  try{await assert.rejects(nativeInference(n,auth,request,AbortSignal.timeout(5000),()=>{},()=>{},async()=>new Response(sse(malformed),{headers:{'content-type':'text/event-stream'}})),/upstream_malformed_response/);}finally{await auth.close();}
 });
 
 test('API-key login rejects subscription tokens before native adapter resolution',async()=>{await assert.rejects(nativeLogin(connection('anthropic','anthropic-messages'),'sk-ant-oat-synthetic-not-valid'),/metered_api_key_required/);});
+
+for(const api of Object.keys(familyEvents))test(`${api}: failure, timeout, incomplete and inconsistent usage cannot replay`,async()=>{
+ const c=matrix.find(c=>c.api===api),n=connection(c.provider,api,c),auth=await nativeLogin(n,key),request=frame(n);
+ try{
+  for(const status of [401,403,429]){let calls=0;await assert.rejects(nativeInference(n,auth,request,AbortSignal.timeout(5000),()=>{},()=>{},checkedFetch(n,async()=>{calls++;return new Response('{"error":{"message":"synthetic rejection"}}',{status,headers:{'content-type':'application/json'}});})));assert.equal(calls,1);}
+  let calls=0;const abort=new AbortController();
+  await assert.rejects(nativeInference(n,auth,request,abort.signal,()=>{},()=>{},checkedFetch(n,async()=>{calls++;abort.abort();throw Error('synthetic timeout');})));assert.equal(calls,1);
+  await assert.rejects(nativeInference(n,auth,request,AbortSignal.timeout(5000),()=>{},()=>{},checkedFetch(n,async()=>streamResponse([]))));
+  const usage=new NativeUsageEvidence(api);for(const e of familyEvents[api])if(typeof e==='object')usage.observe(e);
+  assert.throws(()=>usage.normalize({input:11,output:2,cacheRead:0,cacheWrite:0}),/invalid/);
+  await assert.rejects(nativeInference(n,auth,{...request,model:'unavailable-fixture'},AbortSignal.timeout(5000),()=>{},()=>{},async()=>{throw Error('must_not_dispatch');}),/binding/);
+  await assert.rejects(nativeInference(n,auth,{...request,messageFormat:'wrong'},AbortSignal.timeout(5000),()=>{},()=>{},async()=>{throw Error('must_not_dispatch');}),/binding/);
+ }finally{await auth.close();}
+});
+test('native provider fallback is rejected even when its stream and usage succeed',async()=>{
+ const n=connection('deepseek','openai-completions'),auth=await nativeLogin(n,key),events=structuredClone(completion);events[0].model='unapproved-fallback';
+ try{await assert.rejects(nativeInference(n,auth,frame(n),AbortSignal.timeout(5000),()=>{},()=>{},checkedFetch(n,async()=>streamResponse(events))),/fallback_rejected/);}finally{await auth.close();}
+});
+
+test('Anthropic streamed reasoning signature survives native history and tool continuation',async()=>{
+ const c=matrix.find(c=>c.provider==='anthropic'&&c.descriptor.reasoning),n=connection(c.provider,c.api,c);n.maxOutputTokens=4096;
+ const auth=await nativeLogin(n,key),request={...frame(n),thinking:true,maxOutputTokens:4096};
+ const events=[anthropic[0],{type:'content_block_start',index:0,content_block:{type:'thinking',thinking:'',signature:''}},{type:'content_block_delta',index:0,delta:{type:'thinking_delta',thinking:'Synthetic reasoning.'}},{type:'content_block_delta',index:0,delta:{type:'signature_delta',signature:'opaque-fixture-signature'}},{type:'content_block_stop',index:0},...anthropic.slice(1).map(e=>({...e,...('index'in e?{index:1}:{})}))];
+ try{
+  const first=await nativeInference(n,auth,request,AbortSignal.timeout(5000),()=>{},()=>{},checkedFetch(n,async()=>streamResponse(events)));
+  assert.equal(first.nativeMessage.content.find(c=>c.type==='thinking').thinkingSignature,'opaque-fixture-signature');
+  const next={...request,requestId:randomUUID(),messages:[...request.messages,first.nativeMessage,{role:'user',content:'Continue.',timestamp:1}]};
+  await nativeInference(n,auth,next,AbortSignal.timeout(5000),()=>{},()=>{},checkedFetch(n,async(_url,init)=>{assert.ok(JSON.stringify(JSON.parse(init.body)).includes('opaque-fixture-signature'));return streamResponse(anthropic);}));
+ }finally{await auth.close();}
+});
+test('DeepSeek streamed cache and reasoning usage are explicit and counted once',async()=>{
+ const n=connection('deepseek','openai-completions'),auth=await nativeLogin(n,key),events=[{id:'synthetic',choices:[{index:0,delta:{reasoning_content:'Synthetic reasoning.',content:'ready'},finish_reason:null}]},{id:'synthetic',choices:[{index:0,delta:{},finish_reason:'stop'}],usage:{prompt_tokens:10,completion_tokens:5,total_tokens:15,prompt_tokens_details:{cached_tokens:4},completion_tokens_details:{reasoning_tokens:3}}},'[DONE]'];
+ try{const result=await nativeInference(n,auth,{...frame(n),thinking:true},AbortSignal.timeout(5000),()=>{},()=>{},checkedFetch(n,async()=>streamResponse(events)));assert.equal(result.inputTokens,10);assert.equal(result.outputTokens,5);assert.equal(result.nativeUsage.cacheRead,4);assert.equal(result.nativeUsage.reasoning,3);}finally{await auth.close();}
+});

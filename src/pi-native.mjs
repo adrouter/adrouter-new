@@ -1,29 +1,50 @@
 import Ajv from 'ajv';
 // Imported only in the isolated provider guest (or synthetic fixture tests).
-import { createModels, InMemoryCredentialStore, clampThinkingLevel } from '@earendil-works/pi-ai';
+import { createModels, createProvider, InMemoryCredentialStore, clampThinkingLevel } from '@earendil-works/pi-ai';
 import { resolveGoogleThinkingLevel, usesGoogleThinkingLevel, toGoogleThinkingLevel } from '@earendil-works/pi-ai/api/google-shared';
 import { piCatalog } from './generated/pi-catalog.mjs';
 import { piMessage, piDisplay } from './pi-context.mjs';
 import { restrictedPiFetch } from './pi-transport.mjs';
 const fail=code=>Object.assign(Error(code),{code});
 const integer=n=>Number.isSafeInteger(n)&&n>=0;
-export async function nativeLogin(node,key,signal) {
-  const p=piCatalog.providers.find(p=>p.id===node.provider);if(!p)throw fail('pi_provider_not_supported');
-  if(typeof key!=='string'||!/^[\x20-\x7e]{1,4096}$/.test(key))throw fail('credential_format_invalid');
-  // Pi's Anthropic adapter detects this token family even through api_key auth.
-  // Never let a pasted subscription token select that implicit OAuth path.
-  if(key.includes('sk-ant-oat'))throw fail('metered_api_key_required');
-  const module=await import('@earendil-works/pi-ai/providers/'+p.module),provider=module[p.factory]();
-  const credentials=new InMemoryCredentialStore();
+const adapterFactories={'openai-completions':'openAICompletionsApi','openai-responses':'openAIResponsesApi','anthropic-messages':'anthropicMessagesApi','google-generative-ai':'googleGenerativeAIApi','mistral-conversations':'mistralConversationsApi','azure-openai-responses':'azureOpenAIResponsesApi'};
+export async function nativeLogin(node,key,signal,{credentials=new InMemoryCredentialStore(),headers={}}={}) {
+  const p=piCatalog.providers.find(p=>p.id===node.provider);
+  if(!p&&node.connectorProtocol!=='pi_native_v2')throw fail('pi_provider_not_supported');
+  if(key!==undefined&&(typeof key!=='string'||!/^[\x20-\x7e]{1,4096}$/.test(key)))throw fail('credential_format_invalid');
+  if(key?.includes('sk-ant-oat'))throw fail('metered_api_key_required');
   const models=createModels({credentials,authContext:{env:async()=>undefined,fileExists:async()=>false}});
-  models.setProvider({...provider,auth:{apiKey:provider.auth.apiKey}});
-  await models.login(p.id,'api_key',{signal,notify:()=>{},prompt:async prompt=>{
-    if(prompt.type==='secret')return key;
-    if(prompt.type==='text'&&p.id==='cloudflare-workers-ai')return node.fields.CLOUDFLARE_ACCOUNT_ID;
-    throw fail('pi_auth_flow_not_allowed');
-  }});
-  const auth=await models.getAuth(p.id);if(!auth?.auth.apiKey)throw fail('pi_api_key_required');
-  key='';return {models,close:()=>models.logout(p.id)};
+  let provider;
+  if(p){const module=await import('@earendil-works/pi-ai/providers/'+p.module);provider=module[p.factory]();}
+  if(node.connectorProtocol==='pi_native_v2') {
+    const apis={};for(const m of node.nativeModels){const factory=adapterFactories[m.api];if(!factory)throw fail('pi_protocol_unsupported');const module=await import('@earendil-works/pi-ai/api/'+m.api+'.lazy');apis[m.api]=module[factory]();}
+    const definitions=node.nativeModels.map(m=>{const original=provider?.getModels().find(x=>x.id===m.model);return {...original,id:m.model,name:original?.name??m.model,api:m.api,provider:node.provider,baseUrl:m.endpoint,input:['text'],reasoning:m.capabilities.includes('thinking_v1'),contextWindow:m.contextWindowTokens,maxTokens:m.maxOutputTokens,cost:m.price,compat:{...original?.compat,...m.compat,allowedFallbackModels:[]}};});
+    provider=createProvider({id:node.provider,name:p?.name??node.provider,headers:provider?.headers,models:definitions,api:apis,auth:{apiKey:{name:'Connection API key',login:async interaction=>({type:'api_key',key:await interaction.prompt({type:'secret',message:'API key'})}),resolve:async({credential})=>credential?.key?{auth:{apiKey:credential.key,headers:JSON.parse(credential.env?.ADR_CONNECTION_HEADERS??'{}')},env:node.fields}:undefined}}});
+  }else provider={...provider,auth:{apiKey:provider.auth.apiKey}};
+  models.setProvider(provider);
+  if(key!==undefined){
+    await models.login(node.provider,'api_key',{signal,notify:()=>{},prompt:async prompt=>{
+      if(prompt.type==='secret')return key;
+      if(prompt.type==='text'&&p?.id==='cloudflare-workers-ai')return node.fields.CLOUDFLARE_ACCOUNT_ID;
+      throw fail('pi_auth_flow_not_allowed');
+    }});
+  }
+  if(Object.keys(headers).length)await credentials.modify(node.provider,async current=>({...current,env:{...current?.env,ADR_CONNECTION_HEADERS:JSON.stringify(headers)}}));
+  const auth=await models.getAuth(node.provider);if(!auth?.auth.apiKey)throw fail('pi_api_key_required');
+  key='';const session={models,close:async()=>{session.models=undefined;}};return session;
+}
+export async function nativeDiscover(node,auth,signal,fetchFixture) {
+  const model=node.nativeModels[0];if(!model||!['openai-completions','openai-responses','azure-openai-responses','mistral-conversations'].includes(model.api))throw fail('model_discovery_unavailable');
+  const resolved=await auth.models.getAuth(node.provider);if(!resolved)throw fail('pi_api_key_required');
+  const transport=fetchFixture??restrictedPiFetch(node,model,signal,()=>{},{discovery:true});
+  const headers={authorization:`Bearer ${resolved.auth.apiKey}`,...resolved.auth.headers};
+  if(model.api==='azure-openai-responses'){delete headers.authorization;headers['api-key']=resolved.auth.apiKey;}
+  const response=await transport(model.endpoint.replace(/\/$/,'')+'/models',{method:'GET',headers,signal});
+  if(!response.ok)throw fail(response.status===401||response.status===403?'upstream_authentication_failed':'model_discovery_unavailable');
+  let body;try{body=await response.json();}catch{throw fail('model_discovery_unavailable');}
+  if(!Array.isArray(body.data))throw fail('model_discovery_unavailable');
+  const models=[...new Set(body.data.flatMap(m=>typeof m?.id==='string'&&/^[\x20-\x7e]{1,256}$/.test(m.id)?[m.id]:[]))].slice(0,256);
+  return {models};
 }
 export class NativeUsageEvidence {
   constructor(api){this.api=api;this.input=false;this.output=false;this.final=false;this.events=0;this.terminal=false;this.reasoningReported=false;}
@@ -51,12 +72,14 @@ export async function nativeInference(node,auth,frame,signal,onTiming=()=>{},onE
   signal?.throwIfAborted();
   const descriptor=node.nativeModels.find(m=>m.model===frame.model);
   if(!descriptor||frame.provider!==node.provider||frame.api!==descriptor.api||frame.messageFormat!=='pi_context_v1')throw fail('pi_model_binding_mismatch');
+  if(node.connectorProtocol==='pi_native_v2'&&(frame.nativeRevision!==node.nativeRevision||frame.endpoint!==descriptor.endpoint))throw fail('pi_model_binding_mismatch');
   const inputBound=Buffer.byteLength(JSON.stringify({messages:frame.messages,...(frame.tools?.length?{tools:frame.tools}:{})}))+frame.messages.length*64+1024;
   const authority=frame.upstreamBudget;
   if(!authority||inputBound>authority.inputBound||frame.maxOutputTokens>node.maxOutputTokens)throw fail('upstream_authority_required');
   const worst=(BigInt(inputBound)*BigInt(authority.inputMicrousdPerMillion)+BigInt(frame.maxOutputTokens)*BigInt(authority.outputMicrousdPerMillion)+999999n)/1000000n;
   if(worst>BigInt(authority.reservedMicrousd))throw fail('upstream_authority_exceeded');
   const model=auth.models.getModel(node.provider,frame.model);if(!model)throw fail('pi_model_not_supported');
+  if(model.baseUrl!==descriptor.endpoint)throw fail('pi_model_binding_mismatch');
   const fixed={...model,compat:{...model.compat,allowedFallbackModels:[]}};
   const evidence=new NativeUsageEvidence(model.api),started=Date.now();let statusCode=null,headersMs=null,sequence=0;
   const transport=fetchFixture??restrictedPiFetch(node,descriptor,signal,status=>{statusCode=status;headersMs=Date.now()-started;});
@@ -86,6 +109,7 @@ export async function nativeInference(node,auth,frame,signal,onTiming=()=>{},onE
       if(event.type==='error')throw fail(signal?.aborted?'upstream_timeout':statusCode===401||statusCode===403?'upstream_authentication_failed':statusCode===429?'upstream_rate_limited':statusCode===400?'upstream_parameter_rejected':statusCode===404?'upstream_invalid_model':'upstream_failed_outcome_unknown');
     }
     if(!final||!['stop','length','toolUse'].includes(final.stopReason))throw fail('upstream_malformed_response');
+    if(!frame.thinking&&final.content.some(block=>block.type==='thinking'&&(block.thinking||block.redacted)))throw fail('pi_thinking_off_unsupported');
     if(final.responseModel&&final.responseModel!==model.id)throw fail('pi_model_fallback_rejected');
     const nativeMessage=piMessage(final),display=piDisplay(nativeMessage),usage=evidence.normalize(final.usage);
     if(!frame.thinking)display.thinking='';

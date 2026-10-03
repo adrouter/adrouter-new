@@ -1,26 +1,34 @@
 // This program and all credentialed upstream HTTP execute only inside the VM.
 import { fork } from 'node:child_process';
 import { readFile } from 'node:fs/promises';
+import {GuestCredentialStore} from './guest-credentials.mjs';
 import { readHiddenKey } from './provider-setup.mjs';
 import { upstreamInference } from './provider-broker.mjs';
 const controlFetch=globalThis.fetch;
 const configuration = JSON.parse(await readFile('/workspace/config.json', 'utf8'));
-const { control, capability, node, maxCalls, maxOutputTokens, continuous } = configuration;
+const { control, capability, node, maxCalls, maxOutputTokens, continuous, persistentCredentials } = configuration;
 const controlRequest = async (path, body) => {
   const response = await controlFetch(`${control}${path}`, { method: body === undefined ? 'GET' : 'POST', redirect: 'error', headers: { authorization: `Bearer ${capability}`, 'content-type': 'application/json' }, body: body === undefined ? undefined : JSON.stringify(body), signal: AbortSignal.timeout(5000) });
   if (!response.ok) throw new Error('control_unavailable');
   return response.json();
 };
 if (process.argv[2] !== '--worker') {
-  let key = configuration.noKey ? '' : await readHiddenKey();
-  // IPC transfers the key inside the guest only. It never enters argv, env, disk,
+  const credentials=persistentCredentials?new GuestCredentialStore():undefined;
+  if(process.argv[2]==='--disconnect'){await credentials?.disconnect();process.exit(0);}
+  // This is a newly authorized guest before its sole worker starts. No other
+  // writer is attached; remove interrupted lock/temp files, retaining final auth.
+  await credentials?.recoverStartup();
+  const saved=await credentials?.read(node.provider);
+  let key=saved?undefined:configuration.noKey?'':await readHiddenKey(process.stdin,process.stdout,persistentCredentials?'Provider API key (hidden; saved in provider guest vault): ':'Provider API key (hidden; memory only): ');
+  const retainedHeaders=JSON.parse(saved?.env?.ADR_CONNECTION_HEADERS??'{}'),headers={};for(const name of node.connection?.headerNames??[])headers[name]=retainedHeaders[name]??await readHiddenKey(process.stdin,process.stdout,`Secret header ${name} (hidden; saved in provider guest vault): `);
+  // IPC transfers the key inside the guest only. It never enters argv, host storage,
   // stdout or host application memory. Child logs and dumps are disabled.
   const child = fork('/workspace/provider-console.mjs', ['--worker'], { detached: true, stdio: ['ignore', 'ignore', 'ignore', 'ipc'], env: { PATH: '/usr/local/bin:/usr/bin:/bin' } });
   await new Promise((resolve, reject) => {
     const timer = setTimeout(() => reject(new Error('guest_start_failed')), 10000);
     child.once('message', message => { clearTimeout(timer); message === 'ready' ? resolve() : reject(new Error('guest_start_failed')); });
     child.once('error', () => { clearTimeout(timer); reject(new Error('guest_start_failed')); });
-    child.send({ key }); key = '';
+    child.send({ key,headers }); key = '';
   }).catch(() => { child.kill(); process.exit(1); });
   child.disconnect(); child.unref();
   process.stdout.write('Guest is ready. Press Ctrl+D to return to AdRouter.\n');
@@ -28,8 +36,8 @@ if (process.argv[2] !== '--worker') {
   process.once('message', async message => {
     let key = message.key; delete message.key;
     const abort = new AbortController(); let attempted = 0; const seen = new Set();
-    let nativeAuth;const native=node.connectorProtocol==='pi_native_v1';const nativeModule=native?await import('./pi-native.mjs'):undefined;
-    if(native){nativeAuth=await nativeModule.nativeLogin(node,key,abort.signal);key='';}
+    let nativeAuth;const native=['pi_native_v1','pi_native_v2'].includes(node.connectorProtocol);const nativeModule=native?await import('./pi-native.mjs'):undefined;
+    if(native){nativeAuth=await nativeModule.nativeLogin(node,key,abort.signal,{...(persistentCredentials?{credentials:new GuestCredentialStore()}:{}),headers:message.headers??{}});key='';}
     const stop = () => { void nativeAuth?.close(); key = ''; abort.abort(); process.exit(0); };
     process.once('SIGTERM', stop); process.once('SIGINT', stop);
     const lifetime = continuous ? undefined : setTimeout(stop, 540000);
@@ -57,6 +65,7 @@ if (process.argv[2] !== '--worker') {
         const frame = await controlRequest('/work');
         if (!frame) { await new Promise(r => setTimeout(r, 250)); continue; }
         if (frame.type === 'stop') break;
+        if(native&&frame.type==='discover'){if(active)throw new Error('frame_rejected');try{const result=await nativeModule.nativeDiscover(node,nativeAuth,AbortSignal.any([abort.signal,AbortSignal.timeout(15000)]));await controlRequest('/discovered',{requestId:frame.requestId,...result});}catch(error){await controlRequest('/discovered',{requestId:frame.requestId,error:['upstream_authentication_failed','model_discovery_unavailable'].includes(error.code)?error.code:'model_discovery_unavailable'});}continue;}
         if(native&&frame.type==='bind'){node.listingIds=frame.listingIds;node.listingRevision=frame.listingRevision;continue;}
         if (frame.type === 'cancel') {
           if (!active) { await controlRequest('/cancelled', {requestId:frame.requestId}).catch(()=>{}); continue; }

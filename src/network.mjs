@@ -9,7 +9,7 @@ import { setTimeout as delay } from 'node:timers/promises';
 const { version } = JSON.parse(await readFile(new URL('../package.json', import.meta.url), 'utf8'));
 
 export class ClientError extends Error { constructor(code) { super(code); this.code = code; } }
-export const authRecoveryCodes = new Set(['refresh_outcome_unknown_reenroll_required', 'invalid_access_token', 'installation_revoked', 'login_required']);
+export const authRecoveryCodes = new Set(['refresh_outcome_unknown_reenroll_required', 'invalid_access_token', 'installation_revoked', 'login_required', 'state_unavailable', 'auth_lock_orphaned']);
 export function loginHint(code) {
   if (['auth_lock_owner_unknown','auth_lock_orphaned','auth_state_busy'].includes(code)) return 'Another process may own this profile. Close its client and retry; an unidentified or orphaned lock needs explicit local repair. Locks are never stolen automatically.';
   if (code === 'recover_requires_login_without_operator_or_local') return 'Use adr-cli --profile NAME login --recover, without --operator or --local.';
@@ -17,7 +17,7 @@ export function loginHint(code) {
   if (code === 'unknown_or_missing_option') return 'Choose a role with --profile buyer, --profile provider or --profile operator. Use --help for commands.';
   if (code === 'refresh_outcome_unknown_reenroll_required' || code === 'invalid_access_token' || code === 'logout_existing_installation_first') return 'Open this profile in the TUI and choose Repair sign-in, or run login --recover with the same --profile. Recovery preserves installation bindings.';
   if (code === 'installation_revoked') return 'This installation was revoked. Sign out to clear its local sign-in, then approve a new installation. Saved work is preserved.';
-  if (code === 'installation_revocation_failed') return 'Revocation was not confirmed. Local sign-in was preserved; retry when the network is available.';
+  if (code === 'installation_revocation_failed') return 'Signed out locally; server revocation unconfirmed. Open Manage installations after browser sign-in to finish revocation.';
   return '';
 }
 export const safeText = value => String(value).replace(/[\x00-\x08\x0b-\x1f\x7f-\x9f\u202a-\u202e\u2066-\u2069]/g, '');
@@ -92,6 +92,26 @@ export class AuthStore {
     try { if (signal?.aborted) throw new ClientError('cancelled'); return await fn(); }
     finally { await file.close(); await unlink(path); }
   }
+  async repairLock({confirmUnknown=false}={}) {
+    const path=join(await this.directory(),'auth.lock');let handle;
+    try {
+      handle=await open(path,constants.O_RDONLY|constants.O_NOFOLLOW|constants.O_NONBLOCK);
+      const before=await handle.stat();
+      if(!before.isFile()||before.nlink!==1||before.size>128||before.uid!==process.getuid()||(before.mode&0o077))throw new ClientError('auth_lock_owner_unknown');
+      let lock;try{lock=JSON.parse(await handle.readFile('utf8'));}catch{if(!confirmUnknown)throw new ClientError('auth_lock_owner_unknown');}
+      if(Number.isSafeInteger(lock?.pid)&&lock.pid>0){try{process.kill(lock.pid,0);throw new ClientError('auth_state_busy');}catch(error){if(error.code!=='ESRCH')throw error;}}
+      else if(!confirmUnknown)throw new ClientError('auth_lock_owner_unknown');
+      const current=await lstat(path);if(current.ino!==before.ino||current.dev!==before.dev)throw new ClientError('auth_state_busy');
+      await unlink(path);return {repaired:true};
+    }catch(error){if(error.code==='ENOENT')return {repaired:false};throw error;}
+    finally{await handle?.close();}
+  }
+  async recordRevocation(identity,confirmed) {
+    const directory=await this.directory(),temporary=join(directory,`revocation-${randomUUID()}.tmp`);
+    const file=await open(temporary,constants.O_WRONLY|constants.O_CREAT|constants.O_EXCL|constants.O_NOFOLLOW,0o600);
+    try{await file.writeFile(JSON.stringify({origin:identity.origin,installationId:identity.installation_id,confirmed,at:Date.now()}));await file.sync();await file.close();await rename(temporary,join(directory,'revocation.json'));}
+    finally{await file.close();await unlink(temporary).catch(e=>{if(e.code!=='ENOENT')throw e;});}
+  }
   async readSelection() {
     let handle;
     try {
@@ -126,7 +146,7 @@ export class Network {
     const bytes = body === undefined ? undefined : JSON.stringify(body);
     let nonce;
     for (let attempt = 0; attempt < 2; attempt++) {
-      const headers = { 'X-Adr-Coding-Protocol':'coding_v1','X-Adr-Connector-Protocol':'pi_native_v1', accept: onEvent ? 'application/x-ndjson' : 'application/json', ...(bytes === undefined ? {} : { 'Content-Type': 'application/json' }), ...(this.local ? { 'X-Adr-Local-Actor': this.actor } : {}), ...(key ? { 'Idempotency-Key': key } : {}) };
+      const headers = { 'X-Adr-Coding-Protocol':'coding_v1','X-Adr-Connector-Protocol':'pi_native_v2', accept: onEvent ? 'application/x-ndjson' : 'application/json', ...(bytes === undefined ? {} : { 'Content-Type': 'application/json' }), ...(this.local ? { 'X-Adr-Local-Actor': this.actor } : {}), ...(key ? { 'Idempotency-Key': key } : {}) };
       if (identity) {
         headers.DPoP = proof(identity, method, this.origin + path, bytes, nonce, token);
         if (bytes !== undefined) headers['Content-Digest'] = `sha-256=:${digest(bytes).toString('base64')}:`;
@@ -149,6 +169,7 @@ export class Network {
   }
   async request(path, options = {}) {
     if (this.local || options.public) return this.send(path, options);
+    if(this.signedOut)throw new ClientError('login_required');
     const identity = await this.store.withLock(async () => {
       const identity = await this.store.read();
       if (!identity || identity.origin !== this.origin) throw new ClientError('login_required');
@@ -181,6 +202,7 @@ export class Network {
     return this.send(path, { ...options, identity, token: identity.access_token });
   }
   async login(notify, signal, { operator = false } = {}) {
+    this.signedOut=false;
     if (this.local) return { status: 'local_development', actor: this.actor };
     return this.store.withLock(() => this.enroll(notify, signal, operator), { signal });
   }
@@ -194,6 +216,7 @@ export class Network {
       || (scope && tokens.scope.split(' ').sort().join(' ') !== scope.split(' ').sort().join(' '))) throw new ClientError('invalid_token_response');
   }
   async recoverLogin(notify, signal) {
+    await this.store.repairLock?.();this.signedOut=false;
     if (this.local) return { status: 'local_development', actor: this.actor };
     return this.store.withLock(async () => {
       const identity = await this.store.read();
@@ -234,16 +257,28 @@ export class Network {
     }
   }
   async logout() {
-    if (!this.local) await this.store.withLock(async () => {
-      const identity = await this.store.read();
-      if (!identity) return;
-      if (identity.origin !== this.origin) throw new ClientError('login_required');
-      // Revocation uses its own fresh proof, even when refresh or access is disabled.
-      const result = await this.send('/v1/installation/revoke', { method: 'POST', identity, body: { installation_id: identity.installation_id, public_key_jwk: identity.publicKey } });
-      if (result?.status !== 'revoked' || result.installation_id !== identity.installation_id) throw new ClientError('installation_revocation_failed');
+    this.signedOut=true;
+    if(this.local)return {status:'signed_out',revocationConfirmed:true};
+    let identity;
+    await this.store.repairLock?.();
+    await this.store.withLock(async()=>{
+      try{identity=await this.store.read();}catch(error){if(error.code!=='state_unavailable')throw error;await this.store.clear();identity={unavailable:true};return;}
+      if(!identity)return;
+      if(identity.origin!==this.origin)throw new ClientError('login_required');
+      // Persist only the non-secret revocation reference before removing usable auth.
+      await this.store.recordRevocation?.(identity,false);
       await this.store.preserveSelection?.(this.origin);
       await this.store.clear();
     });
-    return { status: 'signed_out' };
+    if(!identity)return {status:'signed_out',revocationConfirmed:true};
+    if(identity.unavailable)return {status:'signed_out',revocationConfirmed:false,message:'Signed out locally; server revocation unconfirmed.'};
+    let confirmed=false;
+    try {
+      const result=await this.send('/v1/installation/revoke',{method:'POST',identity,body:{installation_id:identity.installation_id,public_key_jwk:identity.publicKey},signal:AbortSignal.timeout(5000)});
+      confirmed=result?.status==='revoked'&&result.installation_id===identity.installation_id;
+    }catch{/* Local sign-out is independent of remote authentication and availability. */}
+    await this.store.recordRevocation?.(identity,confirmed).catch(()=>{});
+    identity=null;
+    return {status:'signed_out',revocationConfirmed:confirmed,message:confirmed?'Signed out.':'Signed out locally; server revocation unconfirmed.'};
   }
 }
