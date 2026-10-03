@@ -4,7 +4,7 @@ import { Network, AuthStore, ClientError } from './network.mjs';
 import { ask, choose, render } from './terminal.mjs';
 import { SandboxRuntime } from './runtime.mjs';
 
-const booleanOptions = new Set(['json', 'local', 'accept', 'help', 'no-key', 'operator', 'private-rehearsal', 'acknowledge-provisional', 'bounded','coding','trust','confirm-delete']);
+const booleanOptions = new Set(['json', 'local', 'accept', 'help', 'recover', 'no-key', 'operator', 'private-rehearsal', 'acknowledge-provisional', 'bounded','coding','trust','confirm-delete']);
 const valueOptions = new Set(['profile', 'network', 'actor', 'name', 'model', 'endpoint', 'supply', 'availability', 'input-rate', 'output-rate', 'budget', 'max-output', 'duration', 'after', 'idempotency-key', 'review', 'user', 'amount', 'max-calls','workspace','mode','resume','prompt','context-window','thinking']);
 export function parseArgs(args) {
   const options = {}; const words = [];
@@ -17,12 +17,18 @@ export function parseArgs(args) {
     else if (valueOptions.has(name) && args[i + 1] && !args[i + 1].startsWith('--')) options[name] = args[++i];
     else throw new ClientError('unknown_or_missing_option');
   }
+  if (options.recover && (words[0] !== 'login' || options.operator || options.local)) throw new ClientError('recover_requires_login_without_operator_or_local');
+  if (options.operator && words[0] !== 'login') throw new ClientError('operator_requires_login');
+  if (options.operator && options.profile && options.profile !== 'operator') throw new ClientError('operator_requires_operator_profile');
+  if (options.operator) options.profile = 'operator';
   return { words, options };
 }
 export const usage = `adr-cli — adr-v2 compute marketplace (test credits, no cash value)
 
   adr-cli [--profile default|buyer|provider|operator|NAME] [--network HTTPS_ORIGIN | --local] [--json] [command]
-  login [--operator] | logout | whoami
+  login [--operator] [--recover] | logout | whoami
+  Examples: adr-cli --profile buyer; adr-cli --profile provider; adr-cli --profile operator
+  Repair: adr-cli --profile provider login --recover (browser approval; keeps bound listings)
   market [--model TEXT] [--supply authorized_api|self_hosted] [--after CURSOR]
   market inspect LISTING_ID
   connect LISTING_ID --budget UNITS [--accept]
@@ -70,7 +76,7 @@ export async function run(args, dependencies = {}) {
   }
   const store = dependencies.store ?? new AuthStore(undefined, o.profile ?? 'default');
   const local = !!o.local;
-  const origin = o.network ?? (local ? 'http://127.0.0.1:8790' : (await store.read())?.origin);
+  const origin = o.network ?? (local ? 'http://127.0.0.1:8790' : ((await store.read())?.origin ?? await store.readSelection?.()));
   if (!origin && words[0] !== 'doctor') throw new ClientError('network_required_use_login_with_network_or_local');
   const network = dependencies.network ?? (origin ? new Network({ origin, local, actor: o.actor ?? 'buyer', store }) : null);
   const get = async (path, publicAccess = false) => {
@@ -115,7 +121,7 @@ export async function run(args, dependencies = {}) {
   }
   if (command === 'login') {
     const abort = new AbortController(); const cancel = () => abort.abort(); process.once('SIGINT', cancel);
-    try { output(await network.login(output, abort.signal, { operator: o.operator || store.profile === 'operator' })); } finally { process.removeListener('SIGINT', cancel); }
+    try { output(o.recover ? await network.recoverLogin(output, abort.signal) : await network.login(output, abort.signal, { operator: o.operator || store.profile === 'operator' })); } finally { process.removeListener('SIGINT', cancel); }
   } else if (command === 'logout') output(await network.logout());
   else if (command === 'whoami') { const scope = String((await store.read())?.scope ?? ''); output(await get(scope.includes('marketplace:operator') ? '/admin/me' : scope.includes('marketplace:provider') && !scope.includes('marketplace:buyer') ? '/providers/me' : '/me')); }
   else if (command === 'market') {

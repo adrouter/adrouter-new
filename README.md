@@ -23,6 +23,19 @@ For explicit ephemeral development only, start `npm run marketplace:local` in th
 Router feature checkout's backend, then `node bin/adr-cli.mjs --local`. Development
 identities are labeled; local approvals and grants establish no hosted authority.
 
+## Repair sign-in
+
+If a refresh outcome is uncertain, use `adr-cli --profile provider login --recover`
+(or the same command for your buyer/operator/custom profile). Compare the code and
+approve renewal in native Safari with the original account. Recovery retains the
+installation ID, exact permissions, saved configuration and workload bindings.
+Stop running work through its normal checkpoint/Stop controls before repair.
+
+An uncertain refresh token is never replayed. Temporary failures can be retried;
+local sign-in is retained until revocation is confirmed. Sign-out revokes access
+permanently and preserves saved work and the selected network. A revoked
+installation cannot be recovered; new enrollment needs new provider setup.
+
 ## Separate profiles
 
 Use two terminals under the same backend owner account:
@@ -32,7 +45,7 @@ adr-cli --profile provider --network https://api-staging.adrouter.co
 adr-cli --profile operator --network https://api-staging.adrouter.co
 ```
 
-Choose Profile in the TUI to select default/provider/operator or a named profile.
+Choose Profile in the TUI to select default/buyer/provider/operator or a named profile.
 Each named profile starts without credentials and requires its own Safari approval.
 Private keys, refresh state and locks are isolated; credentials are never copied.
 The default retains its original `~/.adr-v2/installation.json` location. Named

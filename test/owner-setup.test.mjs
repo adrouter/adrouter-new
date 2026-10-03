@@ -46,7 +46,7 @@ test('logout and bounded stop bypass disabled refresh using fresh proof, never c
   const identity={origin:'https://api.example.test',privateKey:keys.privateKey.export({format:'jwk'}),publicKey:keys.publicKey.export({format:'jwk'}),access_token:'synthetic',installation_id:'fixture',expiresAt:1,refreshPending:true};
   let cleared=false; const calls=[];
   const store={read:async()=>identity,withLock:fn=>fn(),clear:async()=>{cleared=true;}};
-  const network=new Network({origin:identity.origin,store,fetcher:async(url,options)=>{calls.push({url,options});return Response.json({status:'stopped'});}});
+  const network=new Network({origin:identity.origin,store,fetcher:async(url,options)=>{calls.push({url,options});return Response.json(url.endsWith('/revoke') ? {status:'revoked',installation_id:identity.installation_id} : {status:'stopped'});}});
   await network.request('/v2/providers/nodes/fixture/stop',{method:'POST',body:{}});
   await network.logout();assert.equal(cleared,true);assert.equal(calls.length,2);assert.ok(calls.every(c=>c.options.headers.DPoP));
   assert.ok(calls.every(c=>!c.url.includes('oauth')));

@@ -10,7 +10,7 @@ import { randomUUID } from 'node:crypto';
 import { spawn } from 'node:child_process';
 import { TerminalCoordinator } from './terminal-coordinator.mjs';
 import { TerminalUI } from './tui-screen.mjs';
-import { AuthStore, Network, ClientError, networkOrigin, safeText } from './network.mjs';
+import { AuthStore, Network, ClientError, networkOrigin, safeText, authRecoveryCodes, loginHint } from './network.mjs';
 import { MarketplaceDraft, MarketplaceListing, MarketplaceNetworkConfig, ProviderNodeDeletion } from './generated/validators.mjs';
 
 export const accountingLines=s=>s?[`State: ${words(s.state)}`,`Reserved ${s.funded} · Charged ${s.charged} · Refunded ${s.refunded} test credits`,`Unresolved liability: ${s.reserved}`,s.state==='settlement_pending'?'Receipt pending: upstream outcome is unresolved.':`Settlement: ${words(s.state)}`]:['Receipt pending: remote stop/accounting could not be confirmed. Inspect My sessions.'];
@@ -106,13 +106,14 @@ export const providerFields = [
 
 export async function runTui(options = {}, dependencies = {}) {
   const ui = dependencies.ui ?? new TerminalUI(); let store = dependencies.store ?? new AuthStore(undefined, options.profile ?? 'default');
-  let network = dependencies.network; let config; let runtimeConfig; const providersRunning = new Map(); const setupDrafts = new Map(); const limitDrafts = new Map(); const deletionKeys = new Map(); let currentProviderId;let verifiedIdentity,identityAt=0;
+  let network = dependencies.network; let config; let runtimeConfig; const providersRunning = new Map(); const setupDrafts = new Map(); const limitDrafts = new Map(); const deletionKeys = new Map(); let currentProviderId;let verifiedIdentity,identityAt=0,identityError,authState='signed_out';
   const display=new MarketplaceDisplay(()=>network,lines=>{ui.sidebar=lines;if(!ui.pending||ui.started)ui.draw?.();});
-  const clearIdentity=()=>{verifiedIdentity=undefined;identityAt=0;ui.context=`Signed out · ${store.profile} · ${network.origin}`;};
+  const clearIdentity=()=>{authState='signed_out';verifiedIdentity=undefined;identityAt=0;identityError=undefined;ui.context=`Signed out · ${store.profile} · ${network.origin}`;};
   const refreshIdentity=async scope=>{
     if(network.local){ui.context=`Local identity · ${store.profile} · ${network.origin}`;return;}
     if(verifiedIdentity&&Date.now()-identityAt<60000)return;
-    try{const value=await network.request(scope.includes("marketplace:operator")?"/v2/admin/me":scope.includes("marketplace:buyer")?"/v2/me":"/v2/providers/me");verifiedIdentity=value;identityAt=Date.now();ui.context=`${value.email??"Email unavailable"} · ${store.profile}/${value.roles.join(",")} · ${network.origin}`;}catch{ui.context=`Identity unavailable · ${store.profile} · ${network.origin}`;}
+    authState='checking';
+    try{const value=await network.request(scope.includes("marketplace:operator")?"/v2/admin/me":scope.includes("marketplace:buyer")?"/v2/me":"/v2/providers/me");authState='signed_in';verifiedIdentity=value;identityError=undefined;identityAt=Date.now();ui.context=`${value.email??"Email unavailable"} · ${store.profile}/${value.roles.join(",")} · ${network.origin}`;}catch(error){authState=error.code==='installation_revoked'?'revoked':authRecoveryCodes.has(error.code)?'recovery_required':'temporarily_unavailable';verifiedIdentity=undefined;identityAt=0;identityError=error;ui.context=`Sign-in needs attention · ${store.profile} · ${network.origin}`;}
   };
   const actor = role => { if (network.local) network.actor = role; };
   const get = async (path, publicAccess = false) => {
@@ -126,9 +127,16 @@ export async function runTui(options = {}, dependencies = {}) {
   };
   const post = (path, body = {}, key = randomUUID()) => ui.task('Saving your choice', () => network.request(`/v2${path}`, { method: 'POST', body, key }));
   const confirm = async (title, lines, label = 'Confirm') => await ui.menu(title, [item(false, 'Back'), item(true, label)], { lines }) === true;
-  const attempt = async work => { try { return await work(); } catch (error) { await ui.page('Could not continue', errorLines(error)); return null; } };
+  const attempt = async work => { try { return await work(); } catch (error) { if(authRecoveryCodes.has(error.code)){verifiedIdentity=undefined;identityAt=0;identityError=error;authState=error.code==='installation_revoked'?'revoked':'recovery_required';ui.context=`Sign-in needs attention · ${store.profile} · ${network.origin}`;} await ui.page('Could not continue', errorLines(error)); return null; } };
 
-  async function signIn(operator = false) {
+  async function signIn(operator = false, recovering = false) {
+    if (providersRunning.size) { await ui.page('Stop running work before sign-in repair', ['Use Stop to checkpoint and tear down the provider guest first. Remote cleanup may remain unconfirmed while sign-in is broken.']); return; }
+    if (operator && !recovering && store.profile !== 'operator') {
+      store = new AuthStore(store.home, 'operator');
+      network = new Network({origin:network.origin,local:network.local,store});
+      clearIdentity();
+      if (await store.read()) return;
+    }
     let verification;
     const openSafari = (_text, key) => {
       if (key.name !== 'o' || !verification || process.platform !== 'darwin') return;
@@ -137,13 +145,15 @@ export async function runTui(options = {}, dependencies = {}) {
       child.on('error', () => {});
     };
     return ui.task('Sign in to AdRouter', async (signal, update) => {
-      const result = await network.login(value => {
+      const notify = value => {
         if (value.status === 'approval_required') {
           verification = value.verificationUrl;
           const permission = operator ? 'operator' : store.profile === 'buyer' ? 'buyer-only' : store.profile === 'provider' ? 'provider' : 'buyer and provider';
           update(['Approve this installation in your browser.', `Comparison code: ${value.comparisonCode}`, '', verification, '', `Check the same code before approving ${permission} access.`, process.platform === 'darwin' ? 'Press O to open native Safari.' : 'Open the link in your browser.', 'Waiting for your approval…']);
         }
-      }, signal, { operator });
+      };
+      const result = recovering ? await network.recoverLogin(notify, signal) : await network.login(notify, signal, { operator });
+      clearIdentity();
       return result;
     }, { cancel: true, onKey: openSafari, lines: ['Requesting a browser approval code…'] });
   }
@@ -632,7 +642,7 @@ export async function runTui(options = {}, dependencies = {}) {
     let profile = chosen;
     if (chosen === 'custom') { const value = await ui.form('New or existing profile', [{ name: 'profile', label: 'Profile name', validate: value => /^[a-z][a-z0-9_-]{0,31}$/.test(value) ? '' : 'Use up to 32 lowercase letters, digits, underscores or hyphens.' }]); if (!value) return; profile = value.profile; }
     const next = new AuthStore(store.home, profile);
-    const origin = (await next.read())?.origin ?? network.origin;
+    const origin = ((await next.read())?.origin ?? await next.readSelection?.()) ?? network.origin;
     clearIdentity();store = next; network = new Network({ origin, local: network.local, actor: options.actor ?? 'buyer', store });
     config = await get('/network/config', true);
     ui.context = `${store.profile} · ${network.local ? 'LOCAL · test credits' : network.origin}`;
@@ -642,10 +652,15 @@ export async function runTui(options = {}, dependencies = {}) {
   process.once('SIGTERM', terminate); process.once('SIGINT', terminate);
   ui.start();
   try {
+    if (!options.profile && !dependencies.store && !(await store.read())) {
+      const role=await ui.menu('Choose your role', [item('buyer','Buyer'),item('provider','Provider'),item('operator','Operator'),item('exit','Exit')]);
+      if (!role || role==='exit') return;
+      store=new AuthStore(store.home,role);
+    }
     if (!network) {
       let origin = options.network; let local = !!options.local;
       if (local && !origin) origin = 'http://127.0.0.1:8790';
-      if (!origin) origin = (await store.read())?.origin;
+      if (!origin) origin = ((await store.read())?.origin ?? await store.readSelection?.());
       if (!origin) {
         const choice = await ui.menu('Welcome to AdRouter', [item('staging', 'Sign in to AdRouter staging'), item('custom', 'Choose another network'), item('local', 'Local development', 'Uses the loopback test marketplace; no real sign-in or money.'), item('exit', 'Exit')]);
         if (!choice || choice === 'exit') return;
@@ -669,6 +684,24 @@ export async function runTui(options = {}, dependencies = {}) {
       }
       const scope = network.local ? ['marketplace:buyer', 'marketplace:provider', 'marketplace:operator'] : String((await store.read())?.scope ?? '').split(' ');
       await refreshIdentity(scope);
+      if (['temporarily_unavailable','recovery_required','revoked'].includes(authState)) {
+        const code = identityError instanceof ClientError ? identityError.code : 'network_unavailable';
+        const selection = await ui.menu('Sign-in needs attention', [
+          item('retry', 'Check sign-in again'),
+          ...(authRecoveryCodes.has(code) ? [item('recover', 'Repair sign-in in browser', 'Keeps this installation and its provider/session bindings.')] : []),
+          ...(providersRunning.size ? [item('stopProviders', 'Stop running providers')] : [item('logout', 'Sign out and revoke installation')]),
+          item('profiles', 'Choose profile'), item('saved', 'Saved coding work'), item('exit', 'Exit'),
+        ], { lines: [code, loginHint(code) || 'The network or account is unavailable. Retry after connectivity or access is restored.', 'Your saved work and provider records are preserved.'] });
+        if (!selection || selection === 'exit') return;
+        await attempt(async () => {
+          if (selection === 'recover') await signIn(scope.includes('marketplace:operator'), true);
+          else if (selection === 'logout' && await confirm('Sign out?', ['Revocation removes access. Use Repair sign-in to keep this installation’s bindings.', 'Saved work and accounting history remain.'])) { await ui.task('Signing out', () => network.logout()); clearIdentity(); }
+          else if (selection === 'profiles') await selectProfile();
+          else if (selection === 'saved') await savedWork();
+          else if (selection === 'stopProviders') { for (const provider of providersRunning.values()) await provider.stop({ trigger: 'auth_recovery' }); providersRunning.clear(); }
+        });
+        continue;
+      }
       const selection = await ui.menu('What would you like to do?', [
         item('browse', 'Browse compute', 'Find listings, compare prices and reserve bounded test-credit access.'),
         ...(scope.includes('marketplace:provider') ? [item('create', 'List compute', 'Guided publication and hot/cold provider operation.'), item('providers', 'My provider listings'), item('budget', 'Provider spending budget')] : []),
