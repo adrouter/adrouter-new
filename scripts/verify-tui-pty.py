@@ -18,11 +18,11 @@ try:
   if select.select([master],[],[],.1)[0]:
    chunk=os.read(master,65536);captured+=chunk
   if stage==0 and b'What would you like to do?' in captured:
-   os.write(master,b'\x1b[B'*7+b'\r');stage=1;captured=b''
+   os.write(master,b'\x1b[B'*8+b'\r');stage=1;captured=b''
   elif stage==1 and b'Choose profile' in captured and b'Default' in captured:
    os.write(master,b'\x1b');stage=2;captured=b''
   elif stage==2 and b'What would you like to do?' in captured:
-   os.write(master,b'\x1b[B'*7+b'\r');stage=3;captured=b''
+   os.write(master,b'\x1b[B'*8+b'\r');stage=3;captured=b''
   elif stage==3 and b'Choose profile' in captured and b'Default' in captured:
    os.write(master,b'\x1b[B'*3+b'\r');stage=4;captured=b''
   elif stage==4 and b'operator' in captured and b'What would you like to do?' in captured:
