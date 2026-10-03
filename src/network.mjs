@@ -109,7 +109,7 @@ export class AuthStore {
   async recordRevocation(identity,confirmed) {
     const directory=await this.directory(),temporary=join(directory,`revocation-${randomUUID()}.tmp`);
     const file=await open(temporary,constants.O_WRONLY|constants.O_CREAT|constants.O_EXCL|constants.O_NOFOLLOW,0o600);
-    try{await file.writeFile(JSON.stringify({origin:identity.origin,installationId:identity.installation_id,confirmed,at:Date.now()}));await file.sync();await file.close();await rename(temporary,join(directory,'revocation.json'));}
+    try{await file.writeFile(JSON.stringify({origin:identity.origin,installationId:identity.installation_id,confirmed,at:Date.now()}));await file.sync();await file.close();await rename(temporary,join(directory,'revocation.json'));await this.syncDirectory();}
     finally{await file.close();await unlink(temporary).catch(e=>{if(e.code!=='ENOENT')throw e;});}
   }
   async readSelection() {
@@ -125,10 +125,11 @@ export class AuthStore {
     networkOrigin(origin);
     const directory=await this.directory(), temporary=join(directory,`network-${randomUUID()}.tmp`);
     const handle=await open(temporary,constants.O_WRONLY|constants.O_CREAT|constants.O_EXCL|constants.O_NOFOLLOW,0o600);
-    try { await handle.writeFile(JSON.stringify({origin}));await handle.sync();await handle.close();await rename(temporary,join(directory,'network.json')); }
+    try { await handle.writeFile(JSON.stringify({origin}));await handle.sync();await handle.close();await rename(temporary,join(directory,'network.json'));await this.syncDirectory(); }
     finally { await handle.close();await unlink(temporary).catch(e=>{if(e.code!=='ENOENT')throw e;}); }
   }
-  async clear() { await unlink(join(await this.directory(), 'installation.json')).catch(e => { if (e.code !== 'ENOENT') throw e; }); }
+  async syncDirectory(){const dir=await open(await this.directory(),constants.O_RDONLY);try{await dir.sync();}finally{await dir.close();}}
+  async clear() { await unlink(join(await this.directory(), 'installation.json')).catch(e => { if (e.code !== 'ENOENT') throw e; });await this.syncDirectory(); }
 }
 const digest = value => createHash('sha256').update(value).digest();
 export function proof(identity, method, url, body, nonce, token) {

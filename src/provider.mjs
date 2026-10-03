@@ -149,7 +149,7 @@ export async function startProvider(networkInput, nodeId, { prepareOnly = false,
       if(node.connectorProtocol==='pi_native_v2')vault=await credentialVolume(network,runtime,node);
       copied = await mkdtemp(join(tmpdir(), 'adr-provider-'));
       if(native){await (await import('./provider-runtime.mjs')).verifyProviderRuntime();await cp(new URL('../provider-runtime/',import.meta.url),copied,{recursive:true});}
-      for (const [from, to] of [['guest/provider-console.mjs', 'provider-console.mjs'], ['provider-broker.mjs', 'provider-broker.mjs'], ['coding-wire.mjs','coding-wire.mjs'], ['provider-setup.mjs', 'provider-setup.mjs']]) await copyFile(new URL(from, import.meta.url), join(copied, to));
+      for (const [from, to] of [['guest-credentials.mjs','guest-credentials.mjs'], ['guest/provider-console.mjs', 'provider-console.mjs'], ['provider-broker.mjs', 'provider-broker.mjs'], ['coding-wire.mjs','coding-wire.mjs'], ['provider-setup.mjs', 'provider-setup.mjs']]) await copyFile(new URL(from, import.meta.url), join(copied, to));
       await mkdir(join(copied,'generated'),{recursive:true});
       for(const file of ['connectors.mjs'])await copyFile(new URL('./generated/'+file,import.meta.url),join(copied,'generated',file));
       await copyFile(new URL('./connectors.mjs',import.meta.url),join(copied,'connectors.mjs'));

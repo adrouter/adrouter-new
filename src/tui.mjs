@@ -291,7 +291,7 @@ export async function runTui(options = {}, dependencies = {}) {
     let controller;
     try {
       controller=await ui.suspend(()=>startProvider(network,node.id,{prepareOnly:true,maxOutputTokens:node.maxOutputTokens,runtimeConfig}));
-      const action=await ui.menu('Start provider',[item('start','Start provider','Run bounded streaming and tool checks, publish selected models, then serve.'),item('back','Back')],{lines:[node.name,...node.models.map(m=>'• '+m),`Shared allowance: ${node.sharedAllowance.totalTokens} tokens · ${node.sharedAllowance.testCredits} AdRouter credits`,`Output per request: ${node.maxOutputTokens}`,'API key is saved only in the isolated provider guest vault and survives Stop.','Compatibility checks consume shared limits and upstream spending authority.']});
+      const action=await ui.menu('Start provider',[item('start','Start provider','Run bounded streaming and tool checks, publish selected models, then serve.'),item('back','Back')],{lines:[node.name,node.endpoint,...node.models.map(m=>'• '+m),`Shared allowance: ${node.sharedAllowance.totalTokens} tokens · ${node.sharedAllowance.testCredits} AdRouter credits`,`Output per request: ${node.maxOutputTokens}`,'API key is saved only in the isolated provider guest vault and survives Stop.','Compatibility checks consume shared limits and upstream spending authority.']});
       if(action!=='start'){await controller.stop();return;}
       await ui.task('Checking selected models',()=>controller.start());
       providersRunning.set(node.id,controller);void controller.done.then(()=>{if(providersRunning.get(node.id)===controller)providersRunning.delete(node.id);ui.pending?.redraw?.();});

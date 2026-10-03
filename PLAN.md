@@ -62,6 +62,10 @@ Not run. Existing alpha.31 evidence cannot certify new bytes.
 ## Follow-up Work
 Operator guest-only DeepSeek key entry and any sequential Safari approvals occur after preparation. Calculate exposure within existing limits first.
 
+## Corrective private artifact
+
+Alpha.32 was frozen and installed for acceptance, but is not activated. Its installed header-edit check found retained secret headers still forwarded after removal, and its lifecycle gate found the legacy guest missing the credential-store module. Alpha.33 fixes both, synchronizes local sign-out metadata durably, and shows the endpoint in the Start review. The quick actual lifecycle rerun passes; the full installed gate will run again for alpha.33. Alpha.32 bytes and failed evidence remain retained. Router source/deployment is unchanged.
+
 ## Decision Log
 | Date | Decision | Rationale | Impact |
 | --- | --- | --- | --- |
