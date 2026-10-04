@@ -37,48 +37,48 @@ Registry recheck after operator terminal authentication passed: flyctl authentic
 
 ## Step B: Execution, accounting and lifecycle
 ### Status
-`review`
+`done`
 ### Tasks
-- [ ] Fence completion/teardown acknowledgements; unify Stop/retirement; expose execution, cleanup and accounting independently.
-- [ ] Refund funded minus charged minus unresolved reserved minus prior refunds exactly once; retain late reconciliation.
-- [ ] Exercise concurrency and transaction loading in disposable PostgreSQL.
+- [x] Fence completion/teardown acknowledgements; unify Stop/retirement; expose execution, cleanup and accounting independently.
+- [x] Refund funded minus charged minus unresolved reserved minus prior refunds exactly once; retain late reconciliation.
+- [x] Exercise concurrency and transaction loading in disposable PostgreSQL.
 ### Relevant Files
 - Router backend/src/marketplace/{service,store,relay,routes}.ts; client src/provider*.mjs and buyer lifecycle.
 ### Acceptance Criteria
-- [ ] Confirmed execution ends independently of liabilities; stale callbacks cannot affect newer runs.
+- [x] Confirmed execution ends independently of liabilities; stale callbacks cannot affect newer runs.
 ### Validation Results
 Not run.
 
 ## Step C: Provider and buyer completion
 ### Status
-`review`
+`done`
 ### Tasks
-- [ ] Implement generated combined catalog, bundled auth/adapters, native settings and consistent 4096 output defaults.
-- [ ] Preserve Pi reasoning/tool metadata, actionable terminal state and exact selected-file Apply approvals.
+- [x] Implement generated combined catalog, bundled auth/adapters, native settings and consistent 4096 output defaults.
+- [x] Preserve Pi reasoning/tool metadata, actionable terminal state and exact selected-file Apply approvals.
 ### Acceptance Criteria
-- [ ] Adapter matrix covers every eligible provider; selected Apply/denial/conflict/recovery passes.
+- [x] Adapter matrix covers every eligible provider; selected Apply/denial/conflict/recovery passes.
 ### Validation Results
-Not run.
+Private alpha.38: source check passed 870 tests; installed native adapter matrix passed 644 required cases; provider-console v3 passed same-VM reconfiguration and two retained-credential cycles; actual no-key loopback/tunnel/redirect/binding/teardown passed; buyer PTY selected Apply, rejection, changed-original conflict and retained unselected changes passed. Full lifecycle passed with quick mode unset and 660-second idle, reconnect, saved resume, Stop, cancellation and unknown liabilities retained. Catalog inclusion (204 providers; 2,602 eligible models) is distinct from adapter and live verification.
 
 ## Step D: Final verification and cleanup
 ### Status
 `in_progress`
 ### Tasks
-- [ ] Run relevant complete suites, inspect diff and remove debugging instrumentation.
-- [ ] Build clean paired immutable artifacts, deploy Router and verify exact installed Mac VM/PTY/660-second lifecycle gates.
+- [x] Run relevant complete suites, inspect diff and remove debugging instrumentation.
+- [x] Build clean paired immutable artifacts, deploy Router and verify exact installed Mac VM/PTY/660-second lifecycle gates.
 - [ ] Clean only authorized failed acceptance resources, then perform fresh independent Flash/Pro and Custom API acceptance with operator guest-key entry.
 - [ ] Record exact artifacts, separate catalog/adapter/live coverage and remaining limitations.
 ### Acceptance Criteria
 - [ ] Every definition-of-done gate in the supplied specification has evidence.
 ### Validation Results
-Not run.
+Router product 10bc3c4ac5d2125093d9f16db48e807967267a2d deployed to sole Machine d8d2d26c057308 in place after relay drain/zero-lease proof. Serving platform digest 2fbcdc5cf157a7bb5014faf20fe30c3668de3bc802e09ef078e466a6d11aafb6; 11 compiled modules match; fixed HIGH/CRITICAL scan findings zero. Relay ownership (one lease) and unchanged private policy/resources/services verified. Pages deployment abfaca46-e61c-4487-9360-8d6364e734f8 and all 28 comparisons preserved; no hosted migration. Verified alpha.38 launcher selected; existing terminal processes were not restarted. All task-owned synthetic VMs/volumes removed. Live Ghostty acceptance is blocked by computer-use tooling; provider profile requires native Safari recovery after refresh_outcome_unknown_reenroll_required. Two pre-existing VMs were not removed because ownership inspection returned sandbox_not_owned. Unknown liabilities remain preserved. Metadata-only receipt: outputs/adr-replacement-2026-10-04/private-delivery-receipt.json.
 
 Current continuation source checks: 870 client tests passed; coding runtime rebuilt from retained be7c53dc0b63fb90b70bd6cb7cad4d5713cc0d1a with retained upstream suites and 23,473-file provenance verification. Provider runtime rebuilt with pinned Pi 1.0.2 and SDK inventories (28,005 files). Router authoritative inputs committed before generation; generator drift check passed against Router 513e75b0f6d91d68671a2e403b5c395138b0542f. Shared budget policy, both unavailable-model setup paths and explicit SDK serialization/rejection have regressions. Actual installed gates remain pending. Local reconnect acceptance is explicit opt-in and uses a run-targeted SIGURG signal only while idle; it never interrupts inference or the guest.
 
 Installed alpha.37 native matrix passed 644 cases and actual no-key loopback/tunnel/binding/redirect/teardown acceptance passed. Fresh keyed provider-console startup failed on credentialFields temporal initialization order, which no-key short-circuiting had masked. Fix the source ordering, rebuild the provider payload, retain alpha.37 unchanged and deliver alpha.38 from a new clean commit. Required native gates must bind alpha.38; no live/provider/deployment completion is claimed.
 
 ## Follow-up Work
-Live key entry occurs only after implementation and installed/hosted verification. No successful live-provider result is inferred from synthetic tests.
+Implementation and installed/hosted verification are complete. Operator recovery command: adr-cli --profile provider login --recover, followed by native Safari approval. Ghostty computer-use is currently denied by the tool for safety reasons, so full Flash/Pro/Custom API TUI acceptance requires an allowed surface or operator operation. Reopen dedicated role terminals to load alpha.38. Keys remain guest-only; preserve old VMs until supported ownership verification is available. Live success is not inferred from synthetic tests.
 
 ## Decision Log
 | Date | Decision | Rationale | Impact |
