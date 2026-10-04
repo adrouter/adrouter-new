@@ -1,3 +1,4 @@
+import { providerCanLaunch, providerDiagnostic, providerDiagnosticLines } from './provider-diagnostics.mjs';
 import { piCatalog } from './generated/pi-catalog.mjs';
 import { validateBinding } from './provider-broker.mjs';
 import { nativeFailureLines, providerFailureLines } from './coding-display.mjs';
@@ -16,7 +17,14 @@ import { MarketplaceDraft, MarketplaceListing, MarketplaceNetworkConfig, Provide
 export const accountingLines=s=>s?[`State: ${words(s.state)}`,`Reserved ${s.funded} · Charged ${s.charged} · Refunded ${s.refunded} test credits`,`Unresolved liability: ${s.reserved}`,s.state==='settlement_pending'?'Receipt pending: upstream outcome is unresolved.':`Settlement: ${words(s.state)}`]:['Receipt pending: remote stop/accounting could not be confirmed. Inspect My sessions.'];
 export const providerStatusLines = (s, now = Date.now()) => [s.stopped ? 'Provider operation has stopped.' : 'Keep this TUI open.',
   `VM: ${s.stopped ? s.teardownVerified === false ? 'teardown unverified' : s.teardownVerified === true ? 'not running' : 'stopping' : s.guestReady ? 'ready' : 'starting'}`,
-  `Backend: ${s.stopped ? 'offline' : s.relayReady && s.relayLeaseUntil > now ? 'Hot · ready' : s.firstFailure ? 'reconnecting' : 'awaiting relay confirmation'}`,
+  `Backend: ${s.stopped ? 'offline' : s.backendConfirmedAt && now - s.backendConfirmedAt < 15000 && s.relayReady && s.relayLeaseUntil > now ? 'Hot · ready' : s.firstFailure ? 'reconnecting' : 'awaiting relay confirmation'}`,
+  `State: ${words(s.state ?? (s.stopped?'stopped':'connecting'))}`,
+  `Publication: ${words(s.publication ?? 'unknown')}`,
+  `Relay: ${s.relayReady && s.relayLeaseUntil > now ? 'authenticated' : 'unconfirmed'}`,
+  `Backend confirmation: ${s.backendConfirmedAt ? date(s.backendConfirmedAt) : 'unknown'}`,
+  ...(s.qualification??[]).map(q=>`${q.model} · ${q.phase}: ${q.status}`),
+  ...providerDiagnosticLines(s.setupFailure??s.firstFailure),
+  ...(s.cleanupOutcomes??[]).map(o=>`Cleanup ${words(o.phase)}: ${o.status}${o.code?' · '+o.code:''}`),
   ...providerFailureLines(s.lastUpstreamFailure),
   ...(s.stopTrigger ? [`Stopped: ${words(s.stopTrigger.trigger)}`] : ['Refresh the listing to read backend readiness.'])];
 const item = (value, label, detail = '', disabled = false) => ({ value, label, detail:Array.isArray(detail)?detail.join(' '):detail, details:Array.isArray(detail)?detail:undefined, disabled });
@@ -25,6 +33,7 @@ const integer = (min, max) => value => /^(0|[1-9][0-9]*)$/.test(value) && Number
 const date = value => typeof value === 'number' ? new Date(value).toLocaleString() : '—';
 const words = value => String(value ?? '—').replaceAll('_', ' ');
 const problems = {
+  pi_setup_required: 'Open the provider connection in the TUI and choose Continue setup, then Start provider to authorize qualification.',
   node_delete_requires_paused: 'Pause this listing before deleting it. A serving listing cannot be deleted.',
   node_delete_requires_settlement: 'This listing still has unfinished sessions or accounting. Finish settlement before deleting it; held amounts remain unchanged.',
   node_deleted: 'This listing has been permanently deleted and cannot be restored or republished.',
@@ -112,6 +121,17 @@ export const providerFields = [
 export async function runTui(options = {}, dependencies = {}) {
   const ui = dependencies.ui ?? new TerminalUI(); let store = dependencies.store ?? new AuthStore(undefined, options.profile ?? 'default');
   let network = dependencies.network; let config; let runtimeConfig; const providersRunning = new Map(); const setupDrafts = new Map(); const limitDrafts = new Map(); const deletionKeys = new Map(); let currentProviderId;let verifiedIdentity,identityAt=0,identityError,authState='signed_out',identityGeneration=0;
+  const pruneProviders = () => { for (const [id,controller] of providersRunning) if (providerCanLaunch(controller)) providersRunning.delete(id); };
+  const trackProvider = (id,controller) => {
+    providersRunning.set(id,controller);
+    void controller.done.then(()=>{if(providersRunning.get(id)!==controller)return;ui.pending?.redraw?.();});
+    return controller;
+  };
+  const stopProvider = async id => {
+    const controller=providersRunning.get(id);if(!controller)return;
+    await (controller.status.cleanupRequired && controller.retryCleanup ? controller.retryCleanup() : controller.stop());
+    if (!providerCanLaunch(controller)) await ui.page('Provider cleanup required',providerStatusLines(controller.status));
+  };
   const readAuth=async()=>{try{return await store.read();}catch(error){if(error.code!=='state_unavailable')throw error;return {scope:'',unavailable:true};}};
   const display=new MarketplaceDisplay(()=>network,lines=>{ui.sidebar=lines;if(!ui.pending||ui.started)ui.draw?.();});
   const clearIdentity=()=>{identityGeneration++;authState='signed_out';verifiedIdentity=undefined;identityAt=0;identityError=undefined;ui.context=`Signed out · ${store.profile} · ${network.origin}`;};
@@ -137,7 +157,8 @@ export async function runTui(options = {}, dependencies = {}) {
   const attempt = async work => { try { return await work(); } catch (error) { if(authRecoveryCodes.has(error.code)){verifiedIdentity=undefined;identityAt=0;identityError=error;authState=error.code==='installation_revoked'?'revoked':'recovery_required';ui.context=`Sign-in needs attention · ${store.profile} · ${network.origin}`;} await ui.page('Could not continue', errorLines(error)); return null; } };
 
   async function signIn(operator = false, recovering = false) {
-    if (providersRunning.size) { await ui.page('Stop running work before sign-in repair', ['Use Stop to checkpoint and tear down the provider guest first. Remote cleanup may remain unconfirmed while sign-in is broken.']); return; }
+    pruneProviders();
+    if ([...providersRunning.values()].some(p=>!p.status.stopped||p.status.teardownVerified!==true)) { await ui.page('Stop running work before sign-in repair', ['Use Stop to checkpoint and tear down the provider guest first. Remote cleanup may remain unconfirmed while sign-in is broken.']); return; }
     if (operator && !recovering && store.profile !== 'operator') {
       store = new AuthStore(store.home, 'operator');
       network = new Network({origin:network.origin,local:network.local,store});
@@ -204,12 +225,7 @@ export async function runTui(options = {}, dependencies = {}) {
       if (value.status === 'activation_required' && currentProviderId === node.id) ui.pending?.resolve('refresh');
       if (ui.screen?.title?.startsWith('Provider operation')) ui.pending?.redraw?.();
     } }));
-    providersRunning.set(node.id, result);
-    void result.done.then(value => {
-      if (providersRunning.get(node.id) === result) providersRunning.delete(node.id);
-      if (currentProviderId === node.id) ui.pending?.resolve('refresh');
-      if (ui.screen?.title?.startsWith('Provider operation')) ui.pending?.redraw?.();
-    });
+    trackProvider(node.id,result);
     await ui.page(() => result.status.cleanupRequired ? 'Provider operation needs cleanup' : result.status.stopped ? 'Provider operation stopped' : 'Provider operation started', () => providerStatusLines(result.status),{footer:'Enter Continue · Esc / Ctrl+C Stop provider VM',onCancel:()=>result.status.stopped?undefined:result.stop()});
   }
   async function createListing() {
@@ -268,8 +284,8 @@ export async function runTui(options = {}, dependencies = {}) {
       const action=await ui.menu('Choose offered models',[item('continue',`Continue with ${selected.size} models`,'Only selected models can be published.',!selected.size),item('manual','Add model by ID','Use this when discovery is unavailable or the model is absent.'),...state.discoveredModels.filter(id=>!known.some(m=>m.id===id)).map(id=>item('discovered:'+id,id,'Discovered model; define verified metadata before offering.')),...known.map(m=>item(m.id,`${selected.has(m.id)?'[x]':'[ ]'} ${m.name}`,m.unavailableReason??`${m.id} · ${m.api}`,!!m.unavailableReason)),item('back','Back')]);
       if(!action||action==='back')return;if(action==='continue')break;
       if(action==='manual'||action.startsWith('discovered:')){
-        const values=await ui.form('Manual model definition',[{name:'id',label:'Exact model ID',default:action.startsWith('discovered:')?action.slice(11):'',maxLength:256,validate:required},{name:'contextWindow',label:'Context tokens',default:'32768',validate:integer(4096,131072)},{name:'maxTokens',label:'Maximum output tokens',default:'4096',validate:integer(128,8192)},...['input','output','cacheRead','cacheWrite'].map(name=>({name,label:`${name} USD per million tokens`,validate:v=>v.trim()!==''&&Number.isFinite(Number(v))&&Number(v)>=0?'':'Enter the verified rate; unknown is not zero.'})),{name:'thinking',label:'Thinking support',choices:['none','optional','required'],default:'none'}]);if(!values)continue;if(values.thinking==='required'){await ui.page('Thinking off is required',['This model cannot be offered until its endpoint supports thinking off.']);continue;}
-        state.connection.modelDefinitions=state.connection.modelDefinitions.filter(m=>m.id!==values.id);state.connection.modelDefinitions.push({id:values.id,contextWindow:Number(values.contextWindow),maxTokens:Number(values.maxTokens),cost:Object.fromEntries(['input','output','cacheRead','cacheWrite'].map(k=>[k,Number(values[k])])),thinking:values.thinking});selected.add(values.id);
+        const values=await ui.form('Manual model definition',[{name:'id',label:'Exact model ID',default:action.startsWith('discovered:')?action.slice(11):'',maxLength:256,validate:required},{name:'contextWindow',label:'Context tokens',default:'32768',validate:integer(4096,131072)},{name:'maxTokens',label:'Maximum output tokens',default:'4096',validate:integer(128,8192)},...['input','output','cacheRead','cacheWrite'].map(name=>({name,label:`${name} USD per million tokens`,validate:v=>v.trim()!==''&&Number.isFinite(Number(v))&&Number(v)>=0?'':'Enter the verified rate; unknown is not zero.'}))]);if(!values)continue;
+        state.connection.modelDefinitions=state.connection.modelDefinitions.filter(m=>m.id!==values.id);state.connection.modelDefinitions.push({id:values.id,contextWindow:Number(values.contextWindow),maxTokens:Number(values.maxTokens),cost:Object.fromEntries(['input','output','cacheRead','cacheWrite'].map(k=>[k,Number(values[k])])),thinking:'none'});selected.add(values.id);
       }else if(selected.has(action))selected.delete(action);else if(selected.size<16)selected.add(action);state.models=[...selected];
     }
     const values=await ui.form('Shared provider limits',[{name:'name',label:'Connection name',default:provider.name,validate:required},...provider.fields.map(f=>({...f,validate:v=>new RegExp(f.pattern).test(v)?'':'Enter the provider identifier.'})),{name:'totalTokens',label:'Total tokens across offered models',default:'1000000',validate:integer(1,999999999999)},{name:'testCredits',label:'Total AdRouter credits',default:'10000',validate:integer(1,999999999)},{name:'maxOutputTokens',label:'Maximum output per request',default:'1024',validate:integer(128,8192)}],state.limits,'Limits are cumulative. Consumed usage and unresolved reservations survive restarts.');if(!values)return;Object.assign(state.limits,values);
@@ -281,21 +297,32 @@ export async function runTui(options = {}, dependencies = {}) {
     const fields=Object.fromEntries(provider.fields.map(f=>[f.name,values[f.name]]));
     const payload={connectorProtocol:'pi_native_v2',name:values.name,provider:state.provider,models:[...selected],fields,connection:state.connection,totalTokens:values.totalTokens,testCredits:values.testCredits,maxOutputTokens:Number(values.maxOutputTokens),inputRate:state.limits.inputRate,outputRate:state.limits.outputRate};
     if(existing&&!await confirm('Save provider changes?',[`Shared limit: ${payload.totalTokens} tokens / ${payload.testCredits} AdRouter credits`,'Usage and liabilities remain. Changes require qualification again.'],'Save changes'))return;
-    const node=await post(existing?`/providers/nodes/${existing.id}/native`:'/providers/nodes',existing?{...payload,expectedRevision:existing.nativeRevision??0,confirmIncrease:true}:payload);setupDrafts.delete(draftKey);await ui.page('Connection saved',['No inference has run. Start includes chargeable qualification, explicit publication and serving.']);if(!existing)await manageNode(node.id,true);
+    const node=await post(existing?`/providers/nodes/${existing.id}/native`:'/providers/nodes',existing?{...payload,expectedRevision:existing.nativeRevision??0,confirmIncrease:true}:payload);setupDrafts.delete(draftKey);const next=await ui.menu('Connection saved',[item('continue','Continue setup','Prepare the guest; Start provider separately authorizes bounded qualification and publication.'),item('back','Back')],{lines:['No inference has run. Your connection is saved.']});if(next==='continue')await guidedProvider(node);if(!existing)await manageNode(node.id,true);
   }
   async function guidedNativeProvider(node) {
     if(node.suspended)throw new ClientError('node_suspended');
+    if(!providerCanLaunch(providersRunning.get(node.id))){await ui.page('Provider operation',()=>providerStatusLines(providersRunning.get(node.id).status));return;}
     const budget=await get('/providers/budget');
     if(BigInt(budget.remainingMicrousd)<=0n&&!await spendingBudget(true))return;
-    const {startProvider}=await import('./provider.mjs');
-    let controller;
+    const startProvider=dependencies.startProvider ?? (await import('./provider.mjs')).startProvider;
+    let controller, updateProgress;
+    const notify=()=>{if(controller && providersRunning.get(node.id)===controller){updateProgress?.(providerStatusLines(controller.status));ui.pending?.redraw?.();}};
     try {
-      controller=await ui.suspend(()=>startProvider(network,node.id,{prepareOnly:true,maxOutputTokens:node.maxOutputTokens,runtimeConfig}));
-      const action=await ui.menu('Start provider',[item('start','Start provider','Run bounded streaming and tool checks, publish selected models, then serve.'),item('back','Back')],{lines:[node.name,node.endpoint,...node.models.map(m=>'• '+m),`Shared allowance: ${node.sharedAllowance.totalTokens} tokens · ${node.sharedAllowance.testCredits} AdRouter credits`,`Output per request: ${node.maxOutputTokens}`,'API key is saved only in the isolated provider guest vault and survives Stop.','Compatibility checks consume shared limits and upstream spending authority.']});
-      if(action!=='start'){await controller.stop();return;}
-      await ui.task('Checking selected models',()=>controller.start());
-      providersRunning.set(node.id,controller);void controller.done.then(()=>{if(providersRunning.get(node.id)===controller)providersRunning.delete(node.id);ui.pending?.redraw?.();});
-    }catch(error){await controller?.stop();await ui.page('Provider setup needs correction',[...errorLines(error),...nativeFailureLines(error),...(error.provider?[`HTTP ${error.statusCode??'unknown'}`]:[]),'Your configuration is saved. Unknown checks retain their spending reservations.']);}
+      controller=await ui.suspend(()=>startProvider(network,node.id,{prepareOnly:true,maxOutputTokens:node.maxOutputTokens,runtimeConfig,notify}));
+      trackProvider(node.id,controller);
+      const action=await ui.menu('Start provider',[item('start','Start provider','Run bounded streaming and tool checks, publish selected models, then connect.'),item('back','Back')],{lines:[node.name,node.endpoint,...node.models.map(m=>'• '+m),`Shared allowance: ${node.sharedAllowance.totalTokens} tokens · ${node.sharedAllowance.testCredits} AdRouter credits`,`Output per request: ${node.maxOutputTokens}`,'API key is saved only in the isolated provider guest vault and survives Stop.','Compatibility checks consume shared limits and upstream spending authority.']});
+      if(action!=='start'){await controller.stop({trigger:'setup_cancelled'});return;}
+      await ui.task('Checking selected models',async(signal,update)=>{
+        updateProgress=update;const cancel=()=>void controller.stop({trigger:'setup_cancelled',error:new ClientError('cancelled')});
+        signal.addEventListener('abort',cancel,{once:true});
+        try { if(signal.aborted){cancel();throw new ClientError('cancelled');}return await controller.start(); }
+        finally { signal.removeEventListener('abort',cancel);updateProgress=undefined; }
+      },{cancel:true,lines:providerStatusLines(controller.status)});
+    }catch(error){
+      controller??=error.controller;if(controller)trackProvider(node.id,controller);
+      await controller?.stop({trigger:'setup_failed',error});
+      await ui.page('Provider setup needs correction',[...errorLines(error),...providerDiagnosticLines(controller?.status.setupFailure??providerDiagnostic('preparing',error)),...(controller?providerStatusLines(controller.status):[]),'Your configuration is saved. Unknown checks retain their spending reservations.']);
+    }
   }
   async function guidedProvider(node) {
     if(['pi_native_v1','pi_native_v2'].includes(node.connectorProtocol))return guidedNativeProvider(node);
@@ -345,29 +372,33 @@ export async function runTui(options = {}, dependencies = {}) {
   async function manageNode(id, created = false) {
     for (;;) {
       const node = await get(`/providers/nodes/${id}`);
-      if (providersRunning.get(node.id)?.status.stopped) providersRunning.delete(node.id);
+      const busy = !providerCanLaunch(providersRunning.get(node.id));
+      const native = ['pi_native_v1','pi_native_v2'].includes(node.connectorProtocol);
       currentProviderId = node.id;
       const exposure=await get('/providers/budget');
       const monitor=new ProviderActivityMonitor(network,node.id,()=>ui.pending?.redraw?.());await monitor.start();
       let selection;try{selection = await ui.menu(created ? 'Your listing is drafted' : node.name, [
-        ...(['pi_native_v1','pi_native_v2'].includes(node.connectorProtocol)?[item('editNative','Edit provider configuration','Pause and stop serving before changing models or limits.',!['draft','paused'].includes(node.status)||providersRunning.has(node.id))]:[]),
-        item('setup', 'Continue setup', 'Runtime → limits → publication → tariff → guest → relay', providersRunning.has(node.id)),
-        item('launch', node.availability === 'cold' ? 'Start cold control' : 'Launch hot VM', 'Keep this TUI open while providing.', providersRunning.has(node.id)),
-        ...(providersRunning.get(node.id)?.status.activation.length ? [item('activate', 'Activate reserved buyer session', 'Launch the VM and enter the key before the 120-second deadline.')] : []),
-        item('publish', 'Publish listing', 'Exposes listing metadata as a new immutable revision.', node.suspended),
+        ...(['pi_native_v1','pi_native_v2'].includes(node.connectorProtocol)?[item('editNative','Edit provider configuration','Pause and stop serving before changing models or limits.',!['draft','paused'].includes(node.status)||busy)]:[]),
+        item('setup', 'Continue setup', 'Guest → bounded checks → publication → relay → backend confirmation', busy),
+        ...(providersRunning.has(node.id)?[item('status','Provider status'),...(providersRunning.get(node.id).status.cleanupRequired?[item('cleanup','Retry cleanup','Verify owned guest teardown and run-scoped backend Stop.')]:[])]:[]),
+        ...(!native?[item('launch', node.availability === 'cold' ? 'Start cold control' : 'Launch hot VM', 'Keep this TUI open while providing.', busy)]:[]),
+        ...(providersRunning.get(node.id)?.status.activation?.length ? [item('activate', 'Activate reserved buyer session', 'Launch the VM and enter the key before the 120-second deadline.')] : []),
+        ...(!native?[item('publish', 'Publish listing', 'Exposes listing metadata as a new immutable revision.', node.suspended)]:[]),
         ...(node.tariffQualification?.mode==='automatic'?[item('tariffRefresh','Refresh official tariff')]:[]),
-        item('thinking','Configure thinking support','Stop serving and pause before changing capabilities.'),
+        ...(!native?[item('thinking','Configure thinking support','Stop serving and pause before changing capabilities.')]:[]),
         item('pause', 'Pause listing'), item('stop', 'Stop serving and close sessions'),
-        ...(node.status === 'paused' ? [item('delete', 'Delete paused listing', providersRunning.has(node.id) ? 'Stop serving in this terminal first.' : 'Permanent removal requires finished sessions and settlement. Receipts remain available.', providersRunning.has(node.id))] : []),
-        ...(node.connectorProtocol==='pi_native_v2'?[item('discover','Discover endpoint models','Uses saved guest authentication; no inference or automatic publication.'),item('rebind','Reclaim paused connection','Authorize this installation without resetting usage.'),item('disconnect','Disconnect API','Remove the saved guest credential and disable serving.')]:[]),
+        ...(node.status === 'paused' ? [item('delete', 'Delete paused listing', busy ? 'Stop serving in this terminal first.' : 'Permanent removal requires finished sessions and settlement. Receipts remain available.', busy)] : []),
+        ...(node.connectorProtocol==='pi_native_v2'?[item('discover','Discover endpoint models','Uses saved guest authentication; no inference or automatic publication.',busy),item('rebind','Reclaim paused connection','Authorize this installation without resetting usage.'),item('disconnect','Disconnect API','Remove the saved guest credential and disable serving.')]:[]),
         item('refresh', 'Refresh status'), item('back', 'Back'),
-      ], { tick:true,lines:()=>[...providerActivityLines(monitor.view()),...providerFailureLines(providersRunning.get(node.id)?.status.lastUpstreamFailure),`Models: ${node.models?.join(', ')??node.model}`, `Suspended: ${node.suspended ? 'yes' : 'no'} · Listing: ${node.status}`, `VM: ${providersRunning.get(node.id)?.status.guestReady ? 'ready' : 'not running'}`, `Backend connection: ${providerConnectionLabel(monitor.view())}`, `Activity: ${providersRunning.get(node.id)?.status.calls??0} dispatched requests`, ...(node.sharedAllowance?[`Shared tokens: ${node.sharedAllowance.consumedTokens} consumed · ${node.sharedAllowance.outstandingTokens} held / ${node.sharedAllowance.totalTokens}`,`AdRouter credits: ${node.sharedAllowance.consumedCredits} consumed · ${node.sharedAllowance.outstandingCredits} reserved/unresolved / ${node.sharedAllowance.testCredits}`,`Remaining: ${node.allowanceSummary?.remainingTokens??'unknown'} tokens · ${node.allowanceSummary?.remainingCredits??'unknown'} AdRouter credits`,...(node.allowanceSummary?.exhaustionReason?[node.allowanceSummary.exhaustionReason]:[])]:[]),`Remaining upstream authority: ${formatUsd(exposure.remainingMicrousd)}`, `Outstanding exposure: ${formatUsd(exposure.outstandingMicrousd)}`, `Provider: ${node.id}`,`Listing: ${node.listingId??'not published'}`,`Thinking: ${node.capabilities?.includes('thinking_v1')?'supported':'off'}`],footer:providersRunning.has(node.id)?'↑↓ Move  Enter Choose  Esc / Ctrl+C Stop provider VM':'↑↓ Move  Enter Choose  Esc Back' });}finally{monitor.stop();}
+      ], { tick:true,lines:()=>[...providerActivityLines(monitor.view()),...(providersRunning.has(node.id)?providerStatusLines(providersRunning.get(node.id).status):[]),`Models: ${node.models?.join(', ')??node.model}`, `Suspended: ${node.suspended ? 'yes' : 'no'} · Listing: ${node.status}`, `VM: ${providersRunning.get(node.id)?.status.guestReady ? 'ready' : 'not running'}`, `Backend connection: ${providerConnectionLabel(monitor.view())}`, `Activity: ${providersRunning.get(node.id)?.status.calls??0} dispatched requests`, ...(node.sharedAllowance?[`Shared tokens: ${node.sharedAllowance.consumedTokens} consumed · ${node.sharedAllowance.outstandingTokens} held / ${node.sharedAllowance.totalTokens}`,`AdRouter credits: ${node.sharedAllowance.consumedCredits} consumed · ${node.sharedAllowance.outstandingCredits} reserved/unresolved / ${node.sharedAllowance.testCredits}`,`Remaining: ${node.allowanceSummary?.remainingTokens??'unknown'} tokens · ${node.allowanceSummary?.remainingCredits??'unknown'} AdRouter credits`,...(node.allowanceSummary?.exhaustionReason?[node.allowanceSummary.exhaustionReason]:[])]:[]),`Remaining upstream authority: ${formatUsd(exposure.remainingMicrousd)}`, `Outstanding exposure: ${formatUsd(exposure.outstandingMicrousd)}`, `Provider: ${node.id}`,`Listing: ${node.listingId??'not published'}`,`Thinking: ${node.capabilities?.includes('thinking_v1')?'supported':'off'}`],footer:providersRunning.has(node.id)?'↑↓ Move  Enter Choose  Esc / Ctrl+C Stop provider VM':'↑↓ Move  Enter Choose  Esc Back' });}finally{monitor.stop();}
       currentProviderId = undefined; created = false;
-      if(!selection&&providersRunning.has(node.id)){await providersRunning.get(node.id).stop();providersRunning.delete(node.id);continue;}
+      if(!selection&&busy){await stopProvider(node.id);continue;}
       if (!selection || selection === 'back') return;
-      if(selection==='discover'){await attempt(async()=>{const {startProvider}=await import('./provider.mjs');let controller;try{controller=await ui.suspend(()=>startProvider(network,node.id,{prepareOnly:true,runtimeConfig,maxOutputTokens:node.maxOutputTokens}));const result=await ui.task('Discovering endpoint models',()=>controller.discover());await controller.stop();await createNativeListing({...node,discoveredModels:result.models});}finally{await controller?.stop();}});continue;}
+      if(selection==='status'){await ui.page('Provider operation',()=>providerStatusLines(providersRunning.get(node.id).status));continue;}
+      if(selection==='cleanup'){await stopProvider(node.id);continue;}
+      if(selection==='discover'){await attempt(async()=>{const {startProvider}=await import('./provider.mjs');let controller;try{controller=await ui.suspend(()=>startProvider(network,node.id,{prepareOnly:true,runtimeConfig,maxOutputTokens:node.maxOutputTokens}));trackProvider(node.id,controller);const result=await ui.task('Discovering endpoint models',()=>controller.discover());await controller.stop();if(!providerCanLaunch(controller))throw new ClientError('provider_cleanup_required');await createNativeListing({...node,discoveredModels:result.models});}catch(error){controller??=error.controller;if(controller)trackProvider(node.id,controller);throw error;}finally{await controller?.stop();}});continue;}
       if(selection==='rebind'){await attempt(()=>post(`/providers/nodes/${node.id}/rebind`,{expectedInstallationId:node.installationId}));continue;}
-      if(selection==='disconnect'){if(await confirm('Disconnect API?',['This removes the saved guest credential and disables serving. It does not revoke the upstream key.'],'Disconnect'))await attempt(async()=>{if(providersRunning.has(node.id)){await providersRunning.get(node.id).stop();providersRunning.delete(node.id);}const {disconnectProviderApi}=await import('./provider.mjs');await ui.task('Removing guest credential',()=>disconnectProviderApi(network,node.id,{runtimeConfig}));});continue;}
+      if(selection==='disconnect'){if(await confirm('Disconnect API?',['This removes the saved guest credential and disables serving. It does not revoke the upstream key.'],'Disconnect'))await attempt(async()=>{if(providersRunning.has(node.id)){await stopProvider(node.id);if(!providerCanLaunch(providersRunning.get(node.id)))return;}const {disconnectProviderApi}=await import('./provider.mjs');await ui.task('Removing guest credential',()=>disconnectProviderApi(network,node.id,{runtimeConfig}));});continue;}
       if(selection==='editNative'){await attempt(()=>createNativeListing(node));continue;}
       if(selection==='tariffRefresh'){await attempt(()=>post(`/providers/nodes/${node.id}/tariff/refresh`,{durationSeconds:3600}));continue;}
       if(selection==='thinking'){
@@ -377,7 +408,7 @@ export async function runTui(options = {}, dependencies = {}) {
         continue;
       }
       if (selection === 'delete') {
-        if (node.status !== 'paused' || providersRunning.has(node.id)) { await ui.page('Stop serving first', ['Pause the listing and stop its running provider before deletion.']); continue; }
+        if (node.status !== 'paused' || busy) { await ui.page('Stop serving first', ['Pause the listing and stop its running provider before deletion.']); continue; }
         const confirmed = await ui.menu('Delete paused listing?', [item(false, 'Cancel'), item(true, 'Delete permanently')], { lines: [node.name, 'This listing will disappear permanently from My provider listings and cannot be republished.', 'Existing receipts and accounting history remain available.', 'Unfinished sessions or settlement block deletion.'] }) === true;
         if (!confirmed) continue;
         if (!deletionKeys.has(node.id)) deletionKeys.set(node.id, randomUUID());
@@ -400,7 +431,7 @@ export async function runTui(options = {}, dependencies = {}) {
         if (selection === 'setup') await guidedProvider(node);
         else if (selection === 'launch') await guidedProvider(node);
         else if (selection === 'activate') await ui.suspend(() => providersRunning.get(node.id).warm());
-        else if (selection === 'stop' && providersRunning.has(node.id)) { await providersRunning.get(node.id).stop(); providersRunning.delete(node.id); }
+        else if (selection === 'stop' && providersRunning.has(node.id)) { await stopProvider(node.id); }
         else if (selection !== 'refresh' && await confirm(`${words(selection)} listing?`, [node.name, selection === 'stop' ? 'Known unused credits are released; unknown outcomes remain held.' : 'This changes the public availability of this listing.'])) await post(`/providers/nodes/${node.id}/${selection}`, selection === 'stop' ? {scope:'node',trigger:'operator_stop'} : {});
       });
     }
@@ -650,7 +681,7 @@ export async function runTui(options = {}, dependencies = {}) {
   async function signOut() {
     if(!await confirm('Sign out?', ['Stop local activity and lock saved provider credentials. Saved work, connections and accounting remain.','Server revocation will be attempted independently of access or refresh health.'],'Sign out'))return;
     for(const provider of providersRunning.values())await provider.stop({trigger:'sign_out'}).catch(()=>{});
-    providersRunning.clear();
+    pruneProviders();
     const result=await ui.task('Signing out locally',()=>network.logout());clearIdentity();
     await ui.page('Signed out',[result.message??'Signed out.']);
   }
@@ -670,7 +701,7 @@ export async function runTui(options = {}, dependencies = {}) {
     else if(action==='installations')await manageInstallations();
   }
   async function selectProfile() {
-    for(const provider of providersRunning.values())await provider.stop({trigger:'profile_switch'});providersRunning.clear();
+    for(const provider of providersRunning.values())await provider.stop({trigger:'profile_switch'});pruneProviders();if(providersRunning.size){await ui.page('Provider cleanup required',['Finish provider cleanup before switching profiles.']);return;}
     const chosen = await ui.menu('Choose profile', [item('default', 'Default', 'Preserves the original installation'), item('provider', 'Provider', 'Independent provider installation and refresh state'), item('buyer', 'Buyer', 'Independent buyer-only installation and refresh state'), item('operator', 'Operator', 'Independent operator approval'), item('custom', 'Named profile'), item('back', 'Back')]);
     if (!chosen || chosen === 'back') return;
     let profile = chosen;
@@ -736,7 +767,7 @@ export async function runTui(options = {}, dependencies = {}) {
           else if(selection==='logout')await signOut();
           else if (selection === 'profiles') await selectProfile();
           else if (selection === 'saved') await savedWork();
-          else if (selection === 'stopProviders') { for (const provider of providersRunning.values()) await provider.stop({ trigger: 'auth_recovery' }); providersRunning.clear(); }
+          else if (selection === 'stopProviders') { for (const provider of providersRunning.values()) await provider.stop({ trigger: 'auth_recovery' }); pruneProviders(); }
         });
         continue;
       }

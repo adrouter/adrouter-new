@@ -161,7 +161,7 @@ export class Network {
       try { if (reader) for (;;) { const { value, done } = await reader.read(); if (done) break; size += value.length; if (size > 1024 * 1024) { await reader.cancel(); throw new ClientError('response_too_large'); } chunks.push(Buffer.from(value)); } }
       catch(e){if(e instanceof ClientError)throw e;throw new ClientError(signal?.aborted?'cancelled':'network_unavailable_outcome_unknown');}
       finally { reader?.releaseLock(); }
-      let result; try { result = JSON.parse(Buffer.concat(chunks).toString('utf8')); } catch { throw new ClientError('invalid_network_response'); }
+      let result; try { result = JSON.parse(Buffer.concat(chunks).toString('utf8')); } catch { throw Object.assign(new ClientError(response.ok?'invalid_network_response':'network_request_rejected'),{status:response.status}); }
       if (response.status === 401 && result.code === 'use_dpop_nonce' && identity && attempt === 0) { nonce = response.headers.get('DPoP-Nonce'); if (nonce) continue; }
       if(!response.ok)throw Object.assign(new ClientError(typeof result.code==='string'&&/^[a-z0-9_]{1,80}$/.test(result.code)?result.code:'network_request_rejected'),{status:response.status});
       return result;

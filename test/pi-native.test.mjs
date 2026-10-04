@@ -113,3 +113,15 @@ test('DeepSeek streamed cache and reasoning usage are explicit and counted once'
  const n=connection('deepseek','openai-completions'),auth=await nativeLogin(n,key),events=[{id:'synthetic',choices:[{index:0,delta:{reasoning_content:'Synthetic reasoning.',content:'ready'},finish_reason:null}]},{id:'synthetic',choices:[{index:0,delta:{},finish_reason:'stop'}],usage:{prompt_tokens:10,completion_tokens:5,total_tokens:15,prompt_tokens_details:{cached_tokens:4},completion_tokens_details:{reasoning_tokens:3}}},'[DONE]'];
  try{const result=await nativeInference(n,auth,{...frame(n),thinking:true},AbortSignal.timeout(5000),()=>{},()=>{},checkedFetch(n,async()=>streamResponse(events)));assert.equal(result.inputTokens,10);assert.equal(result.outputTokens,5);assert.equal(result.nativeUsage.cacheRead,4);assert.equal(result.nativeUsage.reasoning,3);}finally{await auth.close();}
 });
+
+for(const id of ['deepseek-flash','deepseek-v4-pro'])test(`explicit ${id} qualification preserves pinned settings, thinking off and bounded tool roundtrip`,async()=>{
+ const m=piCatalog.providers.find(p=>p.id==='deepseek').models.find(m=>m.id===id);assert.ok(m);
+ const n={provider:'deepseek',fields:{},connectorProtocol:'pi_native_v2',nativeRevision:1,connection:{kind:'builtin',headerNames:[]},maxOutputTokens:512,model:id,nativeModels:[{model:id,api:m.api,endpoint:m.baseUrl,capabilities:m.capabilities,contextWindowTokens:m.contextWindow,maxOutputTokens:512,price:m.cost}]};
+ const auth=await nativeLogin(n,key),request={...frame(n),nativeRevision:1,endpoint:m.baseUrl,qualification:'tool',tools:[{type:'function',function:{name:'adr_probe',description:'probe',parameters:{type:'object',properties:{value:{type:'string'}},required:['value']}}}]};let calls=0;
+ const transport=async(_url,init)=>{const body=JSON.parse(init.body);calls++;assert.equal(body.model,id);assert.equal(body.max_tokens??body.max_completion_tokens,512);assert.deepEqual(body.thinking,{type:'disabled'});return streamResponse(calls===1?toolCompletion:completion);};
+ try{
+  const first=await nativeInference(n,auth,request,AbortSignal.timeout(5000),()=>{},()=>{},transport);assert.equal(first.nativeUsage.input,10);assert.equal(first.nativeUsage.output,2);
+  const result=await nativeInference(n,auth,{...request,qualification:'roundtrip',requestId:randomUUID(),messages:[...request.messages,first.nativeMessage,{role:'toolResult',toolCallId:first.toolCalls[0].id,toolName:'adr_probe',content:[{type:'text',text:'ready'}],isError:false,timestamp:0}]},AbortSignal.timeout(5000),()=>{},()=>{},transport);assert.equal(result.text,'ready');assert.equal(calls,2);
+  for(const status of [400,401,402,403,404,429,500]){let count=0;await assert.rejects(nativeInference(n,auth,request,AbortSignal.timeout(5000),()=>{},()=>{},async()=>{count++;return Response.json({error:{message:'private synthetic rejection'}},{status});}),e=>{assert.equal(e.statusCode,status);assert.equal(e.message.includes('private synthetic'),false);return true;});assert.equal(count,1);}
+ }finally{await auth.close();}
+});

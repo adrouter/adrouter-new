@@ -1,3 +1,4 @@
+import { providerDiagnostic } from './provider-diagnostics.mjs';
 import { randomUUID } from 'node:crypto';
 import { mkdir, lstat, writeFile, rename, unlink, readFile } from 'node:fs/promises';
 import { homedir } from 'node:os';
@@ -19,7 +20,7 @@ export class ProviderLifecycle {
     this.pending = Promise.resolve(); this.outcomes = []; this.saveFailed = false;
   }
   event(phase, value = {}) {
-    const entry = { at: this.now(), phase: identifier(phase), code: identifier(value.code), status: identifier(value.status),
+    const entry = { ...providerDiagnostic(phase,value,value,this.now), at: this.now(), phase: identifier(phase), code: identifier(value.code), status: identifier(value.status),
       signal: identifier(value.signal), exitCode: Number.isInteger(value.exitCode) ? value.exitCode : null,
       relayGeneration: Number.isSafeInteger(value.relayGeneration) ? value.relayGeneration : null,
       leaseUntil: Number.isSafeInteger(value.leaseUntil) ? value.leaseUntil : null };

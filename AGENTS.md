@@ -18,4 +18,4 @@ then alpha only. No mainnet and no latest promotion.
 
 ## Marketplace coding UI
 
-ADRv2 coding has no presence/“Are you still there?” checkpoint. Preserve host action approvals, accepted session expiry/request limits, spending enforcement and provider keepalive. Thinking is provider opt-in and initially off for buyers. Cost display uses accepted listing test-credit rates; sponsorship and USD settlement never enter model/tool context.
+ADRv2 coding has no presence/“Are you still there?” checkpoint. Preserve host action approvals, accepted session expiry/request limits, spending enforcement and provider keepalive. Pi thinking capabilities come from verified model/adapter metadata, with no provider setup toggle; buyer thinking remains opt-in and initially off. Cost display uses accepted listing test-credit rates; sponsorship and USD settlement never enter model/tool context.

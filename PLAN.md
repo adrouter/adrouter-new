@@ -1,3 +1,70 @@
+# Plan: Provider setup and live-failure repair — 4 October 2026
+
+## Goal
+Deliver one immutable private client update from alpha.33, followed by a fresh operator connection and controlled live acceptance.
+
+## Context
+Canonical client base 81f27ee35adb533aa70e7b63e65ef223e2e3550a in this clean canonical clone. Preserve the original checkout, existing accounts/connections/guest credentials and liabilities. The supplied implementation plan authorizes the changes below.
+
+## Research Summary
+Inspected pinned Pi adapter source, client controller/TUI and existing Router pi-checks metadata/teardown contracts. No new route, migration, dependency or Router deployment is needed.
+
+## Constraints
+No inference on Save/Continue. Start explicitly authorizes bounded checks and publication. No automatic inference replay or financial reservation release. Diagnostics contain only allowlisted metadata. Keep current Fly image and Pages deployment.
+
+## Out of Scope
+Public publication, channel promotion, upstream key handling on the host, database changes, resetting existing connections or unrelated work.
+
+## Reversibility
+Preserve alpha.33 and its installation. Package a new unused version only from clean committed source; switch launcher only after installed verification.
+
+## Step A: Specification and implementation
+### Status
+`review`
+### Tasks
+- [x] Update the existing provider API/model/account spec, retaining unrelated requirements.
+- [x] Unify Pi setup; derive reasoning capabilities; expose run states and recovery.
+- [x] Preserve phase/status/model/check failure evidence and separate readiness confirmations.
+### Acceptance Criteria
+- [ ] Save/Continue cannot infer; active/reconnecting runs expose Stop/status; cleanup failure blocks relaunch.
+- [ ] Unknown responses are inspected without replay, and liabilities survive teardown.
+### Validation Results
+Client `npm run check`: 614 passed. Explicit Flash/Pro adapter and TUI failure regressions passed. Router marketplace/authentication and six contract checks passed. Coding provenance passed (23,473 files). One initial concurrent credential-lock test failed; the full rerun passed without changing credential-store behavior. Final installed gates pending.
+
+## Step B: Private artifact and installed acceptance
+### Status
+`todo`
+### Tasks
+- [ ] Run client/provenance and relevant Router tests; exercise Pro and Flash independently.
+- [ ] Commit clean source, package once, verify isolated installation bytes.
+- [ ] Run actual Mac VM/PTY, eleven-minute idle, reconnect, teardown/restart gates and switch launcher.
+### Acceptance Criteria
+- [ ] Exact new installation passes synthetic installed gates; prior bytes/identities remain.
+### Validation Results
+Not run.
+
+## Step C: Final verification and cleanup
+### Status
+`todo`
+### Tasks
+- [ ] Review final diff; reconcile spec and evidence; remove temporary instrumentation.
+- [ ] Provide fresh-setup checklist for real Pro/custom/buyer/Apply/reconnect/Stop/restart acceptance.
+### Acceptance Criteria
+- [ ] Live acceptance stays failed/incomplete until the controlled operator rerun succeeds.
+### Validation Results
+Not run.
+
+## Follow-up Work
+Operator enters real credentials only in the provider guest; real paid acceptance remains separate from synthetic checks.
+
+## Decision Log
+| Date | Decision | Rationale | Impact |
+| --- | --- | --- | --- |
+| 2026-10-04 | User explicitly waived npm authentication | Private packaging only | No registry publication |
+| 2026-10-04 | Fly identity/exact registry manifest, Pages, GitHub and Supabase database access passed | Kickoff preflight | Preserve deployed images/pages |
+
+---
+
 # Plan: ADRv2 connection and account specification — 3 October 2026
 
 ## Goal

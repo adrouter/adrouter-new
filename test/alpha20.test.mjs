@@ -52,8 +52,8 @@ test('cell widths, sidebar details and metadata footer remain safe and readable'
 });
 
 test('provider status uses current polled readiness and marks unavailable data without cached lease guesses',()=>{
- assert.equal(providerConnectionLabel(null),'unavailable · last confirmed');
- assert.equal(providerConnectionLabel({stale:true,connectionFresh:true}),'unavailable · last confirmed');
+ assert.equal(providerConnectionLabel(null),'unknown availability · last confirmed');
+ assert.equal(providerConnectionLabel({stale:true,connectionFresh:true}),'unknown availability · last confirmed');
  assert.equal(providerConnectionLabel({connectionFresh:true}),'fresh');
  assert.equal(providerConnectionLabel({connectionFresh:false}),'offline');
 });
