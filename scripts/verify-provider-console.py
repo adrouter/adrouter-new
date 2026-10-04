@@ -21,7 +21,7 @@ try:
         if process.poll() is not None: break
     assert process.wait(timeout=3) == 0, 'synthetic_console_process_failed'
     assert sent_key and sent_return, 'guest_console_handoff_missing'
-    if environment.get('ADR_NATIVE_PI_ACCEPTANCE') == '2':
+    if environment.get('ADR_NATIVE_PI_ACCEPTANCE') in ['2', '3']:
         assert returns == 2, 'restart_handoff_missing'
         assert captured.count(b'Provider API key (hidden') == 1, 'restart_did_not_reuse_credential'
     assert termios.tcgetattr(slave) == before, 'terminal_modes_not_restored'

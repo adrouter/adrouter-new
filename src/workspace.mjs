@@ -131,10 +131,14 @@ export async function projectManifest(root) {
   if(!result.length)throw Error('workspace_import_empty');if(result.length>5000)throw Error('workspace_selection_invalid');return {root:canonical,files:result,totalBytes:total,exclusions};
 }
 
-export async function reviewAndApply(workspace, finalFiles, approve, {journalRoot, recover}={}) {
+export async function reviewAndApply(workspace, finalFiles, approve, {journalRoot, recover, selectedPaths}={}) {
   if(!journalRoot||!isAbsolute(journalRoot))throw Error('private_journal_required');
   const values={...finalFiles};for(const p of Object.keys(workspace.manifest))if(!Object.hasOwn(values,p))values[p]=null;
-  const proposal=recover?.proposal??await proposeExport(workspace,values);
+  let proposal=recover?.proposal??await proposeExport(workspace,values);
+  if(selectedPaths!==undefined){
+    if(recover||!Array.isArray(selectedPaths)||new Set(selectedPaths).size!==selectedPaths.length||selectedPaths.some(path=>!proposal.changes.some(c=>c.path===path)))throw Error('apply_selection_invalid');
+    proposal={...proposal,changes:proposal.changes.filter(c=>selectedPaths.includes(c.path))};
+  }
   if(!proposal.changes.length)return {status:'unchanged',completed:[]};
   if(!/^[a-f0-9-]{36}$/.test(proposal.id))throw Error('apply_operation_invalid');
   const digest=hash(JSON.stringify({proposal,root:workspace.root,identity:workspace.rootIdentity,snapshotRevision:workspace.snapshotRevision??null}));

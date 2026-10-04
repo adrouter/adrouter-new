@@ -10,6 +10,7 @@ command=['node','scripts/verify-coding-mac.mjs','--pty','--host-approval']
 progress_dir=tempfile.mkdtemp(prefix='adr-native-progress-');progress_file=progress_dir+'/state.json'
 p=subprocess.Popen(command,stdin=slave,stdout=slave,stderr=slave,env={**os.environ,'TERM':'xterm-256color','ADR_NATIVE_PROGRESS_FILE':progress_file},close_fds=True)
 buffer=b'';answers=0;followups=0;started=time.monotonic();quit_sent=False;ready_at=None;reviews=0;last_review=0;cycles=0;cycle_requested=False;cycle_sent_at=0;cycle_followup=False;draft_sent=False;draft_at=None;resized=False;mouse_exercised=False;added_style=False;removed_style=False;command_card=False;indented_command=False;last_dispatch=0;cycle_baseline=0
+deny_apply=False;selected_apply=False
 try:
  while time.monotonic()-started<duration+180:
   if select.select([master],[],[],.1)[0]:
@@ -20,11 +21,15 @@ try:
    command_card=command_card or b'Working directory: /workspace' in buffer
    indented_command=indented_command or b'  python3 added.py' in buffer
    if len(buffer)>2*1024*1024:buffer=buffer[-1024*1024:]
+  if b'ADR_NATIVE_APPLY_DENY' in buffer:deny_apply=True;buffer=buffer.replace(b'ADR_NATIVE_APPLY_DENY',b'')
+  if b'"caseId":"native-selected-apply"' in buffer:selected_apply=True
   if b'Approve this action once?' in buffer and b'\xe2\x80\xba Deny' in buffer and time.monotonic()-last_review>.3:
    reviews+=1;last_review=time.monotonic()
+   reject=deny_apply or b'write \xc2\xb7 denied.txt' in buffer
    if '--enhanced' in __import__('sys').argv:
-    sequence=b'\x1b[13;1u' if b'write \xc2\xb7 denied.txt' in buffer else b'\x1b[1;1:1B\x1b[1;1:3B\x1b[13;1u'
-   else:sequence=b'\r' if b'write \xc2\xb7 denied.txt' in buffer else b'\x1b[B\r'
+    sequence=b'\x1b[13;1u' if reject else b'\x1b[1;1:1B\x1b[1;1:3B\x1b[13;1u'
+   else:sequence=b'\r' if reject else b'\x1b[B\r'
+   deny_apply=False
    os.write(master,sequence);buffer=b''
   if b'ADR_NATIVE_DRAFT_TEST' in buffer and not draft_sent:
    draft_at=time.monotonic();buffer=b''
@@ -65,6 +70,7 @@ try:
  assert draft_sent,'multiline_draft_not_exercised'
  assert cycles==2,'same_process_continue_cycles_missing'
  assert reviews>=4,'host_reviews_incomplete'
+ assert selected_apply,'selected_file_apply_acceptance_missing'
  assert followups==4 and answers>=5 and quit_sent,'guest_followups_incomplete'
  after=termios.tcgetattr(slave)
  # Darwin sets PENDIN when returning to canonical mode: it is pending-input

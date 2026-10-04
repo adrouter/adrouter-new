@@ -50,3 +50,15 @@ test('saved recovery denial and changed completed host bytes fail without writes
  await assert.rejects(work.recover(journal),/apply_denied/);await writeFile(join(f.root,'main.txt'),'operator');
  const allowed=await openSavedCodingWork('buyer',f.id,{directory:f.directory,approve:async()=>true});assert.equal((await allowed.recover(journal)).code,'apply_recovery_conflict');assert.equal(await readFile(join(f.root,'main.txt'),'utf8'),'operator');await assert.rejects(readFile(join(f.root,'new.txt')));
 }));
+
+test('selected Apply binds exact paths, defaults UI selection empty and preserves remaining snapshot changes',()=>fixture(async f=>{
+ const approvals=[];const options={directory:f.directory,approve:async action=>{approvals.push(action);return true;}};
+ const work=await openSavedCodingWork('buyer',f.id,options);
+ assert.equal((await work.apply([])).status,'unchanged');assert.equal(approvals.length,0);
+ await assert.rejects(work.apply(['missing.txt']),/apply_selection_invalid/);
+ const applied=await work.apply(['new.txt']);assert.deepEqual(applied.completed,['new.txt']);
+ assert.deepEqual(approvals[0].changes.map(c=>c.path),['new.txt']);assert.ok(approvals[0].digest);assert.ok(approvals[0].changes[0].diff.some(line=>line.includes('created')));
+ assert.equal(await readFile(join(f.root,'main.txt'),'utf8'),'before');assert.equal(await readFile(join(f.root,'new.txt'),'utf8'),'created');
+ const reopened=await openSavedCodingWork('buyer',f.id,options);assert.deepEqual((await reopened.review()).changes.map(c=>c.path),['main.txt']);
+ assert.deepEqual((await reopened.apply(['main.txt'])).completed,['main.txt']);assert.equal(await readFile(join(f.root,'main.txt'),'utf8'),'after');
+}));

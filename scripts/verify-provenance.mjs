@@ -18,3 +18,7 @@ for (const [path, entry] of Object.entries(pi.files)) assert.equal(createHash('s
 console.log('Pi component provenance passed');
 
 if(metadata.piProjectionSha256)assert.equal(createHash('sha256').update(await readFile(new URL('../src/generated/pi-catalog.mjs',import.meta.url))).digest('hex'),metadata.piProjectionSha256);
+
+assert.equal(createHash('sha256').update(await readFile(new URL('../src/generated/provider-catalog.mjs',import.meta.url))).digest('hex'),metadata.providerProjectionSha256);
+
+if(metadata.providerBudgetProjectionSha256)assert.equal(createHash('sha256').update(await readFile(new URL('../src/generated/provider-budget.mjs',import.meta.url))).digest('hex'),metadata.providerBudgetProjectionSha256);

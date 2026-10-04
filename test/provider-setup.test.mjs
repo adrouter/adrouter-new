@@ -41,3 +41,9 @@ test('hidden bracketed paste survives split markers and trailing newline without
  for(const b of Buffer.from('\x1b[200~'+synthetic+'\n\x1b[201~'))tty.input.emit('data',Buffer.from([b]));
  await Promise.resolve();assert.equal(resolved,false);tty.input.emit('data',Buffer.from('\r'));assert.equal(await pending,synthetic);assert.equal(tty.displayed().includes(synthetic),false);
 });
+
+test('guest cloud credential fields allow optional session token and hidden multiline service JSON',async()=>{
+ const blank=terminal(),pending=readHiddenKey(blank.input,blank.output,'Optional token: ',{allowEmpty:true});blank.input.emit('data',Buffer.from('\r'));assert.equal(await pending,'');assert.equal(blank.input.isRaw,false);
+ const tty=terminal(),account={client_email:'synthetic@example.test',private_key:'synthetic-not-a-key'},json=JSON.stringify(account,null,2),read=readHiddenKey(tty.input,tty.output,'Guest service account: ',{json:true});
+ tty.input.emit('data',Buffer.from('\x1b[200~'+json+'\x1b[201~\r'));assert.deepEqual(JSON.parse(await read),account);assert.equal(tty.displayed().includes('synthetic-not-a-key'),false);assert.equal(tty.input.isRaw,false);
+});

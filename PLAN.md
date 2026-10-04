@@ -1,3 +1,91 @@
+# Plan: Reliable API hosting and buyer coding — 4 October 2026
+
+## Goal
+Implement the supplied replacement specification end to end; this repository owns provider and buyer VMs, bundled adapters, setup, selected-file Apply, private installed artifact.
+
+## Context
+Designated clean inputs: client 537d31e6d38e7c1b0ee0762eb8b7de1521eadedc; Router ef3d80dbb3145b2b0e78589ae83aa19f858e4ea1. The approved replacement specification supersedes contradictory historical requirements. Earlier plan sections are preserved below.
+
+## Research Summary
+Fresh GitHub release reads freeze Pi v1.0.2 and OpenCode v1.18.34. DeepSeek documents retained reasoning_content for all preceding assistant turns when tools are supplied. OpenCode uses SDK-backed providers and custom endpoints. Existing source holds full unused session funding on uncertainty and requires manual execution release. Context7 is unavailable; official documentation and pinned executable source provide verification.
+
+## Constraints
+Preserve guest-only secrets, role isolation, account spending limits, no replay, one provider VM/slot, original projects and saved work. No database reset or planned schema migration. Generate contracts/catalog from Router source. Separate accounting from execution and cleanup. Dependencies may change only for pinned required adapters. Deployment uses clean committed inputs, sole-relay drain/in-place replacement and unchanged Pages.
+
+## Out of Scope
+Public npm publication/promotion, unrelated users' cleanup, access-policy/protection changes, secret export and legacy-client changes.
+
+## Reversibility
+Keep previous immutable artifacts and installations. Make source changes in the designated checkouts. Append ledger/receipt evidence; preserve unresolved holds. Cleanup is limited to authorized old failed acceptance execution resources.
+
+## Step A: Specification and reproducible inputs
+### Status
+`done`
+### Tasks
+- [x] Replace both specification copies and freeze upstream source/dependency/catalog identities.
+### Relevant Files
+- docs/provider-api-model-account-management-spec.md (client); backend/scripts/generate-pi-catalog.mjs (Router).
+### Acceptance Criteria
+- [x] Specifications agree; eligible adapters have explicit coverage and provenance.
+### Validation Results
+Five-platform kickoff: Fly app/Machine/registry, Pages project/deployment, Supabase project/database, GitHub repository/ref access passed. Router protections endpoint is plan-limited (403), branch metadata reports unprotected. npm E401 explicitly waived by operator on 4 October for this private delivery. No public publishing path is selected.
+
+
+Continuation preflight on 4 October 2026: Fly app/Machine, Pages project/deployment, Supabase linked database and canonical GitHub refs/push permissions passed; buyer/provider/operator profiles authenticated through supported operations. npm authentication remains explicitly waived for this private delivery. Fly registry authentication and authenticated recovery-manifest inspection timed out despite working Docker and reachable public registry/control-plane endpoints. Router ruleset protections remain unverified (plan-limited HTTP 403); branch metadata was read independently. Required registry check is pending operator terminal diagnosis before implementation/build/packaging/deployment. Source/runtime and hosted artifacts have not advanced in this continuation. Metadata-only receipt: outputs/adr-replacement-2026-10-04/continuation-preflight.json.
+
+Registry recheck after operator terminal authentication passed: flyctl authentication succeeded and authenticated recovery-manifest digest matched. Continuation source implementation is now in progress; npm waiver remains unchanged.
+
+## Step B: Execution, accounting and lifecycle
+### Status
+`review`
+### Tasks
+- [ ] Fence completion/teardown acknowledgements; unify Stop/retirement; expose execution, cleanup and accounting independently.
+- [ ] Refund funded minus charged minus unresolved reserved minus prior refunds exactly once; retain late reconciliation.
+- [ ] Exercise concurrency and transaction loading in disposable PostgreSQL.
+### Relevant Files
+- Router backend/src/marketplace/{service,store,relay,routes}.ts; client src/provider*.mjs and buyer lifecycle.
+### Acceptance Criteria
+- [ ] Confirmed execution ends independently of liabilities; stale callbacks cannot affect newer runs.
+### Validation Results
+Not run.
+
+## Step C: Provider and buyer completion
+### Status
+`review`
+### Tasks
+- [ ] Implement generated combined catalog, bundled auth/adapters, native settings and consistent 4096 output defaults.
+- [ ] Preserve Pi reasoning/tool metadata, actionable terminal state and exact selected-file Apply approvals.
+### Acceptance Criteria
+- [ ] Adapter matrix covers every eligible provider; selected Apply/denial/conflict/recovery passes.
+### Validation Results
+Not run.
+
+## Step D: Final verification and cleanup
+### Status
+`in_progress`
+### Tasks
+- [ ] Run relevant complete suites, inspect diff and remove debugging instrumentation.
+- [ ] Build clean paired immutable artifacts, deploy Router and verify exact installed Mac VM/PTY/660-second lifecycle gates.
+- [ ] Clean only authorized failed acceptance resources, then perform fresh independent Flash/Pro and Custom API acceptance with operator guest-key entry.
+- [ ] Record exact artifacts, separate catalog/adapter/live coverage and remaining limitations.
+### Acceptance Criteria
+- [ ] Every definition-of-done gate in the supplied specification has evidence.
+### Validation Results
+Not run.
+
+Current continuation source checks: 870 client tests passed; coding runtime rebuilt from retained be7c53dc0b63fb90b70bd6cb7cad4d5713cc0d1a with retained upstream suites and 23,473-file provenance verification. Provider runtime rebuilt with pinned Pi 1.0.2 and SDK inventories (28,005 files). Router authoritative inputs committed before generation; generator drift check passed against Router 513e75b0f6d91d68671a2e403b5c395138b0542f. Shared budget policy, both unavailable-model setup paths and explicit SDK serialization/rejection have regressions. Actual installed gates remain pending. Local reconnect acceptance is explicit opt-in and uses a run-targeted SIGURG signal only while idle; it never interrupts inference or the guest.
+
+## Follow-up Work
+Live key entry occurs only after implementation and installed/hosted verification. No successful live-provider result is inferred from synthetic tests.
+
+## Decision Log
+| Date | Decision | Rationale | Impact |
+| --- | --- | --- | --- |
+| 2026-10-04 | Skip npm authentication under explicit operator approval | Private delivery; current E401 acknowledged | Continue implementation; public publication remains out of scope |
+| 2026-10-04 | Preserve prior plans below | Historical evidence and existing decisions | New replacement specification controls current work |
+
+---
+
 # Plan: Provider setup and live-failure repair — 4 October 2026
 
 ## Goal

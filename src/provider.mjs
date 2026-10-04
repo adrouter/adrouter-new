@@ -1,3 +1,5 @@
+import {providerCatalog} from './generated/provider-catalog.mjs';
+import {providerRequiresBudget} from './generated/provider-budget.mjs';
 import { verifiedThinking } from './provider-models.mjs';
 import { providerDiagnostic } from './provider-diagnostics.mjs';
 import {credentialVolume} from './credential-volume.mjs';
@@ -32,12 +34,22 @@ export async function createGuest(runtime, hostPorts, copyDirectory, endpoint, {
   }catch(error){try{error.sandboxName=name;}catch{}await runtime.remove(name).catch(()=>{});throw error;}
 }
 
-export async function startProvider(networkInput, nodeId, { prepareOnly = false, maxCalls = 5, maxOutputTokens = 1024, runtimeConfig, runtime: providedRuntime, noKey = false, notify = () => {}, continuous: requestedContinuous, consoleOptions, diagnosticsDirectory, intervals = {}, Socket = WebSocket, now = Date.now } = {}) {
+let terminalProvider;
+export async function startProvider(...args) {
+  if(terminalProvider?.controller?.status.teardownVerified===true&&terminalProvider.controller.status.stopped)terminalProvider=undefined;
+  if(terminalProvider)throw new ClientError('provider_terminal_cleanup_required');
+  const slot={};terminalProvider=slot;
+  try {const controller=await createProviderController(...args);slot.controller=controller;return controller;}
+  catch(error){slot.controller=error.controller;if(!slot.controller||slot.controller.status.teardownVerified===true)terminalProvider=undefined;throw error;}
+}
+async function createProviderController(networkInput, nodeId, { prepareOnly = false, maxCalls = 5, maxOutputTokens = 4096, runtimeConfig, runtime: providedRuntime, noKey = false, notify = () => {}, continuous: requestedContinuous, consoleOptions, diagnosticsDirectory, intervals = {}, Socket = WebSocket, now = Date.now } = {}) {
   if (!Number.isInteger(maxCalls) || maxCalls < 1 || maxCalls > 30 || !Number.isInteger(maxOutputTokens) || maxOutputTokens < 1 || maxOutputTokens > 8192) throw new ClientError('provider_exposure_bound_invalid');
   const network = Object.create(networkInput); network.actor = 'provider';
   let node = await network.request(`/v2/providers/nodes/${nodeId}`);
-  const native=['pi_native_v1','pi_native_v2'].includes(node.connectorProtocol);
-  if (native && node.nativeModels?.some(m=>m.capabilities?.includes('thinking_v1')&&!verifiedThinking(node.provider,m.model,m.api))) throw new ClientError('pi_reasoning_metadata_unverified');
+  const native=['pi_native_v1','pi_native_v2','pi_native_v3'].includes(node.connectorProtocol);
+  if(node.connectorProtocol==='pi_native_v3'&&node.catalogDigest!==providerCatalog.digest)throw new ClientError('provider_catalog_upgrade_required');
+  if (native && node.connectorProtocol!=='pi_native_v3' && node.nativeModels?.some(m=>m.capabilities?.includes('thinking_v1')&&!verifiedThinking(node.provider,m.model,m.api))) throw new ClientError('pi_reasoning_metadata_unverified');
+  if(native&&node.supplyClass==='self_hosted'&&node.connection?.authentication==='none')noKey=true;
   const connector=native?{authentication:'native'}:resolveConnector(node);
   const listingBound=(id,revision)=>native?node.listingIds?.includes(id)&&(revision===undefined||revision===node.listingRevision):id===node.listingId&&(revision===undefined||revision===node.listingRevision);
   if (native && !prepareOnly) throw new ClientError('pi_setup_required');
@@ -62,11 +74,12 @@ export async function startProvider(networkInput, nodeId, { prepareOnly = false,
   const qualification = [];
   let publication = node.status === 'published' ? 'published' : 'not_published';
   const control = [],nativeCheckIds=[];
+  const executionBindings = new Map();
   let complete; const done = new Promise(resolve => { complete = resolve; });
   let activation = [];
   const abort = new AbortController();
   const bounded = ms => AbortSignal.any([abort.signal, AbortSignal.timeout(ms)]);
-  const snapshot = () => ({ state: state==='serving' && (!backendConfirmedAt || now()-backendConfirmedAt>=15000) ? 'reconnecting' : state, publication, backendConfirmedAt, setupFailure, cleanupOutcomes: cleanupOutcomes.map(o=>({...o})), recoveryPending, qualification: qualification.map(q=>({...q})), stopped, guestReady, relayReady, calls, activation, providerRunId, relayGeneration, relayLeaseUntil, cleanupRequired, teardownVerified, lastUpstreamFailure:lastUpstreamFailure?{...lastUpstreamFailure}:undefined, firstFailure: lifecycle.firstFailure, stopTrigger: lifecycle.stopTrigger });
+  const snapshot = () => ({ runtimeState:state==='serving'?(pending?'busy':'available'):state, state: state==='serving' && (!backendConfirmedAt || now()-backendConfirmedAt>=15000) ? 'reconnecting' : state, publication, backendConfirmedAt, setupFailure, cleanupOutcomes: cleanupOutcomes.map(o=>({...o})), recoveryPending, qualification: qualification.map(q=>({...q})), stopped, guestReady, relayReady, calls, activation, providerRunId, relayGeneration, relayLeaseUntil, cleanupRequired, teardownVerified, lastUpstreamFailure:lastUpstreamFailure?{...lastUpstreamFailure}:undefined, firstFailure: lifecycle.firstFailure, stopTrigger: lifecycle.stopTrigger });
   const announce = value => { try { notify({ ...value, ...snapshot() }); } catch {} };
   const failure = (phase, error, fallback) => lifecycle.event(phase, { ...providerDiagnostic(phase, {...error, code:error?.code ?? fallback}, {providerRunId}, now), signal: error?.signal, exitCode: error?.exitCode });
   const clearReadiness = code => { state = 'reconnecting'; backendConfirmedAt = null; relayReady = false; relayLeaseUntil = 0; clearTimeout(leaseTimer); lifecycle.event('relay', { code, status: 'reconnecting' }); announce({ status: 'reconnecting' }); };
@@ -87,6 +100,10 @@ export async function startProvider(networkInput, nodeId, { prepareOnly = false,
       if (req.method === 'POST' && req.url === '/ready' && bytes === '{"ready":true}') { guestReady = true; lastGuestPoll = now(); }
       else if (req.method === 'GET' && req.url === '/work') { lastGuestPoll = now(); reply = stopped ? { type: 'stop' } : control.shift() ?? pending?.frame ?? null; if (reply === pending?.frame) pending.frame = undefined; }
       else if(req.method==='POST'&&req.url==='/discovered'){const data=JSON.parse(bytes);if(!pending?.discovery||data.requestId!==pending.id)throw Error('discovery_binding');const request=pending;pending=undefined;if(data.error)request.reject(new ClientError(['upstream_authentication_failed','model_discovery_unavailable'].includes(data.error)?data.error:'model_discovery_unavailable'));else if(Array.isArray(data.models)&&data.models.length<=256&&data.models.every(m=>typeof m==='string'&&/^[\x20-\x7e]{1,256}$/.test(m)))request.resolve({models:data.models});else request.reject(new ClientError('model_discovery_unavailable'));}
+      else if(req.method==='POST'&&req.url==='/configured') {
+        const data=JSON.parse(bytes);if(!pending?.configuration||data.requestId!==pending.id||data.nativeRevision!==node.nativeRevision)throw Error('configuration_binding');
+        const operation=pending;pending=undefined;operation.resolve({configured:true});
+      }
       else if (req.method === 'POST' && req.url === '/handshake-result') {
         const result = JSON.parse(bytes);
         if (!pending || !HandshakeResult(result) || pending.id !== result.challengeId || Object.keys(pending.binding).some(k => k !== 'type' && pending.binding[k] !== result[k])) throw new Error('handshake_binding');
@@ -99,6 +116,19 @@ export async function startProvider(networkInput, nodeId, { prepareOnly = false,
         if (!pending || timing.requestId !== pending.id || timing.phase !== 'upstream' || !['unknown','succeeded'].includes(timing.outcome) || (timing.statusCode !== null && (!Number.isInteger(timing.statusCode) || timing.statusCode < 100 || timing.statusCode > 599)) || !Number.isInteger(timing.totalMs) || timing.totalMs < 0 || timing.totalMs > 135000 || (timing.headersMs !== null && (!Number.isInteger(timing.headersMs) || timing.headersMs < 0 || timing.headersMs > timing.totalMs))) throw new Error('timing_rejected');
         pending.upstreamStatus=timing.statusCode;
         if (!pending.cancelled && relayReady && pending.socket === socket) socket.send(JSON.stringify({type:'diagnostic',requestId:timing.requestId,phase:'upstream',outcome:timing.outcome,statusCode:timing.statusCode,headersMs:timing.headersMs,totalMs:timing.totalMs}));
+      } else if (req.method === 'POST' && req.url === '/usage') {
+        const data=JSON.parse(bytes),binding=executionBindings.get(data.requestId);
+        if(pending?.qualification&&pending.id===data.requestId){await network.request(`/v2/providers/nodes/${nodeId}/pi-checks/complete`,{method:'POST',body:{id:data.requestId,usage:data.nativeUsage,streaming:true,tools:false,completed:false},signal:AbortSignal.timeout(10000)});res.writeHead(200,{'content-type':'application/json'}).end('{"ok":true}');return;}
+        if(!binding)throw new Error('execution_binding');
+        await network.request(`/v2/providers/nodes/${nodeId}/execution-usage`,{method:'POST',body:{...binding,inputTokens:data.inputTokens,outputTokens:data.outputTokens,...(data.nativeUsage?{nativeUsage:data.nativeUsage}:{})},signal:AbortSignal.timeout(10000)});
+      } else if (req.method === 'POST' && req.url === '/execution-complete') {
+        const result = JSON.parse(bytes), binding = executionBindings.get(result.requestId);
+        if (!binding) throw new Error('execution_binding');
+        // Guest sends this only after its handler has exited, never on socket close.
+        if(relayReady&&socket?.readyState===Socket.OPEN&&binding.relayGeneration===relayGeneration)socket.send(JSON.stringify({type:'execution_complete',...binding}));
+        // The authenticated status acknowledgement also covers lost relay replies.
+        await network.request(`/v2/providers/nodes/${nodeId}/execution-complete`, {method:'POST',body:binding,signal:AbortSignal.timeout(10000)});
+        // Retain completed bindings for idempotent retries after a lost reply.
       } else if (req.method === 'POST' && req.url === '/result') {
         const result = JSON.parse(bytes);
         if(pending?.qualification){if(result.requestId!==pending.id)throw Error('qualification_binding');const check=pending;pending=undefined;check.resolve(result);res.writeHead(200,{'content-type':'application/json'}).end('{"ok":true}');return;}
@@ -128,15 +158,15 @@ export async function startProvider(networkInput, nodeId, { prepareOnly = false,
   // the approved upstream; this process never decrypts or constructs credentials.
   const tunnels = new Set();
   broker.on('connect', (req, socket, head) => {
-    const allowed=native?(node.nativeModels??[]).map(m=>new URL(m.endpoint).origin):[];
+    const allowed=native?[...(node.nativeModels??[]).map(m=>new URL(m.endpoint).origin),...(node.nativeModels??[]).flatMap(m=>m.authentication==='google_service_account'?['https://oauth2.googleapis.com']:m.authentication==='ibm_api_key'?['https://iam.cloud.ibm.com']:m.authentication==='sap_service_key'?[new URL(node.fields.AUTH_BASE_URL).origin]:[])]:[];
     const requestedOrigin=allowed.find(origin=>req.url==='/upstream/'+encodeURIComponent(origin));
     if(stopped || (native?!requestedOrigin:req.url !== '/upstream') || req.headers.authorization !== `Bearer ${capability}` || head.length || tunnels.size >= 2) { socket.destroy(); return; }
     const target=native?new URL(requestedOrigin):binding.url;
-    const upstream=connect({host:target.hostname,port:Number(target.port)||443,lookup(host,options,callback){
+    const upstream=connect({host:target.hostname.replace(/^\[|\]$/g,''),port:Number(target.port)||(target.protocol==='http:'?80:443),lookup(host,options,callback){
       lookup(host,options,(error,addresses,family)=>{
         if(error){callback(error,addresses,family);return;}
         const all=Array.isArray(addresses)?addresses.map(a=>a.address):[addresses];
-        if(!all.every(publicAddress)){callback(new Error('address_rejected'),'',4);return;}
+        if(!(node.supplyClass==='self_hosted'&&binding.loopback&&target.hostname===binding.url.hostname&&target.port===binding.url.port)&&!all.every(publicAddress)){callback(new Error('address_rejected'),'',4);return;}
         callback(null,addresses,family);
       });
     }});
@@ -153,15 +183,15 @@ export async function startProvider(networkInput, nodeId, { prepareOnly = false,
     if (stopped || starting || guest) throw new ClientError('guest_already_started');
     starting = true;
     try {
-      if(node.connectorProtocol==='pi_native_v2')vault=await credentialVolume(network,runtime,node);
+      if(['pi_native_v2','pi_native_v3'].includes(node.connectorProtocol))vault=await credentialVolume(network,runtime,node);
       copied = await mkdtemp(join(tmpdir(), 'adr-provider-'));
       if(native){await (await import('./provider-runtime.mjs')).verifyProviderRuntime();await cp(new URL('../provider-runtime/',import.meta.url),copied,{recursive:true});}
       for (const [from, to] of [['guest-credentials.mjs','guest-credentials.mjs'], ['guest/provider-console.mjs', 'provider-console.mjs'], ['provider-broker.mjs', 'provider-broker.mjs'], ['coding-wire.mjs','coding-wire.mjs'], ['provider-setup.mjs', 'provider-setup.mjs']]) await copyFile(new URL(from, import.meta.url), join(copied, to));
       await mkdir(join(copied,'generated'),{recursive:true});
       for(const file of ['connectors.mjs'])await copyFile(new URL('./generated/'+file,import.meta.url),join(copied,'generated',file));
       await copyFile(new URL('./connectors.mjs',import.meta.url),join(copied,'connectors.mjs'));
-      await writeFile(join(copied, 'config.json'), JSON.stringify({ control: `http://host.microsandbox.internal:${broker.address().port}`, capability, noKey, persistentCredentials:!!vault, node: binding.loopback ? {...node,localEngine:true,endpoint:node.endpoint.replace(binding.url.hostname,'host.microsandbox.internal')} : {...node,tunnel:{port:broker.address().port,capability}}, maxCalls, maxOutputTokens, continuous }), { mode: 0o600 });
-      allocation = createGuest(runtime, [broker.address().port, ...(enginePort ? [enginePort] : [])], copied, undefined, { signal: warmSignal, continuous, vault });
+      await writeFile(join(copied, 'config.json'), JSON.stringify({ control: `http://host.microsandbox.internal:${broker.address().port}`, capability, noKey, persistentCredentials:!!vault, node: !native&&binding.loopback ? {...node,localEngine:true,endpoint:node.endpoint.replace(binding.url.hostname,'host.microsandbox.internal')} : {...node,providerRunId,tunnel:{port:broker.address().port,capability}}, maxCalls, maxOutputTokens, continuous }), { mode: 0o600 });
+      allocation = createGuest(runtime, [broker.address().port, ...(!native&&enginePort ? [enginePort] : [])], copied, undefined, { signal: warmSignal, continuous, vault });
       guest = await allocation;
       if(native)await runtime.run(guest,['node','-e',"const [a,b]=process.versions.node.split('.').map(Number);if(a<22||(a===22&&b<19))throw Error('pi_node_22_19_required');"],{signal:warmSignal});
       warmSignal.throwIfAborted();
@@ -202,6 +232,8 @@ export async function startProvider(networkInput, nodeId, { prepareOnly = false,
     if (stopped) return;
     node = observed;
     if (prepared) return;
+    const exhausted=node.allowanceSummary?.exhaustionReason??(node.budgetSummary?.remainingMicrousd==='0'&&providerRequiresBudget(node)?'provider_budget_exhausted':null);
+    if(exhausted&&!pending){await stop({trigger:exhausted});return;}
     const confirmed = guestReady && relayReady && relayLeaseUntil > now() && node.ready === true && node.providerRunId === providerRunId;
     backendConfirmedAt = confirmed ? now() : null;
     state = confirmed ? 'serving' : relayReady ? 'connecting' : 'reconnecting';
@@ -267,6 +299,11 @@ export async function startProvider(networkInput, nodeId, { prepareOnly = false,
         activation = []; state = 'connecting'; announce({ status: state }); await statusPoll.run(); return;
       }
       if (!relayReady || relayLeaseUntil <= now()) throw new ClientError('relay_not_authenticated');
+      if(frame.type==='execution_complete_ack') {
+        const binding=executionBindings.get(frame.requestId);
+        if(!binding||Object.keys(binding).some(k=>binding[k]!==frame[k]))throw new ClientError('execution_binding_mismatch');
+        lifecycle.event('request',{status:'execution_completed'});return;
+      }
       if (frame.type === 'cancel') {
         if (!pending || frame.requestId !== pending.id) return;
         if (['sessionId','bindingRevision','sequence'].some(key => frame[key] !== pending.binding[key])) throw new ClientError('cancellation_binding_rejected');
@@ -277,7 +314,8 @@ export async function startProvider(networkInput, nodeId, { prepareOnly = false,
         pending = { id: frame.challengeId, binding: frame, frame, socket: ws }; return;
       }
       if (pending || !(native?PiInferenceRequest(frame):frame.protocol==='coding_v1'?CodingInferenceRequest(frame):InferenceRequest(frame)) || !listingBound(frame.bindingRevision) || frame.maxOutputTokens > maxOutputTokens || (!continuous && calls >= maxCalls)) throw new ClientError('frame_rejected');
-      calls++; pending = { id: frame.requestId, binding: frame, frame, socket: ws };
+      if(executionBindings.size>=4096)throw new ClientError('provider_execution_history_limit');
+      calls++; executionBindings.set(frame.requestId,{providerRunId,relayGeneration,sessionId:frame.sessionId,requestId:frame.requestId,sequence:frame.sequence}); pending = { id: frame.requestId, binding: frame, frame, socket: ws };
     })().catch(error => { if(current())void stop({ trigger: 'relay_frame_failed', error }); }); });
   }
   async function inspectChecks() {
@@ -311,13 +349,13 @@ export async function startProvider(networkInput, nodeId, { prepareOnly = false,
           const check=await network.request(`/v2/providers/nodes/${nodeId}/pi-checks`,{method:'POST',body:{providerRunId,model:model.model,phase:checkPhase},key:randomUUID(),signal:bounded(10000)});
           currentCheck = check; nativeCheckIds.push(check.id); abort.signal.throwIfAborted(); Object.assign(progress,{requestId:check.id,status:'running'}); announce({status:state});
           const messages=checkPhase==='tool'?[{role:'user',content:'Call adr_probe with value "ready" exactly once.',timestamp:0}]:[{role:'user',content:'Call adr_probe with value "ready" exactly once.',timestamp:0},previous.nativeMessage,{role:'toolResult',toolCallId:previous.toolCalls[0].id,toolName:'adr_probe',content:[{type:'text',text:'ready'}],isError:false,timestamp:0},{role:'user',content:'Reply ready without calling a tool.',timestamp:0}];
-          const frame={type:'qualification',requestId:check.id,model:model.model,provider:node.provider,api:model.api,...(node.connectorProtocol==='pi_native_v2'?{nativeRevision:node.nativeRevision,endpoint:model.endpoint}:{}),messageFormat:'pi_context_v1',qualification:checkPhase,messages,tools:[probe],maxOutputTokens:check.outputBound,deadlineUnixMs:check.deadline,thinking:false,upstreamBudget:{inputBound:check.inputBound,reservedMicrousd:check.upstreamReserved,...check.rates}};
+          const frame={type:'qualification',requestId:check.id,model:model.model,provider:node.provider,api:model.api,...(['pi_native_v2','pi_native_v3'].includes(node.connectorProtocol)?{nativeRevision:node.nativeRevision,endpoint:model.endpoint}:{}),messageFormat:'pi_context_v1',qualification:checkPhase,messages,tools:[probe],maxOutputTokens:check.outputBound,deadlineUnixMs:check.deadline,modelSettings:model.defaultSettings,thinking:!!model.defaultSettings&&model.defaultSettings.reasoning!=='off',upstreamBudget:{inputBound:check.inputBound,reservedMicrousd:check.upstreamReserved,...check.rates}};
           const result=await new Promise((resolve,reject)=>{const timer=setTimeout(()=>{const statusCode=pending?.upstreamStatus;if(pending?.id===check.id)pending=undefined;reject(Object.assign(new ClientError('upstream_timeout'),{statusCode}));},Math.max(1,check.deadline-now()));pending={id:check.id,qualification:true,binding:frame,frame,resolve:r=>{clearTimeout(timer);resolve(r);},reject:e=>{clearTimeout(timer);reject(e);}};});
           const tools=checkPhase==='tool'?result.toolCalls?.length===1&&result.toolCalls[0].function.name==='adr_probe':result.toolCalls?.length===0&&result.text.trim().length>0;
           phase = 'qualification_complete';
           const completed=await network.request(`/v2/providers/nodes/${nodeId}/pi-checks/complete`,{method:'POST',body:{id:check.id,usage:result.nativeUsage,streaming:true,tools,completed:result.nativeMessage?.stopReason!=='length'},signal:bounded(10000)});
           abort.signal.throwIfAborted();
-          progress.status=completed.passed?'passed':'failed'; announce({status:state});
+          progress.status=completed.passed?'passed':'failed';progress.checks={configuration:'passed',credentials:'passed',streaming:'passed',usage:'passed',...(checkPhase==='tool'?{toolGeneration:tools?'passed':'failed'}:{toolRoundtrip:tools?'passed':'failed'})}; announce({status:state});
           if(!completed.passed)throw new ClientError('pi_compatibility_check_failed');previous=result;
         }
       }
@@ -343,7 +381,7 @@ export async function startProvider(networkInput, nodeId, { prepareOnly = false,
     if (closing) return closing;
     if (error) failure('failure', error, 'provider_failed');
     lifecycle.stop(trigger, { signal });
-    if(pending?.qualification||pending?.discovery){pending.reject(new ClientError(trigger==='setup_cancelled'?'cancelled':'provider_stopped'));pending=undefined;}
+    if(pending?.qualification||pending?.discovery||pending?.configuration){pending.reject(new ClientError(trigger==='setup_cancelled'?'cancelled':'provider_stopped'));pending=undefined;}
     state = 'stopping'; backendConfirmedAt = null; stopped = true; guestReady = false; relayReady = false; for(const tunnel of tunnels)tunnel.destroy(); abort.abort();
     statusPoll?.stop(); renewal?.stop(); keepalive?.stop(); for(const timer of [deadline,touchRetry,reconnectTimer,authenticationTimer,leaseTimer])clearTimeout(timer); socket?.close();
     for (const [name,handler] of signalHandlers) process.removeListener(name,handler);
@@ -351,14 +389,16 @@ export async function startProvider(networkInput, nodeId, { prepareOnly = false,
     closing = (async () => {
       const outcomes = [];
       const outcome = async (phase, work) => { try { await work(); outcomes.push({phase,status:'succeeded'});lifecycle.event(phase,{status:'succeeded'}); } catch(e){outcomes.push({phase,status:'failed',code:providerDiagnostic(phase,e).code});lifecycle.event(phase,{status:'failed',code:providerDiagnostic(phase,e).code});} };
-      await allocation?.catch(()=>{});
-      await outcome('guest_removal', async () => { if(guest && runtime.owned.has(guest))await runtime.remove(guest); });
-      if(native&&nativeCheckIds.length&&outcomes.find(o=>o.phase==='guest_removal')?.status==='succeeded')await outcome('check_execution_release',()=>network.request(`/v2/providers/nodes/${nodeId}/pi-checks/teardown`,{method:'POST',body:{guestTeardownVerified:true,attemptIds:nativeCheckIds},signal:AbortSignal.timeout(10000)}));
-      await outcome('broker_cleanup', async () => { broker.closeAllConnections(); if(broker.listening)await new Promise(resolve=>broker.close(resolve)); });
       if (remote && claimed) {
         try { await network.request(`/v2/providers/nodes/${nodeId}/stop`, { method: 'POST', body: { scope: 'run', providerRunId, trigger }, signal: AbortSignal.timeout(30000) }); outcomes.push({phase:'remote_stop',status:'succeeded'});lifecycle.event('remote_stop',{status:'succeeded'}); }
         catch(e){const superseded=['provider_run_superseded','not_found'].includes(e.code);outcomes.push({phase:'remote_stop',status:superseded?'superseded':'failed',code:providerDiagnostic('remote_stop',e).code});lifecycle.event('remote_stop',{status:superseded?'superseded':'failed',...(!superseded?{code:providerDiagnostic('remote_stop',e).code}:{})});}
       } else outcomes.push({phase:'remote_stop',status:'not_requested'});
+      await allocation?.catch(()=>{});
+      await outcome('guest_removal', async () => { if(guest && runtime.owned.has(guest))await runtime.remove(guest); });
+      if(claimed&&outcomes.find(o=>o.phase==='guest_removal')?.status==='failed')await outcome('cleanup_failure_report',()=>network.request(`/v2/providers/nodes/${nodeId}/cleanup-failure`,{method:'POST',body:{providerRunId,code:'guest_teardown_failed'},signal:AbortSignal.timeout(10000)}));
+      if(native&&nativeCheckIds.length&&outcomes.find(o=>o.phase==='guest_removal')?.status==='succeeded')await outcome('check_execution_release',()=>network.request(`/v2/providers/nodes/${nodeId}/pi-checks/teardown`,{method:'POST',body:{guestTeardownVerified:true,attemptIds:nativeCheckIds},signal:AbortSignal.timeout(10000)}));
+      await outcome('broker_cleanup', async () => { broker.closeAllConnections(); if(broker.listening)await new Promise(resolve=>broker.close(resolve)); });
+      if (claimed && outcomes.find(o=>o.phase==='guest_removal')?.status==='succeeded' && (!remote || outcomes.find(o=>o.phase==='remote_stop')?.status==='succeeded')) await outcome('execution_release',()=>network.request(`/v2/providers/nodes/${nodeId}/teardown`,{method:'POST',body:{providerRunId,guestTeardownVerified:true},signal:AbortSignal.timeout(10000)}));
       outcomes.push(await lifecycle.finish(outcomes));
       cleanupOutcomes = outcomes;
       const failed = recoveryPending || outcomes.some(o=>o.status==='failed'),removed=outcomes.find(o=>o.phase==='guest_removal').status==='succeeded';
@@ -369,6 +409,15 @@ export async function startProvider(networkInput, nodeId, { prepareOnly = false,
     return closing;
   }
   const controller = { done, stop, warm, start: startNative, discover:async()=>{if(!prepared||!guestReady||pending)throw new ClientError('provider_stop_required');const requestId=randomUUID();return new Promise((resolve,reject)=>{const timer=setTimeout(()=>{if(pending?.id===requestId)pending=undefined;reject(new ClientError('model_discovery_unavailable'));},20000);pending={id:requestId,discovery:true,binding:{type:'discover'},frame:{type:'discover',requestId},resolve:r=>{clearTimeout(timer);resolve(r);},reject:e=>{clearTimeout(timer);reject(e);}};});}, lifecycle, get status() { return snapshot(); } };
+  controller.configure = async configuration => {
+    if(!prepared||!guestReady||pending||startAttempted)throw new ClientError('provider_configuration_locked');
+    const updated=await network.request(`/v2/providers/nodes/${nodeId}/native`,{method:'POST',body:{...configuration,expectedRevision:node.nativeRevision??0,confirmIncrease:false,providerRunId},key:randomUUID(),signal:bounded(10000)});
+    node=updated;maxOutputTokens=Number(node.maxOutputTokens);
+    const requestId=randomUUID();return new Promise((resolve,reject)=>{
+      const timer=setTimeout(()=>{reject(new ClientError('guest_configuration_unconfirmed'));void stop({trigger:'configuration_failed'});},15000);
+      pending={id:requestId,configuration:true,binding:{type:'configure'},frame:{type:'configure',requestId,node,maxOutputTokens},resolve:value=>{clearTimeout(timer);resolve(value);},reject:error=>{clearTimeout(timer);reject(error);}};
+    });
+  };
   controller.retryCleanup = async () => {
     if (!stopped || !cleanupRequired) return closing;
     await closing;
@@ -376,6 +425,11 @@ export async function startProvider(networkInput, nodeId, { prepareOnly = false,
     closing = undefined; return stop({trigger:lifecycle.stopTrigger?.trigger ?? 'cleanup_retry'});
   };
   const signalHandlers = new Map(['SIGINT','SIGTERM','SIGHUP','SIGTSTP'].map(name=>[name,()=>void stop({trigger:'process_signal',signal:name})]));
+  // Explicit local acceptance opt-in. A run-targeted process signal closes
+  // only this idle relay; it never interrupts inference, the guest or networking.
+  if(process.env.ADR_ACCEPTANCE_RELAY_RECONNECT==='1')signalHandlers.set('SIGURG',()=>{
+    if(!stopped&&!prepared&&!starting&&!pending&&relayReady&&socket)socket.close(1000,'acceptance_idle_reconnect');
+  });
   const onSignal = () => void stop({trigger:'provider_deadline'});
   try {
     await new Promise(resolve => broker.listen(0, '0.0.0.0', resolve));

@@ -1,9 +1,10 @@
 import { request } from 'node:https';
+import {request as httpRequest} from 'node:http';
 import { Readable, Transform } from 'node:stream';
-import { tunnelAgent } from './provider-broker.mjs';
+import { tunnelAgent,validateBinding } from './provider-broker.mjs';
 const fail=code=>Object.assign(Error(code),{code});
 export function restrictedPiFetch(node,model,signal,onResponse=()=>{},{discovery=false}={}) {
-  const approved=new URL(model.endpoint);let dispatched=false;
+  const {url:approved}=validateBinding({...node,endpoint:model.endpoint});let dispatched=false;
   return async (input,init={})=>{
     // One SDK dispatch per authority reservation. Also fences retries performed
     // internally by an SDK that ignores its retry option.
@@ -15,9 +16,10 @@ export function restrictedPiFetch(node,model,signal,onResponse=()=>{},{discovery
     signal?.throwIfAborted();dispatched=true;
     const body=discovery?undefined:init.body??await req.text();if(!discovery&&(typeof body!=='string'||Buffer.byteLength(body)>1024*1024))throw fail('pi_request_limit');
     const headers=new Headers(init.headers??req.headers);headers.delete('host');headers.delete('content-length');headers.set('accept-encoding','identity');
+    if(node.connection?.authentication==='none')for(const key of ['authorization','x-api-key','api-key','x-goog-api-key'])headers.delete(key);
     const agent=tunnelAgent({...node,tunnel:{...node.tunnel,path:'/upstream/'+encodeURIComponent(approved.origin)}},url);
     return new Promise((resolve,reject)=>{
-      const upstream=request(url,{method,headers:Object.fromEntries(headers),agent,signal:AbortSignal.any([signal??new AbortController().signal,init.signal??req.signal]),timeout:120000},response=>{
+      const upstream=(url.protocol==='http:'?httpRequest:request)(url,{method,headers:Object.fromEntries(headers),agent,signal:AbortSignal.any([signal??new AbortController().signal,init.signal??req.signal]),timeout:120000},response=>{
         onResponse(response.statusCode);
         if(response.statusCode>=300&&response.statusCode<400){response.destroy();reject(fail('pi_redirect_rejected'));return;}
         let bytes=0;

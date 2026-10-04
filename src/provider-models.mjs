@@ -7,5 +7,5 @@ export function verifiedThinking(provider, model, api) {
 
 export function connectionCapabilities(provider, connection) {
   return {...connection, modelDefinitions: connection.modelDefinitions.map(model=>({...model,
-    thinking: verifiedThinking(provider, model.id, model.api??connection.api) ? 'optional' : 'none'}))};
+    thinking: model.thinking??(verifiedThinking(provider, model.id, model.api??connection.api) ? 'optional' : 'none')}))};
 }

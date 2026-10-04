@@ -42,7 +42,7 @@ Provider create flags: --name --model --endpoint --supply
   --availability hot|cold --input-rate UNITS --output-rate UNITS
   --coding --thinking off|supported (buyer thinking starts off)
 Public metadata only. Never put an API key in flags, a URL or listing text.
-Provider serving: provider serve NODE_ID --max-output 1024
+Provider serving: provider serve NODE_ID --max-output 4096
   Hot listings serve continuously in the foreground; --bounded retains evaluation limits.
 Provider deletion: permanently removes a paused listing after all linked work settles.
   Receipts and accounting history remain. Deletion cannot restore or republish a listing.
@@ -148,14 +148,14 @@ export async function run(args, dependencies = {}) {
       requireId(id);
       if (json && !o['no-key']) throw new ClientError('interactive_terminal_required');
       const { serveProvider } = await import('./provider.mjs');
-      output(await serveProvider(network, id, { maxCalls: Number(o['max-calls'] ?? '5'), maxOutputTokens: Number(o['max-output'] ?? '1024'), noKey: !!o['no-key'], ...(o.bounded ? {continuous:false} : {}), notify: output }));
+      output(await serveProvider(network, id, { maxCalls: Number(o['max-calls'] ?? '5'), maxOutputTokens: Number(o['max-output'] ?? '4096'), noKey: !!o['no-key'], ...(o.bounded ? {continuous:false} : {}), notify: output }));
     } else if (sub === 'benchmark') throw new ClientError('sandboxed_evaluation_not_integrated');
     else throw new ClientError('unknown_command');
   } else if (command === 'connect') {
     const listingId = requireId(sub);
     const listing=await get(`/listings/${listingId}`,true);
     const mode = o['private-rehearsal'] ? { mode: 'private_rehearsal', acknowledgeProvisional: !!o['acknowledge-provisional'] } : {};
-    const quote = await post('/quotes', { ...(listing.connector?{connectorProtocol:'openai_compatible_v1'}:{}), listingId, maximumCharge: o.budget ?? (o['private-rehearsal'] ? '100' : '1000'), maxOutputTokens: Number(o['max-output'] ?? '1024'), durationSeconds: Number(o.duration ?? (o.coding?'3600':'300')), ...(o.coding?{protocol:'coding_v1',requestLimit:Number(o['max-calls']??100)}:{}), ...mode }); output({ quote });
+    const quote = await post('/quotes', { ...(['pi_native_v1','pi_native_v2','pi_native_v3'].includes(listing.connectorProtocol)?{connectorProtocol:listing.connectorProtocol,...(o.thinking?{modelSettings:{reasoning:o.thinking}}:{})}:listing.connector?{connectorProtocol:'openai_compatible_v1'}:{}), listingId, maximumCharge: o.budget ?? (o['private-rehearsal'] ? '100' : '1000'), maxOutputTokens: Number(o['max-output'] ?? '4096'), durationSeconds: Number(o.duration ?? (o.coding?'3600':'300')), ...(o.coding?{protocol:'coding_v1',requestLimit:Number(o['max-calls']??100)}:{}), ...mode }); output({ quote });
     let accept = !!o.accept;
     if (!accept && !json && process.stdin.isTTY) accept = await choose('Reserve this bounded test-credit quote?', ['Cancel', 'Accept quote']) === 1;
     if (!accept) { output({ status: 'quote_not_accepted', quoteId: quote.id }); return; }
@@ -178,10 +178,15 @@ export async function run(args, dependencies = {}) {
     else throw new ClientError('unknown_command');
   } else if (command === 'receipts') output(await get('/receipts'));
   else if (command === 'admin') {
-    if (!local) throw new ClientError('browser_operator_auth_required');
-    if (sub === 'nodes') output(await get('/admin/nodes'));
+
+    if (sub==='sessions')output(await get('/admin/sessions'));
+    else if(sub==='session')output(await get(`/admin/sessions/${requireId(id)}`));
+    else if(sub==='stop-session')output(await post(`/admin/sessions/${requireId(id)}/stop`,{}));
+    else if(sub==='stop-provider')output(await post(`/admin/nodes/${requireId(id)}/stop`,{}));
+    else if(sub==='delete-listing'){if(!o['confirm-delete'])throw new ClientError('confirmation_required');output(await post(`/admin/nodes/${requireId(id)}/delete`,{confirm:true}));}
+    else if (sub === 'nodes') output(await get('/admin/nodes'));
     else if (sub === 'suspend' || sub === 'unsuspend') output(await post(`/admin/nodes/${requireId(id)}/suspension`, { suspended: sub === 'suspend', reason: o.review ?? 'local-development-only' }));
-    else if (sub === 'grant') output(await post('/admin/grants', { userId: o.user, amount: o.amount }));
+    else if (sub === 'grant' && local) output(await post('/admin/grants', { userId: o.user, amount: o.amount }));
     else throw new ClientError('unknown_command');
   } else if (command === 'doctor') {
     let runtime; try { runtime = await (await (await import('./provider.mjs')).configuredRuntime()).verify(); } catch (e) { runtime = { status: 'unavailable', code: e.code ?? 'runtime_unavailable' }; }

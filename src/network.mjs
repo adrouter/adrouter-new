@@ -147,7 +147,7 @@ export class Network {
     const bytes = body === undefined ? undefined : JSON.stringify(body);
     let nonce;
     for (let attempt = 0; attempt < 2; attempt++) {
-      const headers = { 'X-Adr-Coding-Protocol':'coding_v1','X-Adr-Connector-Protocol':'pi_native_v2', accept: onEvent ? 'application/x-ndjson' : 'application/json', ...(bytes === undefined ? {} : { 'Content-Type': 'application/json' }), ...(this.local ? { 'X-Adr-Local-Actor': this.actor } : {}), ...(key ? { 'Idempotency-Key': key } : {}) };
+      const headers = { 'X-Adr-Coding-Protocol':'coding_v1','X-Adr-Connector-Protocol':'pi_native_v3', accept: onEvent ? 'application/x-ndjson' : 'application/json', ...(bytes === undefined ? {} : { 'Content-Type': 'application/json' }), ...(this.local ? { 'X-Adr-Local-Actor': this.actor } : {}), ...(key ? { 'Idempotency-Key': key } : {}) };
       if (identity) {
         headers.DPoP = proof(identity, method, this.origin + path, bytes, nonce, token);
         if (bytes !== undefined) headers['Content-Digest'] = `sha-256=:${digest(bytes).toString('base64')}:`;
@@ -160,7 +160,7 @@ export class Network {
       catch { throw transportFailure(); }
       if(response.ok&&onEvent){try{return await readCodingStream(response,onEvent);}catch(e){if(typeof e.code==='string'&&/^[a-z0-9_]{1,80}$/.test(e.code))throw e;throw transportFailure();}}
       const reader = response.body?.getReader(); let size = 0; const chunks = [];
-      try { if (reader) for (;;) { const { value, done } = await reader.read(); if (done) break; size += value.length; if (size > 1024 * 1024) { await reader.cancel(); throw new ClientError('response_too_large'); } chunks.push(Buffer.from(value)); } }
+      try { if (reader) for (;;) { const { value, done } = await reader.read(); if (done) break; size += value.length; if (size > (path==='/v2/network/provider-catalog'?16:1) * 1024 * 1024) { await reader.cancel(); throw new ClientError('response_too_large'); } chunks.push(Buffer.from(value)); } }
       catch(e){if(e instanceof ClientError)throw e;throw transportFailure();}
       finally { reader?.releaseLock(); }
       let result; try { result = JSON.parse(Buffer.concat(chunks).toString('utf8')); } catch { throw Object.assign(new ClientError(response.ok?'invalid_network_response':'network_request_rejected'),{status:response.status}); }
@@ -176,7 +176,7 @@ export class Network {
     const identity = await this.store.withLock(async () => {
       const identity = await this.store.read();
       if (!identity || identity.origin !== this.origin) throw new ClientError('login_required');
-      const cleanup = options.method === 'POST' && /^\/v2\/(?:providers\/nodes\/[^/]+\/(?:pause|stop|delete)|sessions\/[^/]+\/(?:stop|delete|restore)|admin\/evaluation-sessions\/[^/]+\/(?:stop|delete|restore)|admin\/sessions\/[^/]+\/release-execution)$/.test(path);
+      const cleanup = options.method === 'POST' && /^\/v2\/(?:providers\/nodes\/[^/]+\/(?:pause|stop|delete|teardown|cleanup-failure|execution-complete|execution-usage|pi-checks\/teardown)|providers\/nodes\/[^/]+\/sessions\/[^/]+\/stop|admin\/nodes\/[^/]+\/(?:stop|delete|teardown)|sessions\/[^/]+\/(?:stop|delete|restore)|admin\/evaluation-sessions\/[^/]+\/(?:stop|delete|restore)|admin\/sessions\/[^/]+\/(?:stop|release-execution))$/.test(path);
       if (cleanup) return identity;
       if (identity.refreshPending) throw new ClientError('refresh_outcome_unknown_reenroll_required');
       if (Date.now() >= identity.expiresAt - 30000) {

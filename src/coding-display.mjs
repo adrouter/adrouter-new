@@ -7,7 +7,7 @@ export function estimateCredits(usage, rates) {
 export class CodingDisplay {
   constructor(session,rates) {
     estimateCredits({inputTokens:0,outputTokens:0},rates);
-    this.sessionId=session.id;this.computeName=rates.name??'Compute';this.model=rates.model??'unavailable';this.inputTokens=0;this.outputTokens=0;this.rates=rates;this.total=BigInt(session.charged??'0');this.requests=new Set();this.pending=false;this.unknown=false;this.native=['pi_native_v1','pi_native_v2'].includes(session.connectorProtocol);this.simulated=session.simulatedMicrousd===undefined?null:session.simulatedMicrousd;this.priceVersion=session.priceVersion;
+    this.sessionId=session.id;this.computeName=rates.name??'Compute';this.model=rates.model??'unavailable';this.inputTokens=0;this.outputTokens=0;this.rates=rates;this.total=BigInt(session.charged??'0');this.requests=new Set();this.pending=false;this.unknown=false;this.native=['pi_native_v1','pi_native_v2','pi_native_v3'].includes(session.connectorProtocol);this.simulated=session.simulatedMicrousd===undefined?null:session.simulatedMicrousd;this.priceVersion=session.priceVersion;
   }
   complete(id,usage,settlement){if(!this.requests.has(id)){if(this.native){this.simulated=settlement?.simulatedMicrousd===null||settlement?.simulatedMicrousd===undefined?null:(BigInt(this.simulated??'0')+BigInt(settlement.simulatedMicrousd)).toString();}this.total+=estimateCredits(usage,this.rates);this.requests.add(id);this.inputTokens+=usage.inputTokens;this.outputTokens+=usage.outputTokens;}this.pending=false;}
   failed(code){this.pending=false;if(/unknown|incomplete|stream_invalid|upstream_timeout|upstream_malformed_response/.test(code??''))this.unknown=true;}

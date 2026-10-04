@@ -44,7 +44,7 @@ async function fixture(options={}){
   return node;
  }};
  let controller;
- return {state,node,runtime,control,directory,start:async()=>{controller=await startProvider(network,node.id,{noKey:true,prepareOnly:!!options.native,runtime,Socket,diagnosticsDirectory:directory,intervals:{status:100000,renewal:100000,guestPollWindow:100000,reconnectInitial:5,reconnectCap:20,...options}});if(!options.native)await until(()=>controller.status.relayReady);return controller;},close:async()=>{await controller?.stop();runtime.owned.clear();await rm(directory,{recursive:true,force:true});}};
+ return {state,node,runtime,control,directory,start:async()=>{controller=await startProvider(network,node.id,{noKey:true,prepareOnly:!!options.native,runtime,Socket,diagnosticsDirectory:directory,intervals:{status:100000,renewal:100000,guestPollWindow:100000,reconnectInitial:5,reconnectCap:20,...options}});if(!options.native)await until(()=>controller.status.relayReady);return controller;},close:async()=>{state.removeFail=false;await controller?.stop();if(controller?.status.cleanupRequired)await controller.retryCleanup();runtime.owned.clear();await rm(directory,{recursive:true,force:true});}};
 }
 test('relay close reconnects the same healthy VM; delayed old ready/close events are ignored',async()=>{
  const f=await fixture();try{
@@ -54,6 +54,11 @@ test('relay close reconnects the same healthy VM; delayed old ready/close events
   assert.equal(controller.status.stopped,false);assert.equal(controller.status.relayGeneration,2);assert.equal(f.state.created,1);assert.equal(f.state.stops.length,0);
   const outcome=await controller.stop();assert.equal(outcome.status,'stopped');assert.deepEqual(f.state.stops,[{scope:'run',providerRunId:run,trigger:'operator_stop'}]);
  }finally{await f.close();}
+});
+test('explicit local acceptance signal reconnects only the idle current relay',async()=>{
+ const previous=process.env.ADR_ACCEPTANCE_RELAY_RECONNECT;process.env.ADR_ACCEPTANCE_RELAY_RECONNECT='1';const f=await fixture();
+ try{const c=await f.start(),run=c.status.providerRunId;process.emit('SIGURG');await until(()=>f.state.sockets.length===2&&c.status.relayReady);assert.equal(c.status.providerRunId,run);assert.equal(f.state.created,1);assert.equal(f.state.removes,0);assert.equal(f.state.stops.length,0);assert.equal(c.status.calls,0);}
+ finally{if(previous===undefined)delete process.env.ADR_ACCEPTANCE_RELAY_RECONNECT;else process.env.ADR_ACCEPTANCE_RELAY_RECONNECT=previous;await f.close();}
 });
 test('duplicate claim fails before VM allocation and makes no node stop request',async()=>{
  const f=await fixture();f.state.rejectClaim=true;try{await assert.rejects(f.start(),{code:'node_already_connected'});assert.equal(f.state.created,0);assert.equal(f.state.stops.length,0);}finally{await f.close();}

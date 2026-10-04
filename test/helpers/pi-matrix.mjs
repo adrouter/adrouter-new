@@ -1,5 +1,5 @@
 import { createHash } from 'node:crypto';
-export const nativeFamilies = ['openai-completions','openai-responses','azure-openai-responses','anthropic-messages','google-generative-ai','mistral-conversations'];
+export const nativeFamilies = ['openai-completions','openai-responses','azure-openai-responses','anthropic-messages','google-generative-ai','mistral-conversations','pi-messages'];
 const stable = value => JSON.stringify(value && typeof value === 'object' && !Array.isArray(value) ? Object.fromEntries(Object.keys(value).sort().map(k=>[k,JSON.parse(stable(value[k]))])) : value, (_k,v)=>v===undefined?null:v);
 export function catalogMatrix(catalog) {
   const matrix=[];
@@ -12,7 +12,7 @@ export function catalogMatrix(catalog) {
       const settings=stable({api:model.api,baseUrl:model.baseUrl,compat:model.compat,headers:model.headers,reasoning:model.reasoning,thinkingLevelMap:model.thinkingLevelMap});
       if(seen.has(settings))continue;seen.add(settings);
       const variant=createHash('sha256').update(settings).digest('hex').slice(0,12);
-      const fields=Object.fromEntries((p.fields??[]).map(f=>[f.name, f.name==='CLOUDFLARE_ACCOUNT_ID'?'a'.repeat(32):f.name==='AZURE_OPENAI_RESOURCE_NAME'?'fixture-resource':(()=>{throw Error('matrix_public_field_unknown');})()]));
+      const fields=Object.fromEntries((p.fields??[]).map(f=>[f.name, f.name==='CLOUDFLARE_ACCOUNT_ID'?'a'.repeat(32):f.name==='AZURE_OPENAI_RESOURCE_NAME'?'fixture-resource':f.name==='CLOUDFLARE_GATEWAY_ID'?'fixture-gateway':(()=>{throw Error('matrix_public_field_unknown');})()]));
       matrix.push({id:`pi/${p.id}/${model.api}/${variant}`,provider:p.id,api:model.api,model:model.id,descriptor:model,fields});
     }
   }

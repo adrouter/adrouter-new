@@ -2,7 +2,9 @@ export class ProviderSetupError extends Error {
   constructor(code) { super(code); this.code = code; }
 }
 
-export function readHiddenKey(input = process.stdin, output = process.stdout, prompt = 'Provider API key (hidden; memory only; Ctrl+C cancels): ') {
+export function readHiddenKey(input = process.stdin, output = process.stdout, prompt = 'Provider API key (hidden; memory only; Ctrl+C cancels): ', {allowEmpty=false,json=false}={}) {
+  const maximum=json?16384:4096;
+  const valid=value=>allowEmpty&&!value.length||value.length<=maximum&&(json?(()=>{try{const parsed=JSON.parse(value);return parsed&&typeof parsed==='object'&&!Array.isArray(parsed);}catch{return false;}})():/^[\x20-\x7e]{1,4096}$/.test(value));
   if (!input.isTTY || !output.isTTY || typeof input.setRawMode !== 'function') {
     throw new ProviderSetupError('interactive_terminal_required');
   }
@@ -22,7 +24,7 @@ export function readHiddenKey(input = process.stdin, output = process.stdout, pr
       output.write('\n');
       output.write('\x1b[?2004l');paste='';
       if (error) { value = ''; reject(new ProviderSetupError(error)); }
-      else { const result = value; value = ''; resolve(result); }
+      else { const result = json?JSON.stringify(JSON.parse(value)):value; value = ''; resolve(result); }
     };
     const onEnd = () => finish('credential_entry_cancelled');
     const onError = () => finish('credential_entry_failed');
@@ -32,18 +34,18 @@ export function readHiddenKey(input = process.stdin, output = process.stdout, pr
         if(char==='\x1b'||escape){
           escape+=char;clearTimeout(escapeTimer);
           if(escape==='\x1b[200~'&&!pasting){pasting=true;paste='';escape='';continue;}
-          if(escape==='\x1b[201~'&&pasting){pasting=false;value+=paste.replace(/[\r\n]+$/,'');paste='';escape='';if(!/^[\x20-\x7e]{1,4096}$/.test(value)){finish('credential_format_invalid');return;}continue;}
+          if(escape==='\x1b[201~'&&pasting){pasting=false;value+=paste.replace(/[\r\n]+$/,'');paste='';escape='';if(!valid(value)){finish('credential_format_invalid');return;}continue;}
           if(!['\x1b[200~','\x1b[201~'].some(s=>s.startsWith(escape))){finish('credential_format_invalid');return;}
           escapeTimer=setTimeout(()=>finish('credential_entry_cancelled'),250);continue;
         }
-        if(pasting){paste+=char;if(paste.length>4098){finish('credential_format_invalid');return;}continue;}
+        if(pasting){paste+=char;if(paste.length>maximum+2){finish('credential_format_invalid');return;}continue;}
         if (char === '\r' || char === '\n') {
-          finish(/^[\x20-\x7e]{1,4096}$/.test(value) ? null : 'credential_format_invalid'); return;
+          finish(valid(value) ? null : 'credential_format_invalid'); return;
         }
         if (char === '\x7f' || char === '\b') value = value.slice(0, -1);
         else if (/^[\x20-\x7e]$/.test(char)) value += char;
         else { finish('credential_format_invalid'); return; }
-        if (value.length > 4096) { finish('credential_format_invalid'); return; }
+        if (value.length > maximum) { finish('credential_format_invalid'); return; }
       }
     };
     input.setRawMode(true);

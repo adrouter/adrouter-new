@@ -23,7 +23,7 @@ export function marketplaceStream(model,context,options={}) {
   const message={role:'assistant',content:[],api:model.api,provider:model.provider,model:model.id,usage:{input:0,output:0,cacheRead:0,cacheWrite:0,totalTokens:0,cost:{input:0,output:0,cacheRead:0,cacheWrite:0,total:0}},stopReason:'stop',timestamp:Date.now()};
   (async()=>{
     try {
-      const thinking=!!config.thinking && options.reasoning!==undefined;
+      const thinking=config.modelSettings?config.modelSettings.reasoning!=='off':!!config.thinking && options.reasoning!==undefined;
       const body={protocol:'coding_v1',requestId:randomUUID(),...(config.messageFormat==='pi_context_v1'?{messageFormat:'pi_context_v1'}:{}),messages:config.messageFormat==='pi_context_v1'?piContext(context):wireContext(context,thinking),maxOutputTokens:config.maxOutputTokens,tools:(context.tools??[]).map(t=>({type:'function',function:{name:t.name,description:t.description,parameters:t.parameters}})),thinking,purpose:config.purpose??'main'};
       // A guest-only capability authorizes precisely this accepted session. The
       // host serializes all children/compaction/BTW through one upstream slot.

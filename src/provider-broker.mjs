@@ -2,7 +2,7 @@ import { resolveConnector, connectorHeaders } from './connectors.mjs';
 import { UpstreamCodingStream } from './coding-wire.mjs';
 import { connect as tlsConnect } from 'node:tls';
 import { Agent, request as httpsRequest } from 'node:https';
-import { request as httpRequest } from 'node:http';
+import { Agent as HttpAgent, request as httpRequest } from 'node:http';
 import { isIP } from 'node:net';
 import { lookup } from 'node:dns';
 class ClientError extends Error { constructor(code) { super(code); this.code = code; } }
@@ -25,11 +25,12 @@ export function validateBinding(node) {
 }
 export function tunnelAgent(node, url) {
   if(!node.tunnel)return undefined;
-  const agent=new Agent({keepAlive:false,maxSockets:1});
+  const agent=new (url.protocol==='http:'?HttpAgent:Agent)({keepAlive:false,maxSockets:1});
   agent.createConnection=(_options,callback)=>{
     const request=httpRequest({host:'host.microsandbox.internal',port:node.tunnel.port,method:'CONNECT',path:node.tunnel.path??'/upstream',headers:{authorization:`Bearer ${node.tunnel.capability}`},timeout:10000});
     request.once('connect',(response,socket,head)=>{
       if(response.statusCode!==200||head.length){socket.destroy();callback(new Error('tunnel_rejected'));return;}
+      if(url.protocol==='http:'){callback(null,socket);return;}
       const secure=tlsConnect({socket,servername:url.hostname,rejectUnauthorized:true});
       let ready=false;
       secure.once('secureConnect',()=>{ready=true;callback(null,secure);});
