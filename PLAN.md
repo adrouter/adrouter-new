@@ -20,39 +20,40 @@ Preserve alpha.33 and its installation. Package a new unused version only from c
 
 ## Step A: Specification and implementation
 ### Status
-`review`
+`done`
 ### Tasks
 - [x] Update the existing provider API/model/account spec, retaining unrelated requirements.
 - [x] Unify Pi setup; derive reasoning capabilities; expose run states and recovery.
 - [x] Preserve phase/status/model/check failure evidence and separate readiness confirmations.
 ### Acceptance Criteria
-- [ ] Save/Continue cannot infer; active/reconnecting runs expose Stop/status; cleanup failure blocks relaunch.
-- [ ] Unknown responses are inspected without replay, and liabilities survive teardown.
+- [x] Save/Continue cannot infer; active/reconnecting runs expose Stop/status; cleanup failure blocks relaunch.
+- [x] Unknown responses are inspected without replay, and liabilities survive teardown.
 ### Validation Results
-Client `npm run check`: 614 passed. Explicit Flash/Pro adapter and TUI failure regressions passed. Router marketplace/authentication and six contract checks passed. Coding provenance passed (23,473 files). One initial concurrent credential-lock test failed; the full rerun passed without changing credential-store behavior. Final installed gates pending.
+Final alpha.36 `npm run check`: 618 passed. Router marketplace tests: 76 passed; signed authentication checks and six contract checks passed. Coding provenance: 23,473 files; provider runtime: 12,375 files. Explicit Flash/Pro and HTTP rejection tests passed. A reproduced unlinked-lock observation race was fixed and covered by repeated concurrent credential updates. No Router route or database changes.
+
 
 ## Step B: Private artifact and installed acceptance
 ### Status
-`todo`
+`done`
 ### Tasks
-- [ ] Run client/provenance and relevant Router tests; exercise Pro and Flash independently.
-- [ ] Commit clean source, package once, verify isolated installation bytes.
-- [ ] Run actual Mac VM/PTY, eleven-minute idle, reconnect, teardown/restart gates and switch launcher.
+- [x] Run client/provenance and relevant Router tests; exercise Pro and Flash independently.
+- [x] Commit clean source, package once, verify isolated installation bytes.
+- [x] Run actual Mac VM/PTY, eleven-minute idle, reconnect, teardown/restart gates and switch launcher.
 ### Acceptance Criteria
-- [ ] Exact new installation passes synthetic installed gates; prior bytes/identities remain.
+- [x] Exact new installation passes synthetic installed gates; prior bytes/identities remain.
 ### Validation Results
-Not run.
+Private alpha.36 built once from clean commit `62712e24572eb698ffb7d4488adc5f810ebbbe3e`; all 35,918 installed files match tarball/source. Exact installed Mac gates passed: 408 Pi matrix cases, eight custom/credential guest tests, credential persistence/hidden-key PTY, 355-second buyer coding PTY, and 660-second provider lifecycle including same-VM reconnect, Stop, unknown liabilities and teardown. Seventeen installed host regressions passed. Launcher atomically switched from alpha.33 to alpha.36. All eight task runtime inventories are empty.
 
 ## Step C: Final verification and cleanup
 ### Status
-`todo`
+`done`
 ### Tasks
-- [ ] Review final diff; reconcile spec and evidence; remove temporary instrumentation.
-- [ ] Provide fresh-setup checklist for real Pro/custom/buyer/Apply/reconnect/Stop/restart acceptance.
+- [x] Review final diff; reconcile spec and evidence; remove temporary instrumentation.
+- [x] Provide fresh-setup checklist for real Pro/custom/buyer/Apply/reconnect/Stop/restart acceptance.
 ### Acceptance Criteria
-- [ ] Live acceptance stays failed/incomplete until the controlled operator rerun succeeds.
+- [x] Live acceptance stays failed/incomplete until the controlled operator rerun succeeds.
 ### Validation Results
-Not run.
+Diff reviewed and task instrumentation confined to synthetic verifiers. Specification and dated receipt/checklist reconciled. Hosted metadata confirms unchanged Fly image and Pages deployment. Real-provider acceptance remains failed/incomplete until operator rerun. Evidence: `../../outputs/adr-provider-repair-2026-10-04/validation-alpha36.json` and `../../docs/adr-provider-repair-2026-10-04.md`.
 
 ## Follow-up Work
 Final compatibility review found older manual definitions can retain an unsupported thinking flag. Alpha.36 derives saved flags from verified model/API metadata and rejects unverified advertised capabilities before guest preparation. Alpha.34/35 remain immutable and unselected.
@@ -64,6 +65,7 @@ Operator enters real credentials only in the provider guest; real paid acceptanc
 | --- | --- | --- | --- |
 | 2026-10-04 | User explicitly waived npm authentication | Private packaging only | No registry publication |
 | 2026-10-04 | Fly identity/exact registry manifest, Pages, GitHub and Supabase database access passed | Kickoff preflight | Preserve deployed images/pages |
+| 2026-10-04 | User waived subsequent Fly registry transport recheck | Private client packaging/testing/launcher switch only | No Fly or Pages mutation |
 
 ---
 
