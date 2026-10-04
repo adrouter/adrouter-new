@@ -1,3 +1,4 @@
+import { verifiedThinking } from './provider-models.mjs';
 import { providerDiagnostic } from './provider-diagnostics.mjs';
 import {credentialVolume} from './credential-volume.mjs';
 import { resolveConnector, CONNECTOR_PROTOCOL, upstreamFailureCodes } from './connectors.mjs';
@@ -36,6 +37,7 @@ export async function startProvider(networkInput, nodeId, { prepareOnly = false,
   const network = Object.create(networkInput); network.actor = 'provider';
   let node = await network.request(`/v2/providers/nodes/${nodeId}`);
   const native=['pi_native_v1','pi_native_v2'].includes(node.connectorProtocol);
+  if (native && node.nativeModels?.some(m=>m.capabilities?.includes('thinking_v1')&&!verifiedThinking(node.provider,m.model,m.api))) throw new ClientError('pi_reasoning_metadata_unverified');
   const connector=native?{authentication:'native'}:resolveConnector(node);
   const listingBound=(id,revision)=>native?node.listingIds?.includes(id)&&(revision===undefined||revision===node.listingRevision):id===node.listingId&&(revision===undefined||revision===node.listingRevision);
   if (native && !prepareOnly) throw new ClientError('pi_setup_required');

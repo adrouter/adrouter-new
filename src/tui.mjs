@@ -1,3 +1,4 @@
+import { connectionCapabilities } from './provider-models.mjs';
 import { providerCanLaunch, providerDiagnostic, providerDiagnosticLines } from './provider-diagnostics.mjs';
 import { piCatalog } from './generated/pi-catalog.mjs';
 import { validateBinding } from './provider-broker.mjs';
@@ -33,6 +34,7 @@ const integer = (min, max) => value => /^(0|[1-9][0-9]*)$/.test(value) && Number
 const date = value => typeof value === 'number' ? new Date(value).toLocaleString() : '—';
 const words = value => String(value ?? '—').replaceAll('_', ' ');
 const problems = {
+  pi_reasoning_metadata_unverified: 'This saved model advertises unverified thinking support. Edit and save the connection to derive capabilities from Pi metadata before Start.',
   pi_setup_required: 'Open the provider connection in the TUI and choose Continue setup, then Start provider to authorize qualification.',
   node_delete_requires_paused: 'Pause this listing before deleting it. A serving listing cannot be deleted.',
   node_delete_requires_settlement: 'This listing still has unfinished sessions or accounting. Finish settlement before deleting it; held amounts remain unchanged.',
@@ -295,7 +297,7 @@ export async function runTui(options = {}, dependencies = {}) {
       const advanced=await ui.form('Advanced connection settings',[{name:'baseUrl',label:'Base URL (blank uses built-in default)',maxLength:2048},{name:'api',label:'API protocol (blank uses model default)'},{name:'headers',label:'Secret header names, comma separated',help:'Values are entered only inside the provider guest.'},{name:'compat',label:'Pi compatibility settings JSON',default:'{}',maxLength:4096,validate:v=>{try{return typeof JSON.parse(v)==='object'&&!Array.isArray(JSON.parse(v))?'':'Enter a JSON object.';}catch{return 'Enter a JSON object.';}}},{name:'inputRate',label:'Input AdRouter credits per million tokens',validate:integer(0,999999999)},{name:'outputRate',label:'Output AdRouter credits per million tokens',validate:integer(0,999999999)}],{baseUrl:state.connection.baseUrl??'',api:state.connection.api??'',headers:state.connection.headerNames.join(','),compat:JSON.stringify(state.connection.compat??{}),inputRate:state.limits.inputRate,outputRate:state.limits.outputRate});if(!advanced)return;Object.assign(state.connection,{...(advanced.baseUrl?{baseUrl:advanced.baseUrl}:{}),...(advanced.api?{api:advanced.api}:{}),headerNames:advanced.headers.split(',').map(v=>v.trim()).filter(Boolean),compat:JSON.parse(advanced.compat)});Object.assign(state.limits,{inputRate:advanced.inputRate,outputRate:advanced.outputRate});if(!await confirm('Save connection?',['No inference will run until you choose Start.'],'Save'))return;
     }
     const fields=Object.fromEntries(provider.fields.map(f=>[f.name,values[f.name]]));
-    const payload={connectorProtocol:'pi_native_v2',name:values.name,provider:state.provider,models:[...selected],fields,connection:state.connection,totalTokens:values.totalTokens,testCredits:values.testCredits,maxOutputTokens:Number(values.maxOutputTokens),inputRate:state.limits.inputRate,outputRate:state.limits.outputRate};
+    const payload={connectorProtocol:'pi_native_v2',name:values.name,provider:state.provider,models:[...selected],fields,connection:connectionCapabilities(state.provider,state.connection),totalTokens:values.totalTokens,testCredits:values.testCredits,maxOutputTokens:Number(values.maxOutputTokens),inputRate:state.limits.inputRate,outputRate:state.limits.outputRate};
     if(existing&&!await confirm('Save provider changes?',[`Shared limit: ${payload.totalTokens} tokens / ${payload.testCredits} AdRouter credits`,'Usage and liabilities remain. Changes require qualification again.'],'Save changes'))return;
     const node=await post(existing?`/providers/nodes/${existing.id}/native`:'/providers/nodes',existing?{...payload,expectedRevision:existing.nativeRevision??0,confirmIncrease:true}:payload);setupDrafts.delete(draftKey);const next=await ui.menu('Connection saved',[item('continue','Continue setup','Prepare the guest; Start provider separately authorizes bounded qualification and publication.'),item('back','Back')],{lines:['No inference has run. Your connection is saved.']});if(next==='continue')await guidedProvider(node);if(!existing)await manageNode(node.id,true);
   }

@@ -55,6 +55,7 @@ Not run.
 Not run.
 
 ## Follow-up Work
+Final compatibility review found older manual definitions can retain an unsupported thinking flag. Alpha.36 derives saved flags from verified model/API metadata and rejects unverified advertised capabilities before guest preparation. Alpha.34/35 remain immutable and unselected.
 Alpha.34 was packed once and retained, but final review found control timeout/cancellation ambiguity. Alpha.35 also fixes the reproduced released-lock observation race (unlinked lock handles are retried, live locks remain protected). Fix forward to alpha.35; alpha.34 is not selected for the launcher.
 Operator enters real credentials only in the provider guest; real paid acceptance remains separate from synthetic checks.
 

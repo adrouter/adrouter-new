@@ -75,3 +75,10 @@ test('control timeout remains distinct from user cancellation without retries',a
   await assert.rejects(n.request('/v2/providers/nodes',{signal:abort.signal}),e=>{assert.equal(providerDiagnostic('qualification_tool',e).kind,kind);return true;});assert.equal(calls,1);
  }
 });
+
+test('saved manual capability flags are replaced by verified model/adapter metadata without changing custom settings',async()=>{
+ const {connectionCapabilities}=await import('../src/provider-models.mjs');
+ const connection={kind:'custom',api:'openai-completions',baseUrl:'https://custom.example.test/v1',compat:{maxTokensField:'max_completion_tokens'},modelDefinitions:[{id:'manual-model',thinking:'optional'},{id:'deepseek-v4-pro',thinking:'none'},{id:'deepseek-flash',api:'anthropic-messages',thinking:'optional'}]};
+ const normalized=connectionCapabilities('deepseek',connection);
+ assert.deepEqual(normalized.modelDefinitions.map(m=>m.thinking),['none','optional','none']);assert.deepEqual(normalized.compat,connection.compat);assert.equal(normalized.api,connection.api);assert.equal(normalized.baseUrl,connection.baseUrl);assert.equal(connection.modelDefinitions[0].thinking,'optional');
+});
