@@ -2,7 +2,7 @@
   "schemaVersion": 1,
   "repository": "adrouter/adrouter-new",
   "package": "@adrouter/adr-cli",
-  "version": "0.1.0-alpha.37",
+  "version": "0.1.0-alpha.38",
   "candidateChannel": "candidate",
   "finalChannel": "alpha",
   "githubDraftThroughAcceptance": true,

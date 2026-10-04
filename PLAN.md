@@ -75,6 +75,8 @@ Not run.
 
 Current continuation source checks: 870 client tests passed; coding runtime rebuilt from retained be7c53dc0b63fb90b70bd6cb7cad4d5713cc0d1a with retained upstream suites and 23,473-file provenance verification. Provider runtime rebuilt with pinned Pi 1.0.2 and SDK inventories (28,005 files). Router authoritative inputs committed before generation; generator drift check passed against Router 513e75b0f6d91d68671a2e403b5c395138b0542f. Shared budget policy, both unavailable-model setup paths and explicit SDK serialization/rejection have regressions. Actual installed gates remain pending. Local reconnect acceptance is explicit opt-in and uses a run-targeted SIGURG signal only while idle; it never interrupts inference or the guest.
 
+Installed alpha.37 native matrix passed 644 cases and actual no-key loopback/tunnel/binding/redirect/teardown acceptance passed. Fresh keyed provider-console startup failed on credentialFields temporal initialization order, which no-key short-circuiting had masked. Fix the source ordering, rebuild the provider payload, retain alpha.37 unchanged and deliver alpha.38 from a new clean commit. Required native gates must bind alpha.38; no live/provider/deployment completion is claimed.
+
 ## Follow-up Work
 Live key entry occurs only after implementation and installed/hosted verification. No successful live-provider result is inferred from synthetic tests.
 

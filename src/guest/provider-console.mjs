@@ -20,8 +20,8 @@ if (process.argv[2] !== '--worker') {
   // writer is attached; remove interrupted lock/temp files, retaining final auth.
   await credentials?.recoverStartup();
   const saved=await credentials?.read(node.provider);
-  let key=saved?undefined:configuration.noKey||(node.nativeModels??[]).some(m=>credentialFields(m.authentication).length)?'':await readHiddenKey(process.stdin,process.stdout,persistentCredentials?'Provider API key (hidden; saved in provider guest vault): ':'Provider API key (hidden; memory only): ');
   const credentialFields=node.connectorProtocol==='pi_native_v3'?(await import('./sdk-native.mjs')).credentialFields:()=>[];
+  let key=saved?undefined:configuration.noKey||(node.nativeModels??[]).some(m=>credentialFields(m.authentication).length)?'':await readHiddenKey(process.stdin,process.stdout,persistentCredentials?'Provider API key (hidden; saved in provider guest vault): ':'Provider API key (hidden; memory only): ');
   const retainedSecrets=JSON.parse(saved?.env?.ADR_SDK_CREDENTIALS??'{}'),secretFields={};
   for(const name of new Set((node.nativeModels??[]).flatMap(m=>credentialFields(m.authentication))))secretFields[name]=retainedSecrets[name]??await readHiddenKey(process.stdin,process.stdout,`${name} (hidden, guest only${name==='AWS_SESSION_TOKEN'?', optional':''}): `,{allowEmpty:name==='AWS_SESSION_TOKEN',json:name==='GOOGLE_SERVICE_ACCOUNT_JSON'});
   const retainedHeaders=JSON.parse(saved?.env?.ADR_CONNECTION_HEADERS??'{}'),headers={};for(const name of node.connection?.headerNames??[])headers[name]=retainedHeaders[name]??await readHiddenKey(process.stdin,process.stdout,`Secret header ${name} (hidden; saved in provider guest vault): `);

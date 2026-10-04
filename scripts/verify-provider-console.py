@@ -1,5 +1,5 @@
 # PTY acceptance only. Captured bytes stay in memory and contain synthetic data.
-import os, pty, select, signal, subprocess, time, termios
+import os, pty, select, signal, subprocess, time, termios, re
 master, slave = pty.openpty()
 environment = {k: os.environ[k] for k in ['PATH', 'ADR_ACCEPTANCE_RUNTIME_PATHS', 'ADR_ACCEPTANCE_CLIENT_ROOT', 'ADR_NATIVE_PI_ACCEPTANCE'] if k in os.environ}
 process = subprocess.Popen(['node', 'scripts/verify-provider-console.mjs'], stdin=slave, stdout=slave, stderr=slave, env=environment, start_new_session=True)
@@ -19,7 +19,11 @@ try:
             if captured.count(b'Guest is ready. Press Ctrl+D') > returns:
                 os.write(master, b'\x04'); sent_return = True; returns += 1
         if process.poll() is not None: break
-    assert process.wait(timeout=3) == 0, 'synthetic_console_process_failed'
+    exit_code=process.wait(timeout=3)
+    if exit_code:
+        codes=re.findall(rb'(?:Error|ClientError): ([a-zA-Z0-9_]{1,80})\b',captured)
+        print({'caseId':'installed-provider-console-v3','exitCode':exit_code,'errorCodes':[code.decode() for code in codes]})
+    assert exit_code == 0, 'synthetic_console_process_failed'
     assert sent_key and sent_return, 'guest_console_handoff_missing'
     if environment.get('ADR_NATIVE_PI_ACCEPTANCE') in ['2', '3']:
         assert returns == 2, 'restart_handoff_missing'
