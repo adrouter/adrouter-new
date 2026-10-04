@@ -1,5 +1,5 @@
 # Actual task-owned PTY/VM gate. Captured bytes and synthetic key stay in memory.
-import os, pty, select, subprocess, time, termios, signal
+import os, pty, select, subprocess, time, termios, signal, re
 master, slave = pty.openpty()
 before = termios.tcgetattr(slave)
 env = {k: os.environ[k] for k in ['PATH', 'ADR_ACCEPTANCE_CLIENT_ROOT', 'ADR_ACCEPTANCE_RUNTIME_PATHS', 'ADR_ACCEPTANCE_ROUTER_ROOT', 'ADR_PROVIDER_LIFECYCLE_QUICK'] if k in os.environ}
@@ -26,9 +26,9 @@ try:
     result = process.wait(timeout=3)
     if result:
         # Only controlled test assertion/error identifiers, never captured frames.
-        for line in captured.splitlines():
-            if line.startswith((b'Error:', b'AssertionError')):
-                print(line.decode()[:160], flush=True)
+        codes=re.findall(rb'Inference could not complete \(([a-zA-Z0-9_-]{1,80})\)',captured)
+        codes+=re.findall(rb'(?:Error|ClientError): ([a-zA-Z0-9_-]{1,80})\b',captured)
+        print({'caseId':'native-lifecycle-failure','exitCode':result,'errorCodes':[code.decode() for code in codes]},flush=True)
     assert result == 0, 'provider_lifecycle_native_gate_failed'
     assert entries == 1 and returned, 'one_key_handoff_required'
     assert b'provider_lifecycle_request_cancel_vm_survives_unknown_held' in captured
