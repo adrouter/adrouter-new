@@ -66,3 +66,12 @@ test('non-JSON HTTP rejection keeps status without leaking its body or retrying'
  const {Network}=await import('../src/network.mjs');let calls=0;const n=new Network({origin:'http://127.0.0.1:8790',local:true,fetcher:async()=>{calls++;return new Response('private upstream rejection',{status:502});}});
  await assert.rejects(n.request('/v2/providers/nodes'),e=>{assert.equal(e.status,502);assert.equal(e.code,'network_request_rejected');assert.doesNotMatch(e.message,/private/);return true;});assert.equal(calls,1);
 });
+
+test('control timeout remains distinct from user cancellation without retries',async()=>{
+ const {Network}=await import('../src/network.mjs');
+ for(const [reason,kind] of [[new DOMException('synthetic timeout','TimeoutError'),'timeout'],[new DOMException('synthetic cancel','AbortError'),'cancelled']]){
+  const abort=new AbortController();abort.abort(reason);let calls=0;
+  const n=new Network({origin:'http://127.0.0.1:8790',local:true,fetcher:async()=>{calls++;throw reason;}});
+  await assert.rejects(n.request('/v2/providers/nodes',{signal:abort.signal}),e=>{assert.equal(providerDiagnostic('qualification_tool',e).kind,kind);return true;});assert.equal(calls,1);
+ }
+});

@@ -17,3 +17,9 @@ test('another account cannot resolve or create a credential volume',async()=>{le
 test('endpoint discovery is metadata-only, deduplicates IDs and reports unavailable discovery',async()=>{const {nativeDiscover}=await import('../src/pi-native.mjs');const auth=await nativeLogin({...node,connection:{kind:'custom',headerNames:[]}},'synthetic-key');try{const result=await nativeDiscover(node,auth,AbortSignal.timeout(5000),async(url,init)=>{assert.equal(init.method,'GET');assert.equal(String(url),'https://compatible.example.test/v1/models');return Response.json({data:[{id:'custom-one'},{id:'custom-two'},{id:'custom-one'},{id:'unsafe\nlabel'}]});});assert.deepEqual(result.models,['custom-one','custom-two']);assert.equal(node.nativeModels.length,1);await assert.rejects(nativeDiscover(node,auth,AbortSignal.timeout(5000),async()=>new Response('',{status:404})),/discovery_unavailable/);}finally{await auth.close();}});
 
 test('removing a secret header from configuration prevents sending its retained value',()=>fixture(async dir=>{const credentials=new GuestCredentialStore(dir);const original=await nativeLogin(node,'synthetic-key',undefined,{credentials,headers:{'x-api-key':'synthetic-header'}});await original.close();const changed=await nativeLogin({...node,connection:{kind:'custom',headerNames:[]}},undefined,undefined,{credentials});try{assert.deepEqual((await changed.models.getAuth(node.provider)).auth.headers,{});}finally{await changed.close();}}));
+
+test('released guest locks tolerate contending observers without losing retained updates',()=>fixture(async dir=>{
+ const store=new GuestCredentialStore(dir);await store.modify('synthetic',async()=>({type:'api_key',key:'synthetic-fixture',count:0}));
+ for(let round=0;round<20;round++)await Promise.all(Array.from({length:8},()=>store.modify('synthetic',async current=>({...current,count:current.count+1}))));
+ assert.equal((await store.read('synthetic')).count,160);
+}));

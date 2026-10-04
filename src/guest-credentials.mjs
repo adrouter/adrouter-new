@@ -17,7 +17,11 @@ export class GuestCredentialStore {
     const boot=await readFile('/proc/sys/kernel/random/boot_id','utf8').catch(()=>`host-${process.pid}`);let lock;
     while(!lock){signal?.throwIfAborted();try{lock=await open(path,constants.O_CREAT|constants.O_EXCL|constants.O_WRONLY|constants.O_NOFOLLOW,0o600);await lock.writeFile(JSON.stringify({pid:process.pid,boot}));await lock.sync();}
       catch(e){if(e.code!=='EEXIST'||Date.now()>deadline)throw fail();let handle;
-        try{handle=await open(path,constants.O_RDONLY|constants.O_NOFOLLOW|constants.O_NONBLOCK);const before=await handle.stat();if(!before.isFile()||before.nlink!==1||before.size>256||before.uid!==process.getuid())throw fail();const previous=JSON.parse(await handle.readFile('utf8'));let stale=typeof previous.boot==='string'&&previous.boot!==boot;
+        try{handle=await open(path,constants.O_RDONLY|constants.O_NOFOLLOW|constants.O_NONBLOCK);const before=await handle.stat();
+          // The owner may unlink between our open and fstat. Retry this vanished
+          // lock; it is not an unsafe credential file or permission to steal a live lock.
+          if(before.nlink===0)throw Object.assign(Error('lock_released'),{code:'ENOENT'});
+          if(!before.isFile()||before.nlink!==1||before.size>256||before.uid!==process.getuid())throw fail();const previous=JSON.parse(await handle.readFile('utf8'));let stale=typeof previous.boot==='string'&&previous.boot!==boot;
           if(!stale&&Number.isSafeInteger(previous.pid)&&previous.pid>0)try{process.kill(previous.pid,0);}catch(error){stale=error.code==='ESRCH';}
           if(stale){const current=await lstat(path);if(current.ino===before.ino&&current.dev===before.dev)await unlink(path);}
         }catch(error){if(error.code!=='ENOENT'&&!(error instanceof SyntaxError))throw error;}finally{await handle?.close();}
