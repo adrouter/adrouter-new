@@ -1,6 +1,6 @@
 # ADRv2 detailed specification: strict setup, model status and failure recovery
 
-Revision: **5 October 2026**. Status: **alpha.45 listing/menu repairs delivered; existing Flash/Pro setup and listing access verified; buyer coding acceptance pending**.
+Revision: **6 October 2026**. Status: **alpha.48 private diagnostics delivery verified; initiating live interruption unresolved; independent real-provider acceptance pending**.
 
 This replaces earlier setup, qualification, provider/listing UI, diagnostics and failure-cleanup requirements. Alpha.43 is the verification baseline. Its prior synthetic gates did not cover the three subsequently reproduced gaps recorded below. Real-provider acceptance remains pending.
 
@@ -476,3 +476,18 @@ The observed Flash/Pro failures belong to node 87fb7693-3462-4a5d-8c85-bccfc0f22
 6 October: alpha.47 passed native provider transport and adapter gates but failed installed buyer startup because the bundled Ajv runtime lacked its already-locked fast-deep-equal dependency. Retain alpha.47 unselected. Alpha.48 fixes the bundled dependency closure; add isolated guest import regressions before freezing and repeat installed gates. CI-only tests use platform-appropriate local temporary directories.
 
 6 October freeze preparation: alpha.48 preliminary actual-VM lifecycle passes startup/inference, same-VM reconnect, checkpoint resume, Stop, unknown-liability cancellation and terminal restoration (quick diagnostic only, not the 660-second gate). Isolated guest import checks cover the legacy and coding dependency closures. Local full suite passed 898 cases; final delta passed 660 cases plus the legacy negotiation regression. Router full tests/typecheck/build, 98 marketplace cases and contracts pass; diagnostic persistence failures retain primary cause and expose a separate save failure. Exact installed, source CI and delivery gates remain pending.
+
+
+## Private interruption diagnostics delivery — 6 October 2026
+
+Private **0.1.0-alpha.48** is verified, installed and selected. Product source is `bf1e48fb8fa5ebff00ecfb4a3e5b9eb67433d8f8`; the tarball SHA-256 is `865860fb551e69297f215237fd47ebfa459070d21328e1094a7a562898dbc70a`. Router source `9a2e2e6e4c0846c7a45a61ab24895eb4d2d52d43` is deployed on the same sole Machine. Serving digest is `sha256:a4b8c077276bcc76b496a462fec1bafcc057eb3be9413ae7d98b0bc9105b0ce5`.
+
+Provider failures retain their original primary cause independently of cancellation, deadline, disconnect and authority termination. Optional versioned metadata is negotiated with X-Adr-Failure-Diagnostics=1; strict request/session/run/model binding is enforced. Private owner-only atomic records, summary/Failure details, reopening and metadata-only JSON export are implemented. Diagnostic-save failures remain secondary. No model request is replayed or unknown liability zero-settled.
+
+Verified: 899 source CI client tests on macOS/Ubuntu; Router full tests/typecheck/build, 98 marketplace cases and six contracts; 52,039 installed files; 644 actual guest native adapter cases; actual buyer tools/reviewed Apply/private save/resume; retained synthetic credential vault; Flash/Pro first requests, tool histories and ten same-process repeats through the real restricted guest/host tunnel; controlled HTTP/malformed/interrupted/TLS failures; installed 40/80/132-column polling/details/export; full 660-second idle/reconnect/resume/Stop/cancellation and terminal restoration. All 25 serving modules, private policy/resources/services, 28 Pages comparisons and request/session/budget fingerprints match their preservation targets.
+
+**The initiating live interruption is still unresolved.** Synthetic paths pass and did not reproduce that initiating defect. The reported failures belong to node 87fb7693-3462-4a5d-8c85-bccfc0f22f57/run 2f84c8e5-d5da-4e54-9ac8-0b6a814a8109; their old records lack trustworthy transport evidence. Older “not sent” labels are historical evidence gaps, not dispatch proof. Real Flash, Pro, Custom API and controlled retained-credential restart remain operator-pending. Current before/after provider inspection is Published, credential Stored, not Ready, with unchanged run/configuration/qualification. The agent did not restart it or dispatch paid inference.
+
+Alpha.46 and alpha.47 remain immutable unselected failed artifacts; alpha.48 fixes their guest dependency packaging defects. Pages, profiles, saved work, credentials and eight unresolved requests are preserved. npm authentication is explicitly deferred for private delivery. No public publication/promotion, hosted migration, financial reconciliation, policy/protection changes or unrelated cleanup occurred.
+
+Evidence: `outputs/adr-interruption-repair-2026-10-05/delivery-receipt.json`; operator steps: `outputs/adr-interruption-repair-2026-10-05/manual-acceptance.md`. Reopening loads the selected launcher; running processes keep their loaded bytes.

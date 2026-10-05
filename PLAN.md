@@ -1080,29 +1080,29 @@ No retries, timeout increases, model switching, relaxed validation, hosted schem
 
 ## Step A: Reproduction and evidence
 ### Status
-`in_progress`
-- [ ] Reproduce first/repeated native coding requests and tool history through guest/tunnel/synthetic upstream.
-- [ ] Correlate failure request/session/run metadata; record unresolved cause if inconclusive.
-- [ ] Capture bounded preparation, tunnel, TLS, dispatch, headers, streaming and validation stages with allowlisted transport codes.
+`review`
+- [x] Reproduce first/repeated native coding requests and tool history through guest/tunnel/synthetic upstream.
+- [x] Correlate failure request/session/run metadata; record unresolved cause if inconclusive.
+- [x] Capture bounded preparation, tunnel, TLS, dispatch, headers, streaming and validation stages with allowlisted transport codes.
 
 ## Step B: Primary failure and compatible contracts
 ### Status
 `done`
-- [ ] Separate provider failure, cancellation, deadline, disconnect and authority termination; preserve uncertain accounting and cleanup.
-- [ ] Optional strict versioned diagnostics, negotiated buyer responses; commit authoritative Router contracts before regeneration.
+- [x] Separate provider failure, cancellation, deadline, disconnect and authority termination; preserve uncertain accounting and cleanup.
+- [x] Optional strict versioned diagnostics, negotiated buyer responses; commit authoritative Router contracts before regeneration.
 
 ## Step C: Workspace persistence and details
 ### Status
 `done`
-- [ ] Summary/details, retained owner-only atomic records, bounded timeline and private metadata-only JSON export.
-- [ ] Preserve primary failure through teardown and surface save failures independently.
+- [x] Summary/details, retained owner-only atomic records, bounded timeline and private metadata-only JSON export.
+- [x] Preserve primary failure through teardown and surface save failures independently.
 
 ## Step D: Final verification and private delivery
 ### Status
-`in_progress`
-- [ ] Client checks/provenance, Router tests/typecheck/build/contracts, privacy/compatibility and installed PTY/native/lifecycle gates.
-- [ ] Freeze unused private version from clean commits; deploy compatible Router first with sole-machine replacement and preservation checks.
-- [ ] Verify installed/serving bytes and source CI, then select launcher; retain controlled provider restart and real-provider handoff.
+`done`
+- [x] Client checks/provenance, Router tests/typecheck/build/contracts, privacy/compatibility and installed PTY/native/lifecycle gates.
+- [x] Freeze unused private version from clean commits; deploy compatible Router first with sole-machine replacement and preservation checks.
+- [x] Verify installed/serving bytes and source CI, then select launcher; retain controlled provider restart and real-provider handoff.
 
 ## Follow-up Work
 Operator-only Flash, Pro, Custom API, tool, Apply, reconnect, Stop and retained-credential restart acceptance. Synthetic results cannot establish the live failure repaired.
@@ -1120,3 +1120,6 @@ Operator-only Flash, Pro, Custom API, tool, Apply, reconnect, Stop and retained-
 6 October: alpha.47 passed native provider transport and adapter gates but failed installed buyer startup because the bundled Ajv runtime lacked its already-locked fast-deep-equal dependency. Retain alpha.47 unselected. Alpha.48 fixes the bundled dependency closure; add isolated guest import regressions before freezing and repeat installed gates. CI-only tests use platform-appropriate local temporary directories.
 
 6 October freeze preparation: alpha.48 preliminary actual-VM lifecycle passes startup/inference, same-VM reconnect, checkpoint resume, Stop, unknown-liability cancellation and terminal restoration (quick diagnostic only, not the 660-second gate). Isolated guest import checks cover the legacy and coding dependency closures. Local full suite passed 898 cases; final delta passed 660 cases plus the legacy negotiation regression. Router full tests/typecheck/build, 98 marketplace cases and contracts pass; diagnostic persistence failures retain primary cause and expose a separate save failure. Exact installed, source CI and delivery gates remain pending.
+
+### Final delivery outcome — 6 October 2026
+Private alpha.48 is installed/selected, paired Router deployed and all required source/installed/hosted synthetic gates and preservation checks pass as recorded in outputs/adr-interruption-repair-2026-10-05/delivery-receipt.json. Original live initiating cause remains explicitly unresolved; no claim of fixing it. Operator acceptance and controlled restart are pending in manual-acceptance.md. Earlier failed artifacts and plan sections are preserved.
