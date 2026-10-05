@@ -56,17 +56,22 @@ export async function openCodingBuyer(network,sessionId,{root,files,runtimeConfi
   let authorityDeadline;let guest,workspace,closing,watchdog,statusPoll,expires,checkpoint,saving,snapshot,discarded=false,statusChecking,dependencyApproved=false,dependencyBytes=0;const abort=new AbortController(), queue=new DispatchQueue(),authorities=new Map(),mainCapability=randomBytes(32).toString('base64url');
   const startupSignal=signal?AbortSignal.any([signal,abort.signal]):abort.signal;
   const lifecycle=new BuyerLifecycle(value=>{try{progress({status:value.events.at(-1)?.phase,paused:lifecycle.paused});}catch{}});
-  let diagnosticWrites=Promise.resolve(),diagnosticOutcomes=[];let runtime,session,display,snapshotExclusions={},privateRoot,storage,storageValidated=false,requestClose,finishStartup;
+  let diagnosticWrites=Promise.resolve();let runtime,session,display,snapshotExclusions={},privateRoot,storage,storageValidated=false,requestClose,finishStartup;
   const startupReady=new Promise(resolve=>{finishStartup=resolve;});
   const earlySignal=name=>{lifecycle.event('signal',{code:'cancelled',signal:name,status:'cancelled'});if(requestClose)void requestClose().catch(()=>{});else abort.abort();};
   const signalHandlers=new Map(['SIGINT','SIGTERM','SIGHUP','SIGTSTP'].map(name=>[name,()=>earlySignal(name)]));
   const onAbort=()=>{lifecycle.event('cancellation',{code:'cancelled'});if(requestClose)void requestClose().catch(()=>{});else abort.abort();};
   for(const [name,handler] of signalHandlers)process.once(name,handler);
   signal?.addEventListener('abort',onAbort,{once:true});if(signal?.aborted)onAbort();
-  const persistDiagnostics=async outcomes=>{
+  const persistDiagnostics=async()=>{
     if(!storageValidated)return;
-    if(outcomes?.length)diagnosticOutcomes=safeOutcomes(outcomes);const value={schemaVersion:1,sessionId,firstFailure:lifecycle.firstFailure,failureDiagnostic:lifecycle.failureDiagnostic??null,events:lifecycle.events.slice(),outcomes:diagnosticOutcomes};diagnosticWrites=diagnosticWrites.catch(()=>{}).then(()=>writePrivateDiagnostic(storage,'lifecycle.json',value));await diagnosticWrites;
+    diagnosticWrites=diagnosticWrites.catch(()=>{}).then(async()=>{
+      const details=lifecycle.diagnostics();
+      try{await writePrivateDiagnostic(storage,'lifecycle.json',{schemaVersion:1,sessionId,firstFailure:lifecycle.firstFailure,failureDiagnostic:details.failureDiagnostic,events:lifecycle.events.slice(),outcomes:details.outcomes});}
+      catch(error){lifecycle.event('diagnostic_save',{status:'failed',code:'diagnostic_save_failed'});throw error;}
+    });await diagnosticWrites;
   };
+
   try {
     startupSignal.throwIfAborted();
     runtime=provided??(runtimeConfig?new SandboxRuntime(runtimeConfig):await configuredRuntime());
@@ -79,25 +84,31 @@ export async function openCodingBuyer(network,sessionId,{root,files,runtimeConfi
     const error=startupSignal.aborted&&original.name==='AbortError'?new ClientError('cancelled'):original;
     lifecycle.event('initial_status',{code:error.code??'coding_startup_failed'});
     for(const [name,handler] of signalHandlers)process.removeListener(name,handler);signal?.removeEventListener('abort',onAbort);
-    const outcomes=[];try{const stopped=await network.request(`/v2/sessions/${sessionId}/stop`,{method:'POST',body:{},signal:AbortSignal.timeout(30000)});outcomes.push({phase:'remote_stop',status:'succeeded',session:stopped});}catch(e){outcomes.push({phase:'remote_stop',status:'failed',code:e.code??'cleanup_failed'});}
-    await persistDiagnostics(outcomes).catch(()=>{});error.lifecycleOutcome={firstFailure:lifecycle.firstFailure,outcomes};throw error;
+    lifecycle.event('remote_stop',{status:'pending'});lifecycle.event('settlement',{status:'pending'});
+    try{const stopped=await network.request(`/v2/sessions/${sessionId}/stop`,{method:'POST',body:{},signal:AbortSignal.timeout(30000)});lifecycle.event('remote_stop',{status:'succeeded'});lifecycle.event('settlement',{status:['settled','refunded'].includes(stopped?.state)?'succeeded':'pending'});}catch(e){lifecycle.event('remote_stop',{status:'failed',code:e.code??'cleanup_failed'});}
+    await persistDiagnostics().catch(()=>{});error.lifecycleOutcome={firstFailure:lifecycle.firstFailure,outcomes:lifecycle.diagnostics().outcomes};throw error;
   }
   const close=async()=>{
-    if(closing)return closing;lifecycle.closing=true;lifecycle.event('closure',{status:'closing'});
+    if(closing)return closing;lifecycle.closing=true;lifecycle.event('closure',{status:'closing'});lifecycle.beginCleanup();
     queue.stop();approvals.stop();for(const [name,handler] of signalHandlers)process.removeListener(name,handler);
     signal?.removeEventListener('abort',onAbort);watchdog?.stop();statusPoll?.stop();checkpoint?.stop();clearTimeout(expires);clearTimeout(authorityDeadline);
     closing=(async()=>{
       if(!snapshot)abort.abort();
       await startupReady;
+      void persistDiagnostics().catch(()=>{});
       if(!discarded&&snapshot&&guest&&runtime.owned.has(guest))await snapshot().catch(()=>{});
       coordinator?.close();abort.abort();
       const operations=[['guest_removal',()=>guest&&runtime.owned.has(guest)?runtime.remove(guest):undefined],
         ['workspace_cleanup',()=>workspace?rm(workspace.copy,{recursive:true,force:true}):undefined],
         ['remote_stop',()=>network.request(`/v2/sessions/${sessionId}/stop`,{method:'POST',body:{},signal:AbortSignal.timeout(30000)})]];
-      const outcomes=await Promise.all(operations.map(async([phase,work])=>{try{const value=await work();lifecycle.event(phase,{status:'succeeded'});return {phase,status:'succeeded',...(phase==='remote_stop'?{session:value}:{})};}catch(e){lifecycle.event(phase,{code:e.code??'cleanup_failed',status:'failed'});return {phase,status:'failed',code:e.code??'cleanup_failed'};}}));
-      const stopped=outcomes.find(o=>o.phase==='remote_stop');outcomes.push({phase:'settlement',status:['settled','refunded'].includes(stopped?.session?.state)?'succeeded':'pending'});lifecycle.event('settlement',{status:outcomes.at(-1).status});
+      await Promise.all(operations.map(async([phase,work])=>{
+        try{const value=await work();lifecycle.event(phase,{status:'succeeded'});if(phase==='remote_stop')lifecycle.event('settlement',{status:['settled','refunded'].includes(value?.state)?'succeeded':'pending'});}
+        catch(e){lifecycle.event(phase,{code:e.code??'cleanup_failed',status:'failed'});}
+        await persistDiagnostics().catch(()=>{});
+      }));
       server.closeAllConnections();if(server.listening)await new Promise(r=>server.close(r));
-      try{await persistDiagnostics(outcomes);}catch{outcomes.push({phase:'diagnostic_save',status:'failed',code:'diagnostic_save_failed'});}
+      await persistDiagnostics().catch(()=>{});
+      const outcomes=lifecycle.diagnostics().outcomes;
       return {status:outcomes.some(o=>o.status==='failed')?'cleanup_required':'closed',outcomes,firstFailure:lifecycle.firstFailure};
     })();return closing;
   };
@@ -213,7 +224,7 @@ export async function openCodingBuyer(network,sessionId,{root,files,runtimeConfi
     };
     checkpoint=backgroundOperation(snapshot,intervals.checkpoint??30000,()=>{});
     finishStartup();
-    return {status:()=>network.request(`/v2/sessions/${sessionId}`,{signal:AbortSignal.timeout(15000)}),close,lifecycle,
+    return {diagnostics:()=>lifecycle.diagnostics(),status:()=>network.request(`/v2/sessions/${sessionId}`,{signal:AbortSignal.timeout(15000)}),close,lifecycle,
       async workspace(){if(!coordinator)throw new ClientError('terminal_operation_busy');await terminalControl('suspend');await snapshot();coordinator.workspace();},
       async interactive({prompt='',mode='interactive',consoleOptions={}}={}){await status();if(!coordinator?.child)await runtime.run(guest,['node','-e',`const fs=require('node:fs');const p='/tmp/adr-coding.json';const d=JSON.parse(fs.readFileSync(p));d.prompt=${JSON.stringify(prompt)};d.resume=require('node:fs').existsSync('/tmp/adr-agent/sessions');fs.writeFileSync(p,JSON.stringify(d),{mode:0o600});`]);try{await runtime.attachConsole(guest,['node','/workspace/.adr-runtime/guest/coding-entry.mjs',...(mode==='rpc'?['--mode','rpc']:mode==='json'?['--mode','json','--print']:mode==='print'?['--print']:[])],{...consoleOptions,coordinator,beforeTeardown:()=>snapshot(),onOutcome:o=>lifecycle.event(o.phase,o),signal:abort.signal,timeoutSeconds:Math.min(3600,Math.max(1,Math.floor((session.expiresAt-Date.now())/1000)))});lifecycle.event('console',{status:'completed'});}catch(e){lifecycle.event('console',{code:e.code,exitCode:e.exitCode,signal:e.signal});throw e;}},
       async save(){if(!closing&&runtime.owned.has(guest))return snapshot();if(saving)await saving.catch(()=>{});const saved=await openSavedCodingWork(profile,sessionId,{root:workspace.root});return {resumeId:sessionId,snapshotRevision:saved.snapshotRevision,savedAt:saved.state.savedAt};},

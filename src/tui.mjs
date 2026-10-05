@@ -1,4 +1,4 @@
-import { safeFailure, failureLines, failureSummary, readPrivateDiagnostic, exportFailure } from './failure-diagnostics.mjs';
+import { safeFailure, failureLines, failureSummary, readPrivateDiagnostic, exportFailure, failureSnapshot } from './failure-diagnostics.mjs';
 import { pollLiveMenu } from './tui-polling.mjs';
 import packageMetadata from '../package.json' with {type:'json'};
 import { diagnoseProvider, diagnosisLines, retryProviderReports, retryProviderCleanup, providerEvidence, normalizeDiagnosis } from './provider-diagnose.mjs';
@@ -463,7 +463,7 @@ export async function runTui(options = {}, dependencies = {}) {
         const visibleMonitor=new ProviderActivityMonitor(network,node.id,()=>ui.pending?.redraw?.());
         try{await visibleMonitor.start();await ui.page('Provider status',()=>[...(providersRunning.has(node.id)?providerStatusLines(providersRunning.get(node.id).status):['No controller attached in this terminal']),...providerActivityLines(visibleMonitor.view())]);}finally{visibleMonitor.stop();}continue;
       }
-      if(selection==='failureDetails'){const result=await diagnoseProvider(network,node.id,store.profile);const d=result.diagnosis;await failureDetails(d.primaryFailure?.failureDiagnostic,d.cleanupOutcomes);continue;}
+      if(selection==='failureDetails'){const result=await diagnoseProvider(network,node.id,store.profile);const d=result.diagnosis;await failureDetails(async()=>{const latest=await diagnoseProvider(network,node.id,store.profile);return failureSnapshot({failureDiagnostic:latest.diagnosis.primaryFailure?.failureDiagnostic,outcomes:latest.diagnosis.cleanupOutcomes});});continue;}
       if(selection==='diagnose'){const result=await diagnoseProvider(network,node.id,store.profile);const controller=providersRunning.get(node.id);await ui.page('Provider diagnosis',diagnosisLines(result,{controllerAttached:!!controller&&controller.status.providerRunId===result.node.providerRunId}));continue;}
       if(selection==='retryReport'){await attempt(()=>providersRunning.get(node.id)?.retryResultReports?providersRunning.get(node.id).retryResultReports():retryProviderReports(network,node.id,store.profile));continue;}
       if(selection==='cleanup'){await attempt(()=>providersRunning.has(node.id)?stopProvider(node.id):retryProviderCleanup(network,node.id,store.profile));continue;}
@@ -660,7 +660,7 @@ export async function runTui(options = {}, dependencies = {}) {
           }catch(e){await ui.page('Saved-work recovery',[...errorLines(e),location,'Review, Apply and Export use the last saved snapshot. Further inference requires active compute.']);}
           continue;
         }
-        if(action==='failureDetails'){await failureDetails(buyer.lifecycle.failureDiagnostic,buyer.lifecycle.events.filter(e=>e.phase==='diagnostic_save'&&e.code).map(e=>({phase:e.phase,status:'failed',code:e.code})));continue;}
+        if(action==='failureDetails'){await failureDetails(()=>buyer.diagnostics());continue;}
         if(!action||action==='finish'){
           let changes;try{changes=await buyer.changes();}catch(e){await ui.page('Changes could not be inspected',errorLines(e));continue;}
           const finish=await ui.menu('Finish with saved work',[item('apply','Review and Apply'),item('save','Save and finish'),item('discard','Discard VM work and finish'),item('back','Back')],{lines:[location,`Unapplied changes: ${changes.changes.length}`,...changes.changes.map(c=>`${c.kind}: ${c.path}`)]});
@@ -670,7 +670,7 @@ export async function runTui(options = {}, dependencies = {}) {
         }
       }
     }finally{
-      if(buyer){if(discard)await buyer.discard();const result=await buyer.close();await ui.page('Session completion',[`Cleanup: ${words(result.status)}`,...result.outcomes.map(o=>`${words(o.phase)}: ${o.status}`),...accountingLines(result.outcomes.find(o=>o.phase==='remote_stop')?.session)]);}
+      if(buyer){if(discard)await buyer.discard();const result=await buyer.close();await ui.page('Session completion',[`Cleanup: ${words(result.status)}`,...result.outcomes.map(o=>`${words(o.phase)}: ${o.status}`)]);}
     }
   }
 
@@ -691,16 +691,17 @@ export async function runTui(options = {}, dependencies = {}) {
     }
   }
 
-  async function failureDetails(diagnostic,outcomes=[]) {
-    for(;;){const choice=await ui.menu('Failure details',[item('exportDiagnostic','Export private diagnostic JSON','Metadata only; no model request.',!safeFailure(diagnostic)),item('back','Back')],{lines:failureLines(diagnostic,outcomes)});
+  async function failureDetails(evidence,outcomes=[]) {
+    const read=typeof evidence==='function'?evidence:()=>failureSnapshot({failureDiagnostic:evidence,outcomes});
+    for(;;){const current=await read();const choice=await ui.menu('Failure details',[item('exportDiagnostic','Export private diagnostic JSON','Metadata only; no model request.',!safeFailure(current.failureDiagnostic)),item('back','Back')],{lines:()=>{return failureLines(current.failureDiagnostic,current.outcomes);}});
       if(!choice||choice==='back')return;
-      if(choice==='exportDiagnostic')await attempt(async()=>{const {mkdir}=await import('node:fs/promises'),{join}=await import('node:path');const directory=join(await store.directory(),'failure-exports');await mkdir(directory,{mode:0o700}).catch(e=>{if(e.code!=='EEXIST')throw e;});const path=await exportFailure(directory,diagnostic,outcomes);await ui.page('Private diagnostic export',[path,'Request metadata and cleanup outcomes only.']);});
+      if(choice==='exportDiagnostic')await attempt(async()=>{const {mkdir}=await import('node:fs/promises'),{join}=await import('node:path');const directory=join(await store.directory(),'failure-exports');await mkdir(directory,{mode:0o700}).catch(e=>{if(e.code!=='EEXIST')throw e;});const latest=await read();const path=await exportFailure(directory,latest.failureDiagnostic,latest.outcomes);await ui.page('Private diagnostic export',[path,'Request metadata and cleanup outcomes only.']);});
     }
   }
   async function buyerFailure(id,remote) {
     const remoteDiagnostic=safeFailure(remote)&&remote.sessionId===id?remote:null;
     try {const {join}=await import('node:path'),{lstat}=await import('node:fs/promises');const base=join(await store.directory(),'coding');const st=await lstat(base);if(!st.isDirectory()||st.isSymbolicLink()||st.uid!==process.getuid()||(st.mode&0o077))return {failureDiagnostic:remoteDiagnostic,outcomes:[]};
-      const local=await readPrivateDiagnostic(join(base,id),'lifecycle.json'),d=safeFailure(local.failureDiagnostic??local.firstFailure?.failureDiagnostic);return {failureDiagnostic:remoteDiagnostic??(d?.sessionId===id?d:null),outcomes:[...(local.outcomes??[]),...(local.events??[]).filter(e=>e.phase==='diagnostic_save'&&e.code).map(e=>({phase:'diagnostic_save',status:'failed',code:e.code}))]};
+      const local=await readPrivateDiagnostic(join(base,id),'lifecycle.json'),details=failureSnapshot(local),d=details.failureDiagnostic;return {failureDiagnostic:remoteDiagnostic??(d?.sessionId===id?d:null),outcomes:details.outcomes};
     }catch{return {failureDiagnostic:remoteDiagnostic,outcomes:[]};}
   }
   async function sessionDetail(id) {
@@ -709,7 +710,7 @@ export async function runTui(options = {}, dependencies = {}) {
       const evidence=await buyerFailure(id,session.failureDiagnostic);
       const choice = await ui.menu('Test-credit session', [item('failureDetails','Failure details','Inspect/export retained evidence; no model request.'),item('agent', 'Start buyer coding agent', 'Select files, approve tools and export a reviewed workspace.', !['ready','active'].includes(session.state)), item('events', 'Activity and recovery'), item('stop', 'Stop and release unused credits'), ...(!session.buyerDeletedAt?[item('delete','Stop and delete session','Retires after confirmed cleanup. Saved work and outstanding liabilities remain.')]:[]), item('refresh', 'Refresh'), item('back', 'Back')], { lines: [...(evidence.failureDiagnostic?[failureSummary(evidence.failureDiagnostic)]:[]),`Execution: ${words(session.executionState??(session.stoppedAt?'stopped':session.state))}`,`Reason: ${words(session.stopReason??'none')}`,`Accounting: ${words(session.accountingState??session.state)}`, `Reserved access: ${session.funded} · Charged: ${session.charged}`, `Unresolved liability: ${session.reserved} · Refunded: ${session.refunded}`, `Expires: ${date(session.expiresAt)}`, `Reference: ${session.id}`, '', 'Reconnect restores status. Paid requests and tool actions are never replayed.'] });
       if (!choice || choice === 'back') return;
-      if(choice==='failureDetails'){await failureDetails(evidence.failureDiagnostic,evidence.outcomes);continue;}
+      if(choice==='failureDetails'){await failureDetails(()=>buyerFailure(id,session.failureDiagnostic));continue;}
       if(['delete','restore'].includes(choice)){await post(`/sessions/${id}/${choice}`,{});return;}
       if (choice === 'agent') await buyerAgent(session);
       if (choice === 'events') { const events = await get(`/sessions/${id}/events`); await ui.page('Session activity', events.length ? events.map(e => `${date(e.at)} · ${words(e.type)}`) : ['No activity yet.']); }

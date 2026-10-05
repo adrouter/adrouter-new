@@ -4,12 +4,17 @@ from pathlib import Path
 root=str(Path(os.environ['ADR_ACCEPTANCE_CLIENT_ROOT']).resolve())
 code=r'''
 import {pathToFileURL} from 'node:url';
+import {mkdir,writeFile} from 'node:fs/promises';
 const {runTui}=await import(pathToFileURL(process.argv[1]+'/src/tui.mjs'));
 const id='00000000-0000-4000-8000-000000000001',run='00000000-0000-4000-8000-000000000002',request='00000000-0000-4000-8000-000000000003';
 const failureDiagnostic={schemaVersion:1,requestId:request,sessionId:id,providerRunId:run,model:'deepseek-flash',api:'openai-completions',phase:'tunnel',code:'upstream_failed_outcome_unknown',elapsedMs:27,statusCode:null,transportCategory:'dns',transportCode:'ENOTFOUND',dispatchEvidence:'outcome_unknown',responseEvidence:'not_observed',timeline:[{phase:'preparation',elapsedMs:0},{phase:'tunnel',elapsedMs:20}]};
+const finalOutcomes=[{phase:'guest_removal',status:'failed',code:'guest_cleanup_failed'},{phase:'workspace_cleanup',status:'succeeded'},{phase:'remote_stop',status:'failed',code:'remote_stop_failed'},{phase:'settlement',status:'pending'},{phase:'diagnostic_save',status:'failed',code:'diagnostic_save_failed'}];
+const pendingOutcomes=finalOutcomes.map(o=>({...o,status:'pending',code:null}));
+const record=process.argv[2]+'/coding/'+id;await mkdir(record,{recursive:true,mode:0o700});await writeFile(record+'/lifecycle.json',JSON.stringify({failureDiagnostic,outcomes:pendingOutcomes}),{mode:0o600});
 const session={id,state:'settlement_pending',executionState:'stopped',cleanupState:'succeeded',accountingState:'pending_reconciliation',stoppedAt:Date.now(),expiresAt:Date.now()+3600000,funded:'100',reserved:'1',charged:'0',refunded:'99',listingId:run,failureDiagnostic};
 let reads=0,mutations=0;
-const network={local:true,origin:'http://127.0.0.1:9',request:async(path,options={})=>{reads++;if(options.method&&options.method!=='GET'){mutations++;throw Error('mutation_forbidden');}if(path==='/v2/network/config')return {protocol:'2.0.0',product:'adr-v2',settlement:'test_credits',cashValue:false,admissions:false,privateOwnerEvaluation:true,privateRehearsal:true,supplyClasses:['authorized_api','self_hosted'],connectorProfile:'inference_connector_v1',maxNodeSessions:1,relay:'wss_single_instance',agentExecution:'buyer_vm_v1',capabilities:['allowance_v1','provider_budget_v1','cold_activation_v1','single_request_setup_v1','model_status_v1','failure_diagnostics_v1'],activationDeadlineSeconds:120};if(path==='/v2/sessions')return [session];if(path==='/v2/sessions/'+id)return session;throw Error('unexpected_read');}};
+const network={local:true,origin:'http://127.0.0.1:9',request:async(path,options={})=>{reads++;if(options.method&&options.method!=='GET'){mutations++;throw Error('mutation_forbidden');}if(path==='/v2/network/config')return {protocol:'2.0.0',product:'adr-v2',settlement:'test_credits',cashValue:false,admissions:false,privateOwnerEvaluation:true,privateRehearsal:true,supplyClasses:['authorized_api','self_hosted'],connectorProfile:'inference_connector_v1',maxNodeSessions:1,relay:'wss_single_instance',agentExecution:'buyer_vm_v1',capabilities:['allowance_v1','provider_budget_v1','cold_activation_v1','single_request_setup_v1','model_status_v1','failure_diagnostics_v1'],activationDeadlineSeconds:120};if(path==='/v2/sessions')return [session];if(path==='/v2/sessions/'+id){return session;}throw Error('unexpected_read');}};
+process.on('SIGUSR1',()=>{void writeFile(record+'/lifecycle.json',JSON.stringify({failureDiagnostic,outcomes:finalOutcomes}),{mode:0o600});});
 await runTui({}, {network,store:{profile:'buyer',directory:async()=>process.argv[2]}});
 console.log('ADR_DETAILS_RESULT='+JSON.stringify({reads,mutations}));
 '''
@@ -29,9 +34,9 @@ for width in [40,80,132]:
    if time.monotonic()>end:raise RuntimeError('details_screen_timeout:'+value.decode())
    pump(.05)
  try:
-  wait_for(b'What would you like to do?');os.write(master,b'My sessions\r');pump(.3);os.write(master,b'00000000\r');wait_for(b'Test-credit session');os.write(master,b'failure details\r');wait_for(b'Dispatch:');pump(.3);os.write(master,b'export private diagnostic json\r');wait_for(b'Private diagnostic export');pump(.3)
+  wait_for(b'What would you like to do?');os.write(master,b'My sessions\r');pump(.3);os.write(master,b'00000000\r');wait_for(b'Test-credit session');os.write(master,b'failure details\r');wait_for(b'Dispatch:');pump(.3);os.kill(child.pid,__import__('signal').SIGUSR1);pump(.3);os.write(master,b'export private diagnostic json\r');wait_for(b'Private diagnostic export');pump(.3)
   exports=list(Path(directory,'failure-exports').glob('*.json'));assert len(exports)==1
-  value=json.loads(exports[0].read_text());assert value['failureDiagnostic']['requestId']=='00000000-0000-4000-8000-000000000003';assert 'funded' not in json.dumps(value) and 'charged' not in json.dumps(value);assert exports[0].stat().st_mode&0o777==0o600
+  value=json.loads(exports[0].read_text());assert value['failureDiagnostic']['requestId']=='00000000-0000-4000-8000-000000000003';assert len(value['outcomes'])==5;assert {o['phase']:o['status'] for o in value['outcomes']}=={'guest_removal':'failed','workspace_cleanup':'succeeded','remote_stop':'failed','settlement':'pending','diagnostic_save':'failed'};assert 'funded' not in json.dumps(value) and 'charged' not in json.dumps(value);assert exports[0].stat().st_mode&0o777==0o600
   os.write(master,b'\x1b');pump(.2);os.write(master,b'\x1b');pump(.2);os.write(master,b'\x1b');pump(.2);os.write(master,b'\x1b');pump(.2);os.write(master,b'Exit\r');wait_for(b'ADR_DETAILS_RESULT=');child.wait(timeout=5)
   assert child.returncode==0 and b'"mutations":0' in captured and termios.tcgetattr(slave)==before
   print(json.dumps({'caseId':'failure-details-pty','width':width,'status':'passed','installed':True,'detailsNavigation':True,'privateExport':True,'financialDataExcluded':True,'terminalRestored':True,'paidInference':False}),flush=True)

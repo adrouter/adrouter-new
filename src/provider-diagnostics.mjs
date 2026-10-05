@@ -13,13 +13,14 @@ const historicalOperations = Object.freeze({qualification_complete:'setup_report
   qualification_tool:'setup_model_request',qualification_roundtrip:'setup_model_request',qualification_setup_probe:'setup_model_request'});
 const evidenceValues = ['not_sent','response_received','outcome_unknown'];
 export function providerDiagnostic(phase, error = {}, context = {}, now = Date.now) {
-  const status = error.statusCode ?? error.status;
+  const detail=safeFailure(context.failureDiagnostic??error.failureDiagnostic);
+  const status = detail?detail.statusCode:error.statusCode ?? error.status;
   const operation = label(context.operation ?? error.operation) ?? historicalOperations[phase] ?? label(phase);
   const code = /^[a-z][a-z0-9_]{0,79}$/.test(error.code??'')?error.code:operation==='setup_report_save'?'completion_report_save_failed':'provider_control_failed';
-  const evidence = context.requestEvidence ?? error.requestEvidence ?? (context.requestId ? 'outcome_unknown' : 'not_sent');
-  const transport = label(error.transportCause) ?? ({upstream_timeout:'timeout',network_timeout:'timeout',upstream_connection_failed:'connection',network_unavailable_outcome_unknown:'connection'}[code] ?? null);
-  return { ...(safeFailure(context.failureDiagnostic??error.failureDiagnostic)?{failureDiagnostic:safeFailure(context.failureDiagnostic??error.failureDiagnostic)}:{}), sessionId:label(context.sessionId??error.sessionId), operation, provenance:operationSources[operation] ?? 'local_runtime', transportCause:transport,
-    elapsedMs:Number.isSafeInteger(error.elapsedMs)&&error.elapsedMs>=0?error.elapsedMs:null,
+  const evidence = detail?(detail.responseEvidence!=='not_observed'?'response_received':detail.dispatchEvidence==='not_sent'?'not_sent':'outcome_unknown'):context.requestEvidence ?? error.requestEvidence ?? (context.requestId ? 'outcome_unknown' : 'not_sent');
+  const transport = detail?.transportCategory ?? label(error.transportCause) ?? ({upstream_timeout:'timeout',network_timeout:'timeout',upstream_connection_failed:'connection',network_unavailable_outcome_unknown:'connection'}[code] ?? null);
+  return { ...(detail?{failureDiagnostic:detail,transportCode:detail.transportCode}:{}), sessionId:label(context.sessionId??error.sessionId), operation, provenance:operationSources[operation] ?? 'local_runtime', transportCause:transport,
+    elapsedMs:detail?detail.elapsedMs:Number.isSafeInteger(error.elapsedMs)&&error.elapsedMs>=0?error.elapsedMs:null,
     requestEvidence:evidenceValues.includes(evidence)?evidence:'outcome_unknown',
     changedFields:Array.isArray(error.changedFields)?error.changedFields.slice(0,32).filter(v=>/^(provider|connectorProtocol|supplyClass|fields|connection\.[a-zA-Z]+)$/.test(v)):[],
     phase: label(phase), code, statusCode: Number.isInteger(status) && status >= 100 && status <= 599 ? status : null,

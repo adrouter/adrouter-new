@@ -8,7 +8,9 @@ import { tmpdir } from 'node:os';
 import { setTimeout as delay } from 'node:timers/promises';
 import { piCatalog } from '../src/generated/pi-catalog.mjs';
 import { providerCanLaunch } from '../src/provider-diagnostics.mjs';
-import { startProvider } from '../src/provider.mjs';
+import { pathToFileURL } from 'node:url';
+const diagnosticEntry=file=>process.env.ADR_DIAGNOSTIC_CLIENT_ROOT?pathToFileURL(process.env.ADR_DIAGNOSTIC_CLIENT_ROOT+'/src/'+file).href:new URL('../src/'+file,import.meta.url).href;
+const {startProvider}=await import(diagnosticEntry('provider.mjs'));
 import { providerStatusLines } from '../src/tui.mjs';
 import { TerminalUI } from '../src/tui-screen.mjs';
 import { PassThrough } from 'node:stream';
@@ -47,7 +49,7 @@ async function fixture(options={}){
   return node;
  }};
  let controller;
- return {state,node,runtime,control,directory,start:async()=>{controller=await startProvider(network,node.id,{noKey:true,prepareOnly:!!options.native,runtime,Socket,diagnosticsDirectory:directory,intervals:{status:100000,renewal:100000,guestPollWindow:100000,reconnectInitial:5,reconnectCap:20,...options}});if(!options.native)await until(()=>controller.status.relayReady);return controller;},close:async()=>{state.removeFail=false;await controller?.stop();if(controller?.status.cleanupRequired)await controller.retryCleanup();runtime.owned.clear();await rm(directory,{recursive:true,force:true});}};
+ return {state,node,runtime,control,directory,network,start:async()=>{controller=await startProvider(network,node.id,{noKey:true,prepareOnly:!!options.native,runtime,Socket,diagnosticsDirectory:directory,intervals:{status:100000,renewal:100000,guestPollWindow:100000,reconnectInitial:5,reconnectCap:20,...options}});if(!options.native)await until(()=>controller.status.relayReady);return controller;},close:async()=>{state.removeFail=false;await controller?.stop();if(controller?.status.cleanupRequired)await controller.retryCleanup();runtime.owned.clear();await rm(directory,{recursive:true,force:true});}};
 }
 test('relay close reconnects the same healthy VM; delayed old ready/close events are ignored',async()=>{
  const f=await fixture();try{
@@ -214,4 +216,28 @@ test('missing diagnostic negotiation retains legacy failure frames and richer lo
   const requestId=randomUUID();socket.frame({type:'inference',sessionId:randomUUID(),requestId,bindingRevision:f.node.listingId,sequence:1,deadlineUnixMs:Date.now()+30000,messages:[{role:'user',content:'synthetic'}],maxOutputTokens:1024,upstreamBudget:{reservedMicrousd:'1',inputBound:10,tariffVersion:'synthetic',inputMicrousdPerMillion:'1',outputMicrousdPerMillion:'1'},tools:[]});await until(()=>controller.status.calls===1);await f.control('/work');await f.control('/failed',{scope:'request',requestId,code:'pi_request_limit'});
   assert.equal(frames.length,1);assert.equal(frames[0].code,'provider_outcome_unknown');assert.equal('failureDiagnostic' in frames[0],false);assert.equal(controller.status.terminalFailure.code,'pi_request_limit');assert.equal(controller.status.terminalFailure.requestId,requestId);assert.equal(controller.status.terminalFailure.requestEvidence,'outcome_unknown');
  }finally{await f.close();}
+});
+
+for(const variant of ['tls','dns','connection','legacy','usage_report','usage_save'])test(`setup evidence survives all views: ${variant}`,async()=>{
+ const f=await fixture({native:true});const {ProviderReports}=await import(diagnosticEntry('provider-reports.mjs'));const originalSave=ProviderReports.prototype.save;
+ try{
+  const c=await f.start();let thrown;const started=c.start().catch(e=>{thrown=e;});const frame=await nextCheck(f);
+  const transport=variant==='dns'?['dns','ENOTFOUND']:variant==='connection'?['connection','ECONNREFUSED']:['tls','CERT_HAS_EXPIRED'];
+  const diagnostic={schemaVersion:1,requestId:frame.requestId,sessionId:null,providerRunId:c.status.providerRunId,model:frame.model,api:frame.api,phase:transport[0]==='tls'?'tls':'tunnel',code:'upstream_failed_outcome_unknown',elapsedMs:22,statusCode:null,transportCategory:transport[0],transportCode:transport[1],dispatchEvidence:'outcome_unknown',responseEvidence:'not_observed',timeline:[{phase:'preparation',elapsedMs:0},{phase:'tunnel',elapsedMs:5},...(transport[0]==='tls'?[{phase:'tls',elapsedMs:12}]:[])]};
+  if(variant.startsWith('usage_'))Object.assign(diagnostic,{phase:'validation',code:'upstream_malformed_response',statusCode:200,transportCategory:null,transportCode:null,dispatchEvidence:'dispatched',responseEvidence:'streaming',timeline:[{phase:'headers',elapsedMs:5},{phase:'validation',elapsedMs:22}]});
+  for(const mismatch of [{requestId:randomUUID()},{providerRunId:randomUUID()},{model:'wrong-model'},{sessionId:randomUUID()}])if(variant==='tls')await assert.rejects(f.control('/timing',{requestId:frame.requestId,phase:'upstream',outcome:'unknown',statusCode:null,headersMs:null,totalMs:22,failureDiagnostic:{...diagnostic,...mismatch}}));
+  await f.control('/timing',{requestId:frame.requestId,phase:'upstream',outcome:'unknown',statusCode:diagnostic.statusCode,headersMs:diagnostic.statusCode===null?null:5,totalMs:22,...(variant==='legacy'?{}:{failureDiagnostic:diagnostic})});
+  if(variant==='usage_report')f.state.reportError={code:'report_rejected',status:409};
+  if(variant==='usage_save')ProviderReports.prototype.save=async()=>{throw Object.assign(Error('PRIVATE_SENTINEL'),{code:'completion_report_save_failed'});};
+  if(variant.startsWith('usage_'))await f.control('/usage',{requestId:frame.requestId,failureCode:diagnostic.code,nativeUsage:{input:10,output:2,cacheRead:0,cacheWrite:0,reasoning:null}}).catch(()=>{});
+  await f.control('/failed',{scope:'request',requestId:frame.requestId,code:diagnostic.code,message:'PRIVATE_SENTINEL'});await started;
+  assert.equal(thrown.code,diagnostic.code);assert.equal(c.status.setupFailure.code,diagnostic.code);
+  if(variant==='legacy'){assert.equal(thrown.failureDiagnostic,undefined);assert.equal(c.status.setupFailure.requestEvidence,'outcome_unknown');return;}
+  assert.deepEqual(thrown.failureDiagnostic,diagnostic);assert.deepEqual(c.status.setupFailure.failureDiagnostic,diagnostic);
+  const stored=JSON.parse(await readFile(c.lifecycle.path,'utf8'));assert.deepEqual(stored.terminalFailure.failureDiagnostic,diagnostic);assert.equal(JSON.stringify(stored).includes('PRIVATE_SENTINEL'),false);
+  const {diagnoseProvider}=await import(diagnosticEntry('provider-diagnose.mjs'));const {exportFailure}=await import(diagnosticEntry('failure-diagnostics.mjs'));
+  const reopened=await diagnoseProvider(f.network,f.node.id,'provider',{directory:f.directory});assert.deepEqual(reopened.diagnosis.primaryFailure.failureDiagnostic,diagnostic);
+  const counts=f.state.requests.length,path=await exportFailure(f.directory,reopened.diagnosis.primaryFailure.failureDiagnostic,reopened.diagnosis.cleanupOutcomes);assert.deepEqual(JSON.parse(await readFile(path,'utf8')).failureDiagnostic,diagnostic);assert.equal(f.state.requests.length,counts);
+  if(variant.startsWith('usage_'))assert.ok(c.status.secondaryFailures.some(e=>e.operation==='setup_report_save'||e.operation==='setup_report_submit'));
+ }finally{ProviderReports.prototype.save=originalSave;await f.close();}
 });

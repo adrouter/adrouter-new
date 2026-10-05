@@ -97,6 +97,17 @@ async function createProviderController(networkInput, nodeId, { prepareOnly = fa
     for (const tunnel of tunnels) tunnel.destroy();
     lifecycle.event('request', { status: 'cancellation_requested' });
   };
+  // The broker validated this evidence against the pending qualification binding.
+  const setupRequestError=(check,code,statusCode=null)=>{
+    const d=safeFailure(check.failureDiagnostic);
+    if(d&&d.code!==code)throw Error('diagnostic_code_binding');
+    return Object.assign(new ClientError(code),{provider:node.provider,model:check.binding.model,api:check.binding.api,maxOutputTokens:check.binding.maxOutputTokens,
+      operation:setupResponseCodes.includes(code)?'setup_response_validate':'setup_model_request',requestId:check.id,
+      statusCode:d?d.statusCode:check.upstreamStatus??(Number.isInteger(statusCode)&&statusCode>=100&&statusCode<=599?statusCode:null),
+      elapsedMs:d?.elapsedMs??check.upstreamTotalMs??null,transportCause:d?.transportCategory??check.transportCause??null,
+      requestEvidence:d?(d.responseEvidence!=='not_observed'?'response_received':d.dispatchEvidence==='not_sent'?'not_sent':'outcome_unknown'):check.upstreamStatus||statusCode?'response_received':'outcome_unknown',
+      ...(d?{failureDiagnostic:d,transportCode:d.transportCode}:{})});
+  };
   const broker = createServer(async (req, res) => {
     try {
       if (req.headers.authorization !== `Bearer ${capability}`) { res.writeHead(403).end(); return; }
@@ -124,7 +135,7 @@ async function createProviderController(networkInput, nodeId, { prepareOnly = fa
       } else if (req.method === 'POST' && req.url === '/usage') {
         const data=JSON.parse(bytes),binding=executionBindings.get(data.requestId);
         if(pending?.qualification&&pending.id===data.requestId){
-          if(data.failureCode){setupFailure=providerDiagnostic('qualification_setup_probe',{code:[...upstreamFailureCodes,...setupResponseCodes].includes(data.failureCode)?data.failureCode:'provider_outcome_unknown',statusCode:pending.upstreamStatus,elapsedMs:pending.upstreamTotalMs,transportCause:pending.transportCause},{nodeId,operation:setupResponseCodes.includes(data.failureCode)?'setup_response_validate':'setup_model_request',provider:node.provider,model:pending.binding.model,api:pending.binding.api,providerRunId,requestId:pending.id,requestEvidence:pending.upstreamStatus?'response_received':pending.sent?'outcome_unknown':'not_sent',maxOutputTokens:pending.binding.maxOutputTokens},now);lifecycle.fail(setupFailure);}
+          if(data.failureCode){const error=setupRequestError(pending,[...upstreamFailureCodes,...setupResponseCodes].includes(data.failureCode)?data.failureCode:'provider_outcome_unknown');setupFailure??=providerDiagnostic('qualification_setup_probe',error,{nodeId,providerRunId,...error},now);lifecycle.fail(setupFailure);}
           let operation='setup_report_save';
           try{const record=await reports.save({nodeId,providerRunId,installationId:node.installationId,nativeRevision:node.nativeRevision},{id:data.requestId,usage:data.nativeUsage,streaming:true,tools:false,completed:false});operation='setup_report_submit';await reports.deliver(network,record);}
           catch(error){lifecycle.fail(providerDiagnostic(operation,error,{nodeId,operation,providerRunId,requestId:data.requestId,requestEvidence:setupFailure?.requestEvidence??'outcome_unknown'},now),{secondary:!!setupFailure});throw error;}
@@ -151,7 +162,7 @@ async function createProviderController(networkInput, nodeId, { prepareOnly = fa
         pending = undefined; lifecycle.event('request', { status: 'cancelled' });
       } else if (req.method === 'POST' && req.url === '/failed') {
         const result = JSON.parse(bytes);
-        if(result.scope==='request'&&pending?.qualification&&result.requestId===pending.id){const check=pending;pending=undefined;check.reject(Object.assign(new ClientError([...upstreamFailureCodes,...setupResponseCodes].includes(result.code)?result.code:'provider_outcome_unknown'),{provider:node.provider,model:check.binding.model,api:check.binding.api,maxOutputTokens:check.binding.maxOutputTokens,operation:setupResponseCodes.includes(result.code)?'setup_response_validate':'setup_model_request',transportCause:check.transportCause??null,elapsedMs:check.upstreamTotalMs??null,statusCode:check.upstreamStatus??(Number.isInteger(result.statusCode)&&result.statusCode>=100&&result.statusCode<=599?result.statusCode:null),requestId:check.id,requestEvidence:check.upstreamStatus||result.statusCode?'response_received':check.sent?'outcome_unknown':'not_sent'}));res.writeHead(200,{'content-type':'application/json'}).end('{"ok":true}');return;}
+        if(result.scope==='request'&&pending?.qualification&&result.requestId===pending.id){const check=pending,error=setupRequestError(check,[...upstreamFailureCodes,...setupResponseCodes].includes(result.code)?result.code:'provider_outcome_unknown',result.statusCode);pending=undefined;check.reject(error);res.writeHead(200,{'content-type':'application/json'}).end('{"ok":true}');return;}
         if (result.scope === 'request' && pending && result.requestId === pending.id) {
           const frame = { type: 'request_failed', requestId: pending.id, sessionId: pending.binding.sessionId, bindingRevision: pending.binding.bindingRevision, sequence: pending.binding.sequence, code: upstreamFailureCodes.includes(result.code)?result.code:'provider_outcome_unknown' };
           if(pending.failureDiagnostic){const d=pending.failureDiagnostic;if(pending.hostTransport){d.transportCode=pending.hostTransport.code;d.transportCategory=pending.hostTransport.category;if(d.responseEvidence==='not_observed')d.phase='tunnel';}d.code=frame.code;frame.failureDiagnostic=safeFailure(d);}if (!ProviderRequestFailure(frame)) throw Error('request_failure_binding');

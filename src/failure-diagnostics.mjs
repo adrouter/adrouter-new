@@ -16,7 +16,7 @@ export function failureSummary(value) {
 }
 export function failureLines(value, outcomes=[]) {
   const d=safeFailure(value);
-  if(!d)return [failureSummary(value),'Inspect the session/provider status. No request is replayed.'];
+  if(!d)return [failureSummary(value),...safeOutcomes(outcomes).map(e=>`Separate cleanup: ${e.phase} · ${e.status}${e.code?' · '+e.code:''}`),'Inspect the session/provider status. No request is replayed.'];
   return [failureSummary(d),`Session: ${d.sessionId??'unavailable'} · Run: ${d.providerRunId??'unavailable'}`,
     `Model/API: ${d.model??'unavailable'} / ${d.api??'unavailable'}`,`Elapsed: ${d.elapsedMs} ms · HTTP: ${d.statusCode??'not observed'}`,
     `Transport: ${d.transportCategory??'not captured'} · ${d.transportCode??'not captured'}`,
@@ -26,8 +26,22 @@ export function failureLines(value, outcomes=[]) {
     d.code==='request_cancelled'?'Request stopped. Save or export your work.':d.phase==='preparation'?'Inspect the accepted model/settings before another request.':d.transportCategory?'Inspect the provider connection and retained evidence before another request.':'Inspect provider status and HTTP evidence before another request.',
     'Unknown inference retains its liability. No automatic replay.'];
 }
+export const buyerOutcomePhases=Object.freeze(['guest_removal','workspace_cleanup','remote_stop','settlement','diagnostic_save']);
 export function safeOutcomes(values=[]) {
-  return (Array.isArray(values)?values:[]).slice(-32).map(v=>({phase:/^[a-z0-9_]{1,80}$/.test(v.phase??'')?v.phase:null,status:['succeeded','failed','pending','superseded','not_requested'].includes(v.status)?v.status:'unknown',code:/^[a-z0-9_]{1,80}$/.test(v.code??'')?v.code:null}));
+  const byPhase=new Map();
+  for(const v of (Array.isArray(values)?values:[]).slice(-256)){
+    if(!v||typeof v!=='object'||!/^[a-z0-9_]{1,80}$/.test(v.phase??''))continue;
+    const entry={phase:v.phase,status:['succeeded','failed','pending','superseded','not_requested','unknown'].includes(v.status)?v.status:'unknown',code:/^[a-z0-9_]{1,80}$/.test(v.code??'')?v.code:null};
+    if(entry.phase==='diagnostic_save'&&byPhase.get(entry.phase)?.status==='failed')continue;
+    byPhase.set(entry.phase,entry);
+  }
+  return [...byPhase.values()].slice(-32);
+}
+// The same normalization is used for live snapshots and historical records.
+export function failureSnapshot(record={}) {
+  const events=(Array.isArray(record.events)?record.events:[]).filter(e=>buyerOutcomePhases.includes(e?.phase)&&(e.status||e.code)).map(e=>({...e,status:e.status??(e.code?'failed':'unknown')}));
+  const outcomes=safeOutcomes([...events,...(Array.isArray(record.outcomes)?record.outcomes:[])]);
+  return Object.freeze({failureDiagnostic:safeFailure(record.failureDiagnostic??record.firstFailure?.failureDiagnostic),outcomes:Object.freeze(outcomes.map(e=>Object.freeze(e)))});
 }
 export async function writePrivateDiagnostic(directory,name,value) {
   if(!/^[a-z0-9_.-]{1,100}$/.test(name))throw Error('diagnostic_path_unsafe');

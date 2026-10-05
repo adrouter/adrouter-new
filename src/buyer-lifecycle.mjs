@@ -1,13 +1,17 @@
-import { safeFailure } from './failure-diagnostics.mjs';
+import { safeFailure, safeOutcomes, buyerOutcomePhases, failureSnapshot } from './failure-diagnostics.mjs';
 import { ClientError } from './network.mjs';
 
 const identifier = value => /^[a-zA-Z0-9_-]{1,80}$/.test(value ?? '') ? value : null;
 export class BuyerLifecycle {
+  #outcomes=[];
+  diagnostics(){return failureSnapshot({failureDiagnostic:this.failureDiagnostic,outcomes:this.#outcomes});}
+  beginCleanup(){for(const phase of buyerOutcomePhases.filter(p=>p!=='diagnostic_save'))this.event(phase,{status:'pending'});}
   constructor(record = () => {}) { this.record = record; this.events = []; this.paused = false; this.firstFailure = null; }
   event(phase, outcome = {}) {
     const entry = { ...(safeFailure(outcome.failureDiagnostic)?{failureDiagnostic:safeFailure(outcome.failureDiagnostic)}:{}), at: Date.now(), phase: identifier(phase), code: identifier(outcome.code),
       exitCode: Number.isInteger(outcome.exitCode) ? outcome.exitCode : null,
       signal: identifier(outcome.signal), state: identifier(outcome.state), status: identifier(outcome.status) };
+    if(buyerOutcomePhases.includes(phase)&&(entry.status||entry.code)){this.#outcomes=safeOutcomes([...this.#outcomes,{phase,status:entry.status??'failed',code:entry.code}]);}
     if(phase==='diagnostic_save'&&entry.code)this.diagnosticSaveFailed=true;
     if(safeFailure(outcome.failureDiagnostic))this.failureDiagnostic??=safeFailure(outcome.failureDiagnostic);
     if (entry.code && !this.firstFailure) this.firstFailure = entry;

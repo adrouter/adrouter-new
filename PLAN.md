@@ -1123,3 +1123,45 @@ Operator-only Flash, Pro, Custom API, tool, Apply, reconnect, Stop and retained-
 
 ### Final delivery outcome — 6 October 2026
 Private alpha.48 is installed/selected, paired Router deployed and all required source/installed/hosted synthetic gates and preservation checks pass as recorded in outputs/adr-interruption-repair-2026-10-05/delivery-receipt.json. Original live initiating cause remains explicitly unresolved; no claim of fixing it. Operator acceptance and controlled restart are pending in manual-acceptance.md. Earlier failed artifacts and plan sections are preserved.
+
+
+# Provider setup and buyer cleanup diagnostic gaps — 6 October 2026
+
+## Goal
+Close the two alpha.48 logging defects and deliver a verified private installation ready for controlled diagnostic live testing. The original interruption cause remains unresolved.
+
+## Context and constraints
+Continue the clean canonical client reliability checkout. Keep Router source 9a2e2e6 and Pages abfaca46 unchanged; no API/contract changes, paid inference, reconciliation, replay, credential reset or unrelated cleanup. All platform access passed kickoff; preserve the explicit private npm waiver. Preserve alpha.48 and earlier artifacts and historical plan sections.
+
+## Step A: Regressions and focused repairs
+### Status
+`in_progress`
+- [ ] Demonstrate setup diagnostic loss and buyer outcome loss against alpha.48.
+- [ ] Preserve validated setup phase/code/timing/binding through rejection, known usage, persistence, reopening/export; retain separate report/save/cleanup failures.
+- [ ] One sanitized buyer outcome snapshot with independently pending/completed operations, read-only accessor, shared active/persisted/reopened presentation and fresh export reads.
+
+## Step B: Source and installed acceptance
+### Status
+`todo`
+- [ ] TLS/CERT_HAS_EXPIRED, DNS/connect, absent/mismatched evidence and secondary failure regressions.
+- [ ] Mixed/pending buyer cleanup, write failure, reopen/export equivalence, duplicate/privacy regressions.
+- [ ] Full client checks/provenance; freeze clean next unused private version and verify exact installed bytes and source CI.
+- [ ] Installed synthetic provider/buyer failure scenarios, 40/80/132-column details/export and applicable full lifecycle gate.
+
+## Step C: Private delivery and current restart checklist
+### Status
+`todo`
+- [ ] Recheck Router readiness/identity and Pages without redeploying; preserve profiles, credentials, saved work and liabilities.
+- [ ] Select accepted launcher, update receipt/checklist/specifications and scoped manifest checksums after final bytes stabilize.
+- [ ] Record readiness for controlled diagnostic testing; actual paid qualification/Ready, provider restart and live tests remain operator-run.
+
+## Follow-up Work
+Operator controlled cleanup/restart using retained credentials, acknowledged qualification and backend-confirmed Ready before buyer testing. The original interruption is not confirmed fixed.
+
+## Decision Log
+| Date | Decision | Rationale | Impact |
+| --- | --- | --- | --- |
+| 2026-10-06 | Client-only update with carried private npm waiver | Explicit operator plan | Preserve Router, Pages and immutable earlier artifacts |
+
+### Source repair results
+Alpha.48 fails five detailed provider cases (TLS/DNS/connection and known-usage report/save failures) because evidence is absent; its buyer controller lacks the shared read-only accessor. The repaired six provider and four buyer/legacy/UI cases pass, including identity rejection, original-cause retention, privacy/deduplication, memory-visible write failure and fresh export after an open view. Full local check passed 908 tests; final active-view delta passed. Runtime builders/provenance pass. Freeze alpha.49; exact installed/CI/lifecycle gates follow.
