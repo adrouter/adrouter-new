@@ -1,6 +1,6 @@
 # ADRv2 detailed specification: strict setup, model status and failure recovery
 
-Revision: **5 October 2026**. Status: **implemented in designated source; integrated installed and hosted verification pending**.
+Revision: **5 October 2026**. Status: **implemented and installed/hosted verified; independent paid acceptance pending**.
 
 This replaces earlier setup, qualification, provider/listing UI, diagnostics and failure-cleanup requirements. The existing alpha.38 product is the baseline; its earlier synthetic acceptance does not establish that the changes below exist or that live acceptance passed. The current setup blocker must be fixed before another live setup attempt is recommended.
 
@@ -381,3 +381,11 @@ Update both spec copies and the standalone manual live-test file at `outputs/adr
 Completion requires a demonstrated synthetic failure that produces a specific diagnosis, no later model request, no publication, confirmed teardown and correct separate accounting; plus a passing multi-model setup with exactly one probe per model and consistent status across screens.
 
 The final handoff is **implementation verified and ready for an independent manual retest**. Real Flash/Pro/Custom API acceptance is not claimed until the operator records it. No agent-run paid inference or interactive live-test walkthrough is authorized.
+
+## 14. Verified private delivery — 5 October 2026
+
+Private `@adrouter/adr-cli 0.1.0-alpha.43` is installed and selected. Product source is `521efa1dde33ca0458b3f376c4146a28aee4fb8f`; tarball SHA-256 is `ec82e30796c7053216b9c1b39de560ea6407e89dfafee4bd5d770e8d45dd3c68`. Router product `feb7a897dc0954ecb5c59d82326a39b13bf0f459` serves on the existing sole Machine with verified platform digest `sha256:c0add06c7bbd05a8c6b8e7d47e7fbda1f1a74aa282815ecce513cccdc029fc56`.
+
+All 875 client source tests, 87 marketplace tests, six contracts and 11 disposable PostgreSQL cases passed. Actual installed Mac gates passed for 644 native/SDK cases, retained guest credentials, fail-fast/one-probe/report-loss behavior, coding selected Apply and the full 660-second lifecycle. Serving bytes, sole relay, private policy/resources and 28 Pages comparisons passed. The ten authorized obsolete nodes were retired with financial evidence preserved; the intended connection and newer excluded node remain.
+
+The [consolidated delivery receipt](../../../outputs/adr-integrated-2026-10-05/delivery-receipt.json) owns exact identities and results. The [manual retest file](../../../outputs/adr-live-test-2026-10-05/live-test-run.md) owns operator actions and blank real-provider results. Synthetic acceptance is not paid Flash/Pro/Custom API acceptance. No real key was entered and no paid inference was dispatched by the agent.
