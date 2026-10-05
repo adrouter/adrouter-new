@@ -1,6 +1,6 @@
 # ADRv2 detailed specification: strict setup, model status and failure recovery
 
-Revision: **5 October 2026**. Status: **verification gaps repaired and exact private installed/hosted delivery verified; independent paid acceptance pending**.
+Revision: **5 October 2026**. Status: **alpha.45 listing/menu repairs delivered; existing Flash/Pro setup and listing access verified; buyer coding acceptance pending**.
 
 This replaces earlier setup, qualification, provider/listing UI, diagnostics and failure-cleanup requirements. Alpha.43 is the verification baseline. Its prior synthetic gates did not cover the three subsequently reproduced gaps recorded below. Real-provider acceptance remains pending.
 
@@ -450,3 +450,12 @@ Private alpha.44 is installed and selected after paired Router source 927f4f80f1
 885 client tests, 89 Router marketplace tests, six contracts, 12 disposable PostgreSQL cases, source/installed drift, OpenAPI, native adapter matrix (644 required cases), ten actual installed setup diagnostic cases, retained-credential PTY and full 660-second lifecycle pass. Installed CLI/TUI diagnosis agrees and approved hosted profiles authenticate without inference. Canonical product CI passes on its recorded immutable revisions. All 24 serving modules, sole relay lease, private access/resources, 28 Pages comparisons and liability fingerprints are verified. No hosted schema change, public publication/channel movement, extra session deletion or real-provider inference occurred.
 
 The [successor delivery receipt](../../../outputs/adr-verification-gaps-2026-10-05/delivery-receipt.json) supersedes alpha.43's readiness conclusion for these gaps without changing its immutable receipt or recovery material. The [exact-version manual handoff](../../../outputs/adr-live-test-2026-10-05/live-test-run.md) retains blank operator results. Real Flash, Pro and Custom API acceptance remains pending independently. Reopen the client to load alpha.44; running processes retain their loaded bytes.
+
+
+## Listing/menu repair delivery — 5 October 2026
+
+Private alpha.45 fixes public listing projection, non-modal five-second menu polling and healthy-provider diagnosis. The actual operator-created Flash and Pro listings now pass the installed strict validator on both collection and detail routes. Both remain Available, with the buyer quote action enabled. The same run, controller PID, guest name, listing IDs, qualification checks, shared allowance and financial fingerprints survived deployment; no setup request was repeated. Buyer paid coding acceptance remains operator-pending.
+
+Validation: 891 client tests; Router full suite/typecheck/build with 90 marketplace and six contract cases; passing client macOS/Linux and four Router CI jobs; actual installed PTY menus at 40/80/132 columns through two five-second refresh cycles; 51,555 installed files and 24 serving modules match. Provider and coding guest-runtime file hashes are unchanged from alpha.44. One graceful-stop CLI attempt timed out and recovered the prior image; the successful replacement used cordon, skip-start in-place update, verified zero relay owners, verified startup, and uncordon without changing relay policy. Pages/assets, resources and liabilities remain preserved.
+
+Client product source: c54051686dfe06d31956823a449e25170b5530ad. Router product source: 400f555e4ce21f638e11da8f4c8444e6ef505216. Evidence: outputs/adr-listing-ui-fix-2026-10-05/delivery-receipt.json in the workspace. The earlier ready labels are historical; this evidence closes the reported listing/UI defects without claiming completion of real buyer coding acceptance. Open a new buyer terminal to load alpha.45; leave the existing provider process running.
