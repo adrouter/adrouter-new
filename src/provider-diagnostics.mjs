@@ -11,9 +11,9 @@ export function providerDiagnostic(phase, error = {}, context = {}, now = Date.n
 }
 export function providerDiagnosticLines(d) {
   if (!d) return [];
-  return [`SETUP FAILED — ${d.phase??d.operation??'operation unavailable'}`,`Cause: ${d.code??'Cause not captured'} · ${d.provenance??'source not captured'}`,`Model request: ${d.requestEvidence==='not_sent'?'No model request sent':d.requestEvidence==='response_received'?'Response received':'Outcome unknown'}`,`Transport: ${d.transportCause??'Transport cause not captured'}`, ...(Number.isSafeInteger(d.elapsedMs)?[`Elapsed: ${d.elapsedMs} ms`]:[]), ...(d.changedFields?.length?[`Changed settings: ${d.changedFields.join(', ')}`]:[]), `HTTP ${d.statusCode ?? 'unavailable'} · ${Number.isSafeInteger(d.observedAt??d.at)?new Date(d.observedAt??d.at).toISOString():'time unavailable'}`,
+  return [`${/^(qualification|configure_models)/.test(d.phase??d.operation??'')?'SETUP FAILED':'Operation'} — ${d.phase??d.operation??'operation unavailable'}`,`Cause: ${d.code??'Cause not captured'} · ${d.provenance??'source not captured'}`,`Model request: ${d.requestEvidence==='not_sent'?'No model request sent':d.requestEvidence==='response_received'?'Response received':'Outcome unknown'}`,`Transport: ${d.transportCause??'Transport cause not captured'}`, ...(Number.isSafeInteger(d.elapsedMs)?[`Elapsed: ${d.elapsedMs} ms`]:[]), ...(d.changedFields?.length?[`Changed settings: ${d.changedFields.join(', ')}`]:[]), `HTTP ${d.statusCode ?? 'unavailable'} · ${Number.isSafeInteger(d.observedAt??d.at)?new Date(d.observedAt??d.at).toISOString():'time unavailable'}`,
     ...(d.model ? [`Model: ${d.model} · API: ${d.api ?? 'unknown'}`] : []),
-    ...(d.providerRunId ? [`Run: ${d.providerRunId}`] : []), ...(d.requestId ? [`Check/request: ${d.requestId}`] : [])];
+    ...(d.providerRunId ? [`Run: ${d.providerRunId}`] : []), ...(d.requestId||d.checkId ? [`Check/request: ${d.requestId??d.checkId}`] : [])];
 }
 export function providerCanLaunch(controller) {
   if (!controller) return true;

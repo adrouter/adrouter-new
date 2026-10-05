@@ -1,3 +1,4 @@
+import packageMetadata from '../package.json' with {type:'json'};
 import { diagnoseProvider, diagnosisLines, retryProviderReports, retryProviderCleanup, providerEvidence } from './provider-diagnose.mjs';
 import { modelStatusLines, providerRow, visibleModelStatus } from './model-status.mjs';
 import { connectionCapabilities } from './provider-models.mjs';
@@ -19,15 +20,15 @@ import { AuthStore, Network, ClientError, networkOrigin, safeText, authRecoveryC
 import { MarketplaceDraft, MarketplaceListing, MarketplaceNetworkConfig, ProviderNodeDeletion } from './generated/validators.mjs';
 
 export const accountingLines=s=>s?[`Execution: ${words(s.executionState??(s.stoppedAt?'stopped':s.state))}`,`Accounting: ${words(s.accountingState??s.state)}`,`Cleanup: ${words(s.cleanupState??'pending')}`,`Reserved ${s.funded} · Charged ${s.charged} · Refunded ${s.refunded} test credits`,`Unresolved liability: ${s.reserved}`,s.state==='settlement_pending'?'Receipt pending: upstream outcome is unresolved.':`Settlement: ${words(s.state)}`]:['Receipt pending: remote stop/accounting could not be confirmed. Inspect My sessions.'];
-export const providerStatusLines = (s, now = Date.now()) => [s.stopped ? 'Provider operation has stopped.' : 'Keep this TUI open.',
+export const providerStatusLines = (s, now = Date.now()) => [...providerDiagnosticLines(s.setupFailure),s.stopped ? 'Provider operation has stopped.' : 'Keep this TUI open.',
   `VM: ${s.stopped ? s.teardownVerified === false ? 'teardown unverified' : s.teardownVerified === true ? 'not running' : 'stopping' : s.guestReady ? 'ready' : 'starting'}`,
   `Backend: ${s.stopped ? 'offline' : s.backendConfirmedAt && now - s.backendConfirmedAt < 15000 && s.relayReady && s.relayLeaseUntil > now ? 'Hot · ready' : s.firstFailure ? 'reconnecting' : 'awaiting relay confirmation'}`,
   `State: ${words(s.runtimeState??s.state ?? (s.stopped?'stopped':'connecting'))}`,
   `Publication: ${words(s.publication ?? 'unknown')}`,
   `Relay: ${s.relayReady && s.relayLeaseUntil > now ? 'authenticated' : 'unconfirmed'}`,
   `Backend confirmation: ${s.backendConfirmedAt ? date(s.backendConfirmedAt) : 'unknown'}`,
-  ...(s.qualification??[]).flatMap(q=>[`${q.model} · ${q.phase}: ${q.status}`,...Object.entries(q.checks??{}).map(([phase,status])=>`  ${words(phase)}: ${status}`)]),
-  ...providerDiagnosticLines(s.setupFailure??s.firstFailure),
+  ...(s.qualification??[]).flatMap(q=>[`${q.model} · ${q.phase}: ${{pending:'Not tested',reserving:'Testing',running:'Testing',passed:'Passed',failed:'Failed',unknown:'Result unconfirmed'}[q.status]??q.status}`,...Object.entries(q.checks??{}).map(([phase,status])=>`  ${words(phase)}: ${status}`)]),
+  ...(!s.setupFailure&&s.firstFailure?['Earlier diagnostic:',...providerDiagnosticLines(s.firstFailure)]:[]),
   ...(s.cleanupOutcomes??[]).map(o=>`Cleanup ${words(o.phase)}: ${o.status}${o.code?' · '+o.code:''}`),
   ...providerFailureLines(s.lastUpstreamFailure),
   ...(s.stopTrigger ? [`Stopped: ${words(s.stopTrigger.trigger)}`] : ['Refresh the listing to read backend readiness.'])];
@@ -113,8 +114,8 @@ export const errorLines = error => {
   const code = /^[a-z0-9_]{1,100}$/.test(candidate ?? '') ? candidate : 'operation_failed';
   return [problems[code] ?? `Unable to complete this operation: ${words(code)}.`, '', `Reference: ${code}`];
 };
-export function listingLines(l) {
-  return [...modelStatusLines(l.modelStatus?[l.modelStatus]:[]),l.name, `Model: ${l.model}`, `Supply: ${words(l.supplyClass)} · ${l.availability}`, `Availability: ${l.ready ? 'Hot · ready' : l.controlOnline && l.availability === 'cold' ? 'Cold · control online · 120 seconds to activate' : 'Offline'}`, `Input: ${l.inputRate} test credits / 1M tokens`, `Output: ${l.outputRate} test credits / 1M tokens`, 'Test credits have no cash value.', l.nativeQualified ? 'Setup probe: passed; buyer tool round trip awaits acceptance' : l.evaluation ? `Evaluation: ${l.evaluation.passed ? 'qualified' : 'provisional'} · ${l.evaluation.sampleCount} samples · ${l.evaluation.elapsedMs} ms` : 'Evaluation: not available', `Published: ${date(l.publishedAt)}`];
+export function listingLines(l,options={}) {
+  return [...modelStatusLines(l.modelStatus?[l.modelStatus]:[],options),l.name, `Model: ${l.model}`, `Supply: ${words(l.supplyClass)} · ${l.availability}`, `Runtime connection: ${l.ready ? 'Hot · ready' : l.controlOnline && l.availability === 'cold' ? 'Cold · control online · 120 seconds to activate' : 'Offline'}`, `Input: ${l.inputRate} test credits / 1M tokens`, `Output: ${l.outputRate} test credits / 1M tokens`, 'Test credits have no cash value.', l.nativeQualified ? 'Setup probe: passed; buyer tool round trip awaits acceptance' : l.evaluation ? `Evaluation: ${l.evaluation.passed ? 'qualified' : 'provisional'} · ${l.evaluation.sampleCount} samples · ${l.evaluation.elapsedMs} ms` : 'Evaluation: not available', `Published: ${date(l.publishedAt)}`];
 }
 export function quoteAccess(config,listing) {
   if(!config)return {disabled:true,code:'network_policy_unavailable',detail:problems.network_policy_unavailable};
@@ -155,7 +156,7 @@ export async function runTui(options = {}, dependencies = {}) {
     const entries=liveEntries();
     const poll=async()=>{if(pending||stopped)return;pending=true;try{const next=await load();if(stopped||network!==selectedNetwork||store.profile!==selectedProfile)return;value=next;stale=false;entries.splice(0,entries.length,...liveEntries());}catch{stale=true;}finally{pending=false;if(!stopped)ui.pending?.redraw?.();}};
     const timer=setInterval(()=>void poll(),5000);
-    try{return await ui.menu(title,entries,{...options,explicitFilter:true,tick:true,lines:()=>[...(stale?['Status refresh failed: availability Unknown.']:[]),...(typeof options.lines==='function'?options.lines():options.lines??[])]});}
+    try{return await ui.menu(title,entries,{...options,explicitFilter:true,tick:true,lines:()=>[...(stale?['Status refresh failed: availability Unknown.']:[]),...(typeof options.lines==='function'?options.lines(value,stale):options.lines??[])]});}
     finally{stopped=true;clearInterval(timer);}
   };
   const pruneProviders = () => { for (const [id,controller] of providersRunning) if (providerCanLaunch(controller)) providersRunning.delete(id); };
@@ -357,6 +358,7 @@ export async function runTui(options = {}, dependencies = {}) {
     try {
       controller=await ui.suspend(()=>startProvider(network,node.id,{prepareOnly:true,maxOutputTokens:node.maxOutputTokens,runtimeConfig,notify}));
       trackProvider(node.id,controller);
+      node=await get(`/providers/nodes/${node.id}`);
       if(node.modelsConfirmed===false){
         const available=catalogModelsForConnection(node.provider,node.connection),selected=new Set(node.models??[]),definitions=node.connection?.modelDefinitions??[];
         const candidates=[...available,...definitions.filter(m=>!available.some(v=>v.id===m.id))];
@@ -458,7 +460,10 @@ export async function runTui(options = {}, dependencies = {}) {
       ], { tick:true,lines:()=>[...providerActivityLines(monitor.view()),...(providersRunning.has(node.id)?providerStatusLines(providersRunning.get(node.id).status):[]),`Models: ${node.models?.join(', ')??node.model}`, `Suspended: ${node.suspended ? 'yes' : 'no'} · Listing: ${node.status}`, providersRunning.has(node.id)?`VM: ${providersRunning.get(node.id).status.guestReady?'ready':providersRunning.get(node.id).status.teardownVerified?'removed':'unconfirmed'}`:'No controller attached in this terminal', `Backend connection: ${providerConnectionLabel(monitor.view())}`, `Activity: ${providersRunning.get(node.id)?.status.calls??0} dispatched requests`, ...(node.sharedAllowance?[`Shared tokens: ${node.sharedAllowance.consumedTokens} consumed · ${node.sharedAllowance.outstandingTokens} held / ${node.sharedAllowance.totalTokens}`,`AdRouter credits: ${node.sharedAllowance.consumedCredits} consumed · ${node.sharedAllowance.outstandingCredits} reserved/unresolved / ${node.sharedAllowance.testCredits}`,`Remaining: ${node.allowanceSummary?.remainingTokens??'unknown'} tokens · ${node.allowanceSummary?.remainingCredits??'unknown'} AdRouter credits`,...(node.allowanceSummary?.exhaustionReason?[node.allowanceSummary.exhaustionReason]:[])]:[]),`Remaining upstream authority: ${formatUsd(exposure.remainingMicrousd)}`, `Outstanding exposure: ${formatUsd(exposure.outstandingMicrousd)}`, `Provider: ${node.id}`,`Listing: ${node.listingId??'not published'}`,`Thinking: ${node.capabilities?.includes('thinking_v1')?'supported':'off'}`],footer:'↑↓ Move  Enter Choose  Esc Back · Stop is a separate action' });}finally{monitor.stop();}
       currentProviderId = undefined; created = false;
             if (!selection || selection === 'back') return;
-      if(selection==='status'){await ui.page('Provider status',()=>[...modelStatusLines(monitor.view().modelStatuses??node.modelStatuses,{stale:monitor.view().stale}),...(providersRunning.has(node.id)?providerStatusLines(providersRunning.get(node.id).status):['No controller attached in this terminal'])]);continue;}
+      if(selection==='status'){
+        const visibleMonitor=new ProviderActivityMonitor(network,node.id,()=>ui.pending?.redraw?.());
+        try{await visibleMonitor.start();await ui.page('Provider status',()=>[...(providersRunning.has(node.id)?providerStatusLines(providersRunning.get(node.id).status):['No controller attached in this terminal']),...providerActivityLines(visibleMonitor.view())]);}finally{visibleMonitor.stop();}continue;
+      }
       if(selection==='diagnose'){await ui.page('Provider diagnosis',diagnosisLines(await diagnoseProvider(network,node.id,store.profile)));continue;}
       if(selection==='retryReport'){await attempt(()=>providersRunning.get(node.id)?.retryResultReports?providersRunning.get(node.id).retryResultReports():retryProviderReports(network,node.id,store.profile));continue;}
       if(selection==='cleanup'){await attempt(()=>providersRunning.has(node.id)?stopProvider(node.id):retryProviderCleanup(network,node.id,store.profile));continue;}
@@ -554,8 +559,8 @@ export async function runTui(options = {}, dependencies = {}) {
       else await attempt(async () => {
         const listing = await get(`/listings/${selection}`, true);
         config=await get('/network/config',true);const access=quoteAccess(config,listing);
-        const action = await ui.menu('Compute details', [item('buy','Get a test-credit quote',access.detail,access.disabled),item('back','Back')],{lines:listingLines(listing)});
-        if (action === 'buy') await buy(listing);
+        const action = await pollingMenu('Compute details',()=>get(`/listings/${selection}`,true),(value,stale)=>{const current=stale?{disabled:true,detail:'Refresh failed; availability Unknown.'}:quoteAccess(config,value);return [item('buy','Get a test-credit quote',current.detail,current.disabled),item('back','Back')];},{lines:(value,stale)=>listingLines(value,{stale})});
+        if (action === 'buy') await buy(await get(`/listings/${selection}`,true));
       });
     }
   }
@@ -803,7 +808,7 @@ export async function runTui(options = {}, dependencies = {}) {
     const origin = ((await next.read())?.origin ?? await next.readSelection?.()) ?? network.origin;
     clearIdentity();store = next; network = new Network({ origin, local: network.local, actor: options.actor ?? 'buyer', store });
     config = await attempt(()=>get('/network/config', true));
-    ui.context = `${store.profile} · ${network.local ? 'LOCAL · test credits' : network.origin}`;
+    ui.context = `${store.profile} · ${packageMetadata.version} · ${network.local ? 'LOCAL · test credits' : network.origin}`;
   }
   let terminating = false;
   const terminate = () => { terminating = true; ui.pending?.resolve(null); ui.terminate(); };
@@ -827,7 +832,7 @@ export async function runTui(options = {}, dependencies = {}) {
       }
       network = new Network({ origin, local, actor: options.actor ?? 'buyer', store });
     }
-    ui.context = `${store.profile ?? 'default'} · ${network.local ? 'LOCAL · test credits' : network.origin}`;
+    ui.context = `${store.profile ?? 'default'} · ${packageMetadata.version} · ${network.local ? 'LOCAL · test credits' : network.origin}`;
     config = await attempt(() => get('/network/config', true));display.start();
     for (;;) {
       if (terminating) return;

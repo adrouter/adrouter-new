@@ -1,6 +1,6 @@
 {
   "name": "@adrouter/adr-cli",
-  "version": "0.1.0-alpha.41",
+  "version": "0.1.0-alpha.42",
   "private": true,
   "description": "adr-v2 test-credit compute marketplace terminal",
   "type": "module",

@@ -8,7 +8,7 @@ const config={protocol:'2.0.0',product:'adr-v2',settlement:'test_credits',cashVa
 const listing={id,nodeId:randomUUID(),name:'synthetic hot listing',model:'synthetic',supplyClass:'authorized_api',availability:'hot',inputRate:'1000',outputRate:'1000',rateDenominator:'1000000',connectorProfile:'inference_connector_v1',revision:1,publishedAt:1,ready:true,controlOnline:true,activationDeadlineSeconds:120,evaluation:null,capabilities:[]};
 
 for(const initial of ['failed','stale'])for(const change of ['none','disabled','purchase','offline'])test(`buyer quote refreshes ${initial} startup policy and handles ${change} at request boundary`,async()=>{
-  let configs=0,homes=0,browses=0,inspections=0;const posts=[],pages=[];
+  let configs=0,homes=0,browses=0,inspections=0;const posts=[],pages=[];let disabledBuyReason;
   const network={local:true,origin:'http://127.0.0.1:8790',request:async(path,options={})=>{
     if(path.endsWith('/network/config')){
       configs++;if(configs===1){if(initial==='failed')throw Object.assign(Error('synthetic'),{code:'network_unavailable_outcome_unknown'});return {...config,privateRehearsal:false};}
@@ -24,13 +24,14 @@ for(const initial of ['failed','stale'])for(const change of ['none','disabled','
   const ui={start(){},stop(){},task:(_t,w)=>w(new AbortController().signal,()=>{}),page:async(_title,lines)=>pages.push(lines.join('\n')),form:async title=>{assert.equal(title,'Choose a bounded test session');return {budget:'100',output:'128',duration:'300'};},menu:async(title,options)=>{
     if(title==='What would you like to do?')return homes++===0?'browse':'exit';
     if(title==='Browse available compute')return browses++===0?id:'back';
-    if(title==='Compute details'){assert.equal(options.find(o=>o.value==='buy').disabled,false);return 'buy';}
+    if(title==='Compute details'){const buy=options.find(o=>o.value==='buy');if(change==='offline'){assert.equal(buy.disabled,true);disabledBuyReason=buy.detail;return 'back';}assert.equal(buy.disabled,false);return 'buy';}
     if(title==='Private rehearsal · provisional qualification')return true;
     if(title==='Review your quote')return false;
     throw Error('unexpected synthetic screen');
   }};
   await runTui({}, {ui,network,store:{profile:'buyer'}});
-  assert.ok(configs>=5);assert.equal(posts.length,change==='none'?1:0);
+  assert.ok(configs>=(change==='offline'?4:5));assert.equal(posts.length,change==='none'?1:0);
   if(change==='none')assert.deepEqual(posts[0].body,{listingId:id,maximumCharge:'100',maxOutputTokens:128,durationSeconds:300,mode:'private_rehearsal',acknowledgeProvisional:true});
+  else if(change==='offline')assert.match(disabledBuyReason,/offline/i);
   else assert.ok(pages.some(p=>p.includes(change==='disabled'?'private_rehearsal_disabled':change==='purchase'?'quote_policy_changed':'provider_offline')));
 });
