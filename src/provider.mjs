@@ -117,7 +117,7 @@ async function createProviderController(networkInput, nodeId, { prepareOnly = fa
       } else if (req.method === 'POST' && req.url === '/timing') {
         const timing = JSON.parse(bytes);
         if (!pending || timing.requestId !== pending.id || timing.phase !== 'upstream' || !['unknown','succeeded'].includes(timing.outcome) || (timing.statusCode !== null && (!Number.isInteger(timing.statusCode) || timing.statusCode < 100 || timing.statusCode > 599)) || !Number.isInteger(timing.totalMs) || timing.totalMs < 0 || timing.totalMs > 135000 || (timing.headersMs !== null && (!Number.isInteger(timing.headersMs) || timing.headersMs < 0 || timing.headersMs > timing.totalMs))) throw new Error('timing_rejected');
-        pending.upstreamStatus=timing.statusCode;
+        pending.upstreamStatus=timing.statusCode;pending.upstreamTotalMs=timing.totalMs;
         if (!pending.cancelled && relayReady && pending.socket === socket) socket.send(JSON.stringify({type:'diagnostic',requestId:timing.requestId,phase:'upstream',outcome:timing.outcome,statusCode:timing.statusCode,headersMs:timing.headersMs,totalMs:timing.totalMs}));
       } else if (req.method === 'POST' && req.url === '/usage') {
         const data=JSON.parse(bytes),binding=executionBindings.get(data.requestId);
@@ -143,7 +143,7 @@ async function createProviderController(networkInput, nodeId, { prepareOnly = fa
         pending = undefined; lifecycle.event('request', { status: 'cancelled' });
       } else if (req.method === 'POST' && req.url === '/failed') {
         const result = JSON.parse(bytes);
-        if(result.scope==='request'&&pending?.qualification&&result.requestId===pending.id){const check=pending;pending=undefined;check.reject(Object.assign(new ClientError(upstreamFailureCodes.includes(result.code)?result.code:'provider_outcome_unknown'),{provider:node.provider,model:check.binding.model,api:check.binding.api,maxOutputTokens:check.binding.maxOutputTokens,statusCode:check.upstreamStatus??(Number.isInteger(result.statusCode)&&result.statusCode>=100&&result.statusCode<=599?result.statusCode:null),requestId:check.id}));res.writeHead(200,{'content-type':'application/json'}).end('{"ok":true}');return;}
+        if(result.scope==='request'&&pending?.qualification&&result.requestId===pending.id){const check=pending;pending=undefined;check.reject(Object.assign(new ClientError(upstreamFailureCodes.includes(result.code)?result.code:'provider_outcome_unknown'),{provider:node.provider,model:check.binding.model,api:check.binding.api,maxOutputTokens:check.binding.maxOutputTokens,elapsedMs:check.upstreamTotalMs??null,statusCode:check.upstreamStatus??(Number.isInteger(result.statusCode)&&result.statusCode>=100&&result.statusCode<=599?result.statusCode:null),requestId:check.id}));res.writeHead(200,{'content-type':'application/json'}).end('{"ok":true}');return;}
         if (result.scope === 'request' && pending && result.requestId === pending.id) {
           const frame = { type: 'request_failed', requestId: pending.id, sessionId: pending.binding.sessionId, bindingRevision: pending.binding.bindingRevision, sequence: pending.binding.sequence, code: upstreamFailureCodes.includes(result.code)?result.code:'provider_outcome_unknown' };
           if (!ProviderRequestFailure(frame)) throw Error('request_failure_binding');

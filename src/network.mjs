@@ -144,6 +144,7 @@ export class Network {
   }
   async send(path, { method = 'GET', body, identity, token, key, signal, onEvent } = {}) {
     if (!path.startsWith('/') || path.startsWith('//')) throw new ClientError('request_path_rejected');
+    const startedAt=Date.now();
     const bytes = body === undefined ? undefined : JSON.stringify(body);
     let nonce;
     for (let attempt = 0; attempt < 2; attempt++) {
@@ -155,7 +156,7 @@ export class Network {
       }
       let response;
       const requestSignal = signal ? AbortSignal.any([signal, AbortSignal.timeout(135000)]) : AbortSignal.timeout(135000);
-      const transportFailure = () => Object.assign(new ClientError(requestSignal.reason?.name === 'TimeoutError' ? 'network_unavailable_outcome_unknown' : signal?.aborted ? 'cancelled' : 'network_unavailable_outcome_unknown'), { ...(requestSignal.reason?.name === 'TimeoutError' ? {name:'TimeoutError'} : {}), ...(response ? {status:response.status} : {}) });
+      const transportFailure = () => Object.assign(new ClientError(requestSignal.reason?.name === 'TimeoutError' ? 'network_unavailable_outcome_unknown' : signal?.aborted ? 'cancelled' : 'network_unavailable_outcome_unknown'), { elapsedMs:Date.now()-startedAt, ...(requestSignal.reason?.name === 'TimeoutError' ? {name:'TimeoutError'} : {}), ...(response ? {status:response.status} : {}) });
       try { response = await this.fetcher(this.origin + path, { method, headers, body: bytes, redirect: 'error', signal: requestSignal }); }
       catch(error) { const cause=error?.cause?.code;throw Object.assign(transportFailure(),{transportCause:['ENOTFOUND','EAI_AGAIN','ECONNRESET','ECONNREFUSED','ETIMEDOUT','CERT_HAS_EXPIRED','UNABLE_TO_VERIFY_LEAF_SIGNATURE'].includes(cause)?cause:null}); }
       if(response.ok&&onEvent){try{return await readCodingStream(response,onEvent);}catch(e){if(typeof e.code==='string'&&/^[a-z0-9_]{1,80}$/.test(e.code))throw e;throw transportFailure();}}
@@ -165,7 +166,7 @@ export class Network {
       finally { reader?.releaseLock(); }
       let result; try { result = JSON.parse(Buffer.concat(chunks).toString('utf8')); } catch { throw Object.assign(new ClientError(response.ok?'invalid_network_response':'network_request_rejected'),{status:response.status}); }
       if (response.status === 401 && result.code === 'use_dpop_nonce' && identity && attempt === 0) { nonce = response.headers.get('DPoP-Nonce'); if (nonce) continue; }
-      if(!response.ok)throw Object.assign(new ClientError(typeof result.code==='string'&&/^[a-z0-9_]{1,80}$/.test(result.code)?result.code:'network_request_rejected'),{status:response.status,...(result.operation==='configure_models'?{operation:result.operation,changedFields:Array.isArray(result.changedFields)?result.changedFields.filter(v=>/^(provider|connectorProtocol|supplyClass|fields|connection\.[a-zA-Z]+)$/.test(v)):[]}:{})});
+      if(!response.ok)throw Object.assign(new ClientError(typeof result.code==='string'&&/^[a-z0-9_]{1,80}$/.test(result.code)?result.code:'network_request_rejected'),{status:response.status,elapsedMs:Date.now()-startedAt,...(result.operation==='configure_models'?{operation:result.operation,changedFields:Array.isArray(result.changedFields)?result.changedFields.filter(v=>/^(provider|connectorProtocol|supplyClass|fields|connection\.[a-zA-Z]+)$/.test(v)):[]}:{})});
       return result;
     }
     throw new ClientError('proof_challenge_failed');
