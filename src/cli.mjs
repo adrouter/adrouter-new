@@ -132,7 +132,7 @@ export async function run(args, dependencies = {}) {
       output(await get(`/listings?${query}`, true));
     } else throw new ClientError('unknown_command');
   } else if (command === 'provider') {
-    if(sub==='diagnose'){const result=await diagnoseProvider(network,requireId(id),store.profile);output(json?{...result.node,diagnosis:result.diagnosis,localReports:result.evidence.map(e=>({providerRunId:e.providerRunId,pendingReports:e.pending.length,firstFailure:e.local.firstFailure,outcomes:e.local.outcomes}))}:diagnosisLines(result).join('\n'));}
+    if(sub==='diagnose'){const result=await diagnoseProvider(network,requireId(id),store.profile);output(json?{...result.node,diagnosis:result.diagnosis,localReports:result.evidence.map(e=>({providerRunId:e.providerRunId,pendingReports:e.pending.length,firstFailure:e.local.firstFailure,outcomes:e.local.outcomes}))}:diagnosisLines(result,{controllerAttached:false}).join('\n'));}
     else if(sub==='retry-cleanup')output(await retryProviderCleanup(network,requireId(id),store.profile));
     else if(sub==='retry-result-report')output(await retryProviderReports(network,requireId(id),store.profile));
     else if (sub === 'create') output(await post('/providers/nodes', await draft(o, json)));

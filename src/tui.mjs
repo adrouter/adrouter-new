@@ -1,3 +1,4 @@
+import { pollLiveMenu } from './tui-polling.mjs';
 import packageMetadata from '../package.json' with {type:'json'};
 import { diagnoseProvider, diagnosisLines, retryProviderReports, retryProviderCleanup, providerEvidence, normalizeDiagnosis } from './provider-diagnose.mjs';
 import { modelStatusLines, providerRow, visibleModelStatus } from './model-status.mjs';
@@ -46,6 +47,7 @@ const integer = (min, max) => value => /^(0|[1-9][0-9]*)$/.test(value) && Number
 const date = value => typeof value === 'number' ? new Date(value).toLocaleString() : '—';
 const words = value => String(value ?? '—').replaceAll('_', ' ');
 const problems = {
+  listing_contract_mismatch:'Router returned incompatible listing data. This is an AdRouter software error; changing the model or API key will not fix it.',
   provider_catalog_upgrade_required:'This connection and client use different pinned provider catalogs. Update the client, then edit and save the stopped connection before setup.',
   provider_terminal_cleanup_required:'Finish cleanup of this terminal’s current provider VM before preparing another connection.',
   provider_model_metadata_required:'This provider has no selectable model with complete source-backed pricing and coding metadata. Add verified metadata through Custom API setup.',
@@ -148,16 +150,9 @@ export async function runTui(options = {}, dependencies = {}) {
     const choice=await ui.menu('Provider is running',[item('keep','Keep running'),item('stopExit','Stop and exit')],{fixedActions:true,lines:['This terminal owns a provider. Stop is explicit.']});
     return choice==='stopExit';
   };
-  const pollingMenu=async(title,load,choices,options={})=>{
-    const selectedNetwork=network,selectedProfile=store.profile;let value=await load(),stale=false,pending=false,stopped=false;
-    const liveEntries=()=>choices(value,stale).map(entry=>{
-      const dynamic={...entry};for(const key of ['label','detail','details'])Object.defineProperty(dynamic,key,{enumerable:true,get:()=>choices(value,stale).find(item=>item.value===entry.value)?.[key]??entry[key]});return dynamic;
-    });
-    const entries=liveEntries();
-    const poll=async()=>{if(pending||stopped)return;pending=true;try{const next=await load();if(stopped||network!==selectedNetwork||store.profile!==selectedProfile)return;value=next;stale=false;entries.splice(0,entries.length,...liveEntries());}catch{stale=true;}finally{pending=false;if(!stopped)ui.pending?.redraw?.();}};
-    const timer=setInterval(()=>void poll(),5000);
-    try{return await ui.menu(title,entries,{...options,explicitFilter:true,tick:true,lines:()=>[...(stale?['Status refresh failed: availability Unknown.']:[]),...(typeof options.lines==='function'?options.lines(value,stale):options.lines??[])]});}
-    finally{stopped=true;clearInterval(timer);}
+  const pollingMenu=(title,load,choices,options={})=>{
+    const selectedNetwork=network,selectedProfile=store.profile;
+    return pollLiveMenu(ui,title,load,choices,{...options,isCurrent:()=>network===selectedNetwork&&store.profile===selectedProfile});
   };
   const pruneProviders = () => { for (const [id,controller] of providersRunning) if (providerCanLaunch(controller)) providersRunning.delete(id); };
   const trackProvider = (id,controller) => {
@@ -181,8 +176,8 @@ export async function runTui(options = {}, dependencies = {}) {
     try{const value=await identityNetwork.request(scope.includes("marketplace:operator")?"/v2/admin/me":scope.includes("marketplace:buyer")?"/v2/me":"/v2/providers/me",{signal:AbortSignal.timeout(5000)});if(generation!==identityGeneration)return;authState='signed_in';verifiedIdentity=value;identityError=undefined;identityAt=Date.now();ui.context=`${value.email??"Email unavailable"} · ${store.profile}/${value.roles.join(",")} · ${network.origin}`;}catch(error){if(generation!==identityGeneration)return;authState=error.code==='installation_revoked'?'revoked':authRecoveryCodes.has(error.code)?'recovery_required':'temporarily_unavailable';verifiedIdentity=undefined;identityAt=0;identityError=error;ui.context=`Sign-in needs attention · ${store.profile} · ${network.origin}`;}
   };
   const actor = role => { if (network.local) network.actor = role; };
-  const get = async (path, publicAccess = false) => {
-    const value = await ui.task('Loading AdRouter', () => network.request(`/v2${path}`, { public: publicAccess }));
+  const read = async (path, publicAccess = false, signal) => {
+    const value = await network.request(`/v2${path}`, { public: publicAccess, signal });
     if (path === '/network/config' && (!MarketplaceNetworkConfig(value) || !['allowance_v1','provider_budget_v1','cold_activation_v1'].every(c => value.capabilities.includes(c)))) throw new ClientError('network_contract_mismatch');
     if (path.startsWith('/listings')) {
       const listings = Array.isArray(value.listings) ? value.listings : [value];
@@ -190,6 +185,7 @@ export async function runTui(options = {}, dependencies = {}) {
     }
     return value;
   };
+  const get = (path,publicAccess=false) => ui.task('Loading AdRouter',signal=>read(path,publicAccess,signal));
   const post = (path, body = {}, key = randomUUID()) => ui.task('Saving your choice', () => network.request(`/v2${path}`, { method: 'POST', body, key }));
   const confirm = async (title, lines, label = 'Confirm') => await ui.menu(title, [item(false, 'Back'), item(true, label)], { lines }) === true;
   const attempt = async work => { try { return await work(); } catch (error) { if(authRecoveryCodes.has(error.code)){verifiedIdentity=undefined;identityAt=0;identityError=error;authState=error.code==='installation_revoked'?'revoked':'recovery_required';ui.context=`Sign-in needs attention · ${store.profile} · ${network.origin}`;} await ui.page('Could not continue', errorLines(error)); return null; } };
@@ -466,7 +462,7 @@ export async function runTui(options = {}, dependencies = {}) {
         const visibleMonitor=new ProviderActivityMonitor(network,node.id,()=>ui.pending?.redraw?.());
         try{await visibleMonitor.start();await ui.page('Provider status',()=>[...(providersRunning.has(node.id)?providerStatusLines(providersRunning.get(node.id).status):['No controller attached in this terminal']),...providerActivityLines(visibleMonitor.view())]);}finally{visibleMonitor.stop();}continue;
       }
-      if(selection==='diagnose'){await ui.page('Provider diagnosis',diagnosisLines(await diagnoseProvider(network,node.id,store.profile)));continue;}
+      if(selection==='diagnose'){const result=await diagnoseProvider(network,node.id,store.profile);const controller=providersRunning.get(node.id);await ui.page('Provider diagnosis',diagnosisLines(result,{controllerAttached:!!controller&&controller.status.providerRunId===result.node.providerRunId}));continue;}
       if(selection==='retryReport'){await attempt(()=>providersRunning.get(node.id)?.retryResultReports?providersRunning.get(node.id).retryResultReports():retryProviderReports(network,node.id,store.profile));continue;}
       if(selection==='cleanup'){await attempt(()=>providersRunning.has(node.id)?stopProvider(node.id):retryProviderCleanup(network,node.id,store.profile));continue;}
       if(selection==='discover'){await attempt(async()=>{const {startProvider}=await import('./provider.mjs');let controller;try{controller=await ui.suspend(()=>startProvider(network,node.id,{prepareOnly:true,runtimeConfig,maxOutputTokens:node.maxOutputTokens}));trackProvider(node.id,controller);const result=await ui.task('Discovering endpoint models',()=>controller.discover());await controller.stop();if(!providerCanLaunch(controller))throw new ClientError('provider_cleanup_required');await createNativeListing({...node,discoveredModels:result.models});}catch(error){controller??=error.controller;if(controller)trackProvider(node.id,controller);throw error;}finally{await controller?.stop();}});continue;}
@@ -515,7 +511,7 @@ export async function runTui(options = {}, dependencies = {}) {
     actor('provider');
     for (;;) {
       const nodes = await get('/providers/nodes');
-      const selected=await pollingMenu('My provider listings',()=>get('/providers/nodes'),(values,stale)=>[...values.filter(n=>!n.retirementRequestedAt).map(n=>item(n.id,providerRow(n,{stale}),modelStatusLines(n.modelStatuses,{stale}))),...(values.some(n=>n.retirementRequestedAt)?[{value:'cleanupSection',label:'Cleanup required',disabled:true,action:true},...values.filter(n=>n.retirementRequestedAt).map(n=>item(n.id,providerRow(n,{stale}),modelStatusLines(n.modelStatuses,{stale})))]:[]),item('new','+ List new compute'),item('refresh','Refresh'),item('back','Back')],{subtitle:'Select a connection. / filters rows; actions stay visible.'});
+      const selected=await pollingMenu('My provider listings',signal=>read('/providers/nodes',false,signal),(values,stale)=>[...values.filter(n=>!n.retirementRequestedAt).map(n=>item(n.id,providerRow(n,{stale}),modelStatusLines(n.modelStatuses,{stale}))),...(values.some(n=>n.retirementRequestedAt)?[{value:'cleanupSection',label:'Cleanup required',disabled:true,action:true},...values.filter(n=>n.retirementRequestedAt).map(n=>item(n.id,providerRow(n,{stale}),modelStatusLines(n.modelStatuses,{stale})))]:[]),item('new','+ List new compute'),item('refresh','Refresh'),item('back','Back')],{subtitle:'Select a connection. / filters rows; actions stay visible.'});
       if (!selected || selected === 'back') return;
       await attempt(() => selected === 'new' ? createListing() : selected==='refresh'?undefined:manageNode(selected));
     }
@@ -553,7 +549,7 @@ export async function runTui(options = {}, dependencies = {}) {
       for (const [key, value] of Object.entries(filters)) if (value && value !== 'any') query.set(key, value);
       if (cursor) query.set('after', cursor);
       const result = await get(`/listings?${query}`, true);
-      const selection = await pollingMenu('Browse available compute',()=>get(`/listings?${query}`,true),(result,stale)=>[item('filters', 'Search and filters'), ...result.listings.map(l => item(l.id, `${l.name} · ${l.model} · ${visibleModelStatus(l.modelStatus,{stale}).availability}`, [`Listing: ${l.id}`,`Provider: ${l.nodeId}`,`${l.model} · ${l.inputRate}/${l.outputRate} test credits per 1M tokens`,...modelStatusLines(l.modelStatus?[l.modelStatus]:[],{stale}),`Thinking: ${l.capabilities?.includes('thinking_v1')?'supported':'off'}`])), ...(result.nextCursor ? [item('next', 'Next page')] : []), item('refresh', 'Refresh from first page'), item('back', 'Back')], { subtitle: result.listings.length ? 'Select compute to inspect its price and reserve access.' : 'No published listings match. Try changing filters or return after a provider publishes.' });
+      const selection = await pollingMenu('Browse available compute',signal=>read(`/listings?${query}`,true,signal),(result,stale)=>[item('filters', 'Search and filters'), ...result.listings.map(l => item(l.id, `${l.name} · ${l.model} · ${visibleModelStatus(l.modelStatus,{stale}).availability}`, [`Listing: ${l.id}`,`Provider: ${l.nodeId}`,`${l.model} · ${l.inputRate}/${l.outputRate} test credits per 1M tokens`,...modelStatusLines(l.modelStatus?[l.modelStatus]:[],{stale}),`Thinking: ${l.capabilities?.includes('thinking_v1')?'supported':'off'}`])), ...(result.nextCursor ? [item('next', 'Next page')] : []), item('refresh', 'Refresh from first page'), item('back', 'Back')], { subtitle: result.listings.length ? 'Select compute to inspect its price and reserve access.' : 'No published listings match. Try changing filters or return after a provider publishes.' });
       if (!selection || selection === 'back') return;
       if (selection === 'filters') { const edited = await ui.form('Compute filters', [{ name: 'model', label: 'Model contains', help: 'Leave blank for every model.' }, { name: 'supplyClass', label: 'Supply', choices: ['any', 'authorized_api', 'self_hosted'] }, { name: 'availability', label: 'Availability', choices: ['any', 'hot', 'cold'] }], filters); if (edited) filters = edited; cursor = undefined; }
       else if (selection === 'next') cursor = result.nextCursor;
@@ -561,7 +557,7 @@ export async function runTui(options = {}, dependencies = {}) {
       else await attempt(async () => {
         const listing = await get(`/listings/${selection}`, true);
         config=await get('/network/config',true);const access=quoteAccess(config,listing);
-        const action = await pollingMenu('Compute details',()=>get(`/listings/${selection}`,true),(value,stale)=>{const current=stale?{disabled:true,detail:'Refresh failed; availability Unknown.'}:quoteAccess(config,value);return [item('buy','Get a test-credit quote',current.detail,current.disabled),item('back','Back')];},{lines:(value,stale)=>listingLines(value,{stale})});
+        const action = await pollingMenu('Compute details',signal=>read(`/listings/${selection}`,true,signal),(value,stale)=>{const current=stale?{disabled:true,detail:'Refresh failed; availability Unknown.'}:quoteAccess(config,value);return [item('buy','Get a test-credit quote',current.detail,current.disabled),item('back','Back')];},{lines:(value,stale)=>listingLines(value,{stale})});
         if (action === 'buy') await buy(await get(`/listings/${selection}`,true));
       });
     }
@@ -720,7 +716,7 @@ export async function runTui(options = {}, dependencies = {}) {
     const choice = await ui.menu('Marketplace operator', [item('sessions','Provider sessions and cleanup'),item('suspension', 'Manage listing suspension'), item('cancellationReview', 'Review evaluation cancellation'), ...(network.local ? [item('grant', 'Grant local test credits')] : []), item('allowance','Manage marketplace allowances'), item('evaluation', 'Evaluation queue'), item('evaluationSessions', 'Evaluation sessions'), item('tariff', 'Qualify upstream tariff'), item('capacity','Release stopped execution capacity'), item('reconcile', 'Reconcile uncertain requests'), item('back', 'Back')], { subtitle: network.local ? 'Local fixtures only.' : 'Requires a separately approved marketplace operator installation.' });
     if(choice==='sessions') {
       const nodes=await get('/admin/nodes');
-      const id=await pollingMenu('Provider groups',()=>get('/admin/nodes'),(nodes,stale)=>[...nodes.filter(n=>n.status!=='deleted').map(n=>item(n.id,`${n.name} · ${n.id}`,modelStatusLines(n.modelStatuses,{stale}))),item('back','Back')]);if(!id||id==='back')return;
+      const id=await pollingMenu('Provider groups',signal=>read('/admin/nodes',false,signal),(nodes,stale)=>[...nodes.filter(n=>n.status!=='deleted').map(n=>item(n.id,`${n.name} · ${n.id}`,modelStatusLines(n.modelStatuses,{stale}))),item('back','Back')]);if(!id||id==='back')return;
       const node=nodes.find(n=>n.id===id),sessions=(await get('/admin/sessions')).filter(s=>s.nodeId===id);
       const action=await ui.menu('Provider execution',[item('halt','Halt provider'),item('delete','Delete listing'),...sessions.map(s=>item(s.id,`${words(s.executionState)} · ${s.id}`,`Cleanup ${words(s.cleanupState)} · Accounting ${words(s.accountingState)} · Held ${s.reserved}`)),item('back','Back')],{lines:[`Provider: ${node.ownerId}`,`Run: ${node.providerRunId??'none'}`,`Last heartbeat: ${date(node.connectionUpdatedAt)}`,'Unresolved accounting is retained after execution cleanup.']});
       if(!action||action==='back')return;

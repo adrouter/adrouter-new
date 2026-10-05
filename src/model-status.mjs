@@ -11,6 +11,6 @@ export function modelStatusLines(statuses,options={}) {
   return statuses.flatMap(raw=>{const s=visibleModelStatus(raw,options);return width<70?[clean(s.model),`  ${s.qualification} · ${s.availability}`,`  ${s.reason}`]:[`${clean(s.model).slice(0,27).padEnd(28)} ${s.qualification.padEnd(19)} ${s.availability}`,`  ${s.reason}`];});
 }
 export function providerRow(node,options={}) {
-  const statuses=node.modelStatuses??[],available=statuses.filter(s=>visibleModelStatus(s,options).availability==='Available').length;
-  return `${clean(node.name)} [${String(node.id).slice(0,8)}] · ${node.cleanupState==='failed'?'Cleanup required':node.ready?'Running':node.status} · ${available}/${node.models?.length??statuses.length??1} available`;
+  const statuses=node.modelStatuses??[],visible=statuses.map(s=>visibleModelStatus(s,options)),available=options.stale||!statuses.length||visible.some(s=>s.availability==='Unknown')?'Unknown':visible.filter(s=>s.availability==='Available').length;
+  return `${clean(node.name)} [${String(node.id).slice(0,8)}] · ${node.cleanupState==='failed'?'Cleanup required':node.ready?(options.stale?'Last confirmed running':'Running'):node.status} · ${available}/${node.models?.length??statuses.length??1} available`;
 }

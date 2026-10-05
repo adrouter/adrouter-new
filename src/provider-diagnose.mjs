@@ -40,6 +40,7 @@ export async function diagnoseProvider(network,nodeId,profile,options={}) {
 }
 export function normalizeDiagnosis(node,evidence=[]) {
   const notes=[];
+  const running=node.status==='published'&&node.ready===true&&Number(node.leaseUntil)>Date.now()&&node.stoppedProviderRunId!==node.providerRunId;
   const run=evidence.find(e=>e.providerRunId===node.providerRunId);
   const backend=capturedDiagnostic(node.lastRunFailure,{nodeId:node.id});
   let currentBackend=backend?.providerRunId===node.providerRunId?backend:null;
@@ -63,8 +64,8 @@ export function normalizeDiagnosis(node,evidence=[]) {
     }else notes.push('Local and Router failures identify different operations or attempts; evidence was not combined.');
   }
   if(!run)notes.push('Matching local run evidence is absent.');
-  if(!primary)notes.push('Terminal failure was not captured.');
-  else if(!primary.model||!primary.api)notes.push('Some model/API details were not captured.');
+  if(!primary&&node.cleanupState==='failed')notes.push('Cleanup failed, but its causal failure was not captured.');
+  else if(primary&&(!primary.model||!primary.api))notes.push('Some model/API details were not captured.');
   const secondary=(run?.local.secondaryFailures??[]).filter(bound).filter(d=>!primary||d.requestId===primary.requestId);
   const pending=evidence.reduce((n,e)=>n+e.pending.length,0);
   const actions=[];
@@ -74,18 +75,18 @@ export function normalizeDiagnosis(node,evidence=[]) {
   }
   if(node.diagnosticCapabilities?.operatorCleanupRequired)actions.push('operator_cleanup');
   if(node.status!=='deleted'&&node.cleanupState==='succeeded'&&Number(node.providerRunLeaseUntil??0)<=Date.now())actions.push('edit_configuration','authorize_new_test');
-  return {nodeId:node.id,providerRunId:node.providerRunId??null,primaryFailure:primary,secondaryFailures:secondary,
+  return {nodeId:node.id,providerRunId:node.providerRunId??null,running,primaryFailure:primary,secondaryFailures:secondary,
     earlierTransientFailure:run?.local.firstFailure&&run.local.firstFailure.code!==primary?.code?run.local.firstFailure:null,
     modelStatuses:node.modelStatuses??[],cleanupState:node.cleanupState??'unknown',cleanupOutcomes:run?.local.outcomes??[],
     accountingState:node.diagnosticSessions??[],pendingReports:pending,evidenceNotes:notes,recoveryActions:actions};
 }
-export function diagnosisLines(result) {
+export function diagnosisLines(result,{controllerAttached}={}) {
   const d=result.diagnosis??normalizeDiagnosis(result.node,result.evidence);
-  return [...providerDiagnosticLines(d.primaryFailure),...d.secondaryFailures.flatMap(f=>['Separate unresolved operation:',...providerDiagnosticLines(f)]),
+  return [...(d.primaryFailure?providerDiagnosticLines(d.primaryFailure):[d.running?'Provider is running. No setup failure recorded.':'No setup failure recorded.']),...d.secondaryFailures.flatMap(f=>['Separate unresolved operation:',...providerDiagnosticLines(f)]),
     ...(d.earlierTransientFailure?['Earlier transient diagnostic:',...providerDiagnosticLines(d.earlierTransientFailure)]:[]),
-    ...modelStatusLines(d.modelStatuses),`Cleanup: ${d.cleanupState}`,...d.cleanupOutcomes.map(o=>`${o.phase}: ${o.status}${o.code?' · '+o.code:''}`),
+    ...modelStatusLines(d.modelStatuses),`Cleanup: ${d.running&&d.cleanupState==='pending'?'Not requested — provider is running':d.cleanupState}`,...d.cleanupOutcomes.map(o=>`${o.phase}: ${o.status}${o.code?' · '+o.code:''}`),
     `Pending exact reports: ${d.pendingReports}`,...d.evidenceNotes,
-    ...d.recoveryActions.map(a=>'Next action: '+({retry_saved_report:'Retry saved result report; no model request.',retry_verified_cleanup:'Retry verified cleanup.',operator_cleanup:'Marketplace operator → Provider sessions and cleanup.',edit_configuration:'Edit configuration.',authorize_new_test:'Explicitly authorize a new setup test.'}[a])),'No controller attached in this terminal'];
+    ...d.recoveryActions.map(a=>'Next action: '+({retry_saved_report:'Retry saved result report; no model request.',retry_verified_cleanup:'Retry verified cleanup.',operator_cleanup:'Marketplace operator → Provider sessions and cleanup.',edit_configuration:'Edit configuration.',authorize_new_test:'Explicitly authorize a new setup test.'}[a])),controllerAttached===true?'Controller attached in this terminal':controllerAttached===false?'No controller attached in this terminal':'Local controller attachment not checked'];
 }
 export async function retryProviderReports(network,nodeId,profile,options={}) {
   const {node,evidence}=await diagnoseProvider(network,nodeId,profile,options);

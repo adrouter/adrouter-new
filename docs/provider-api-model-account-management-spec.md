@@ -4,6 +4,19 @@ Revision: **5 October 2026**. Status: **verification gaps repaired and exact pri
 
 This replaces earlier setup, qualification, provider/listing UI, diagnostics and failure-cleanup requirements. Alpha.43 is the verification baseline. Its prior synthetic gates did not cover the three subsequently reproduced gaps recorded below. Real-provider acceptance remains pending.
 
+
+## Live listing and refresh repair — 5 October 2026
+
+The alpha.44 live provider completed acknowledged passing Flash and Pro setup probes. Buyer browsing then failed because Router exposed internal `explicitCompat` and `thinkingLevelMap` fields outside the strict public listing contract. Separately, menu polling attempted a modal loading task while the menu owned input and raised `terminal_operation_busy` before issuing its network request. These are product defects, not credential or qualification failures.
+
+Public browse and detail responses must project only the declared listing DTO. Preserve internal adapter settings on stored/provider model descriptors; do not relax strict validation or erase those settings. Test actual published builtin and custom HTTP responses against the consumer contract, including existing records and unnegotiated status fields.
+
+An open live menu owns input. Initial navigation may use a loading task; subsequent five-second reads must be non-modal, bounded, non-overlapping and cancelled when the view closes. Preserve selection and filtering. Transport failure shows Unknown, never a false `0/N available`; stale Running labels say Last confirmed running. Verify with the actual TerminalUI task/menu ownership implementation at 40, 80 and 132 columns.
+
+Healthy diagnosis says No setup failure recorded. Pending teardown while a provider is running is displayed as Not requested — provider is running. Controller attachment is supplied by the caller: the owning TUI may assert attachment, standalone diagnosis does not attach, and an unspecified caller reports Not checked. Never print a missing-failure or missing-controller assertion unconditionally.
+
+A listing/UI repair does not invalidate successful model probes or authorize inference replay. Preserve the current run, credentials, model configuration, usage and liabilities during delivery. Paid buyer coding acceptance remains operator-run.
+
 ## 1. Non-negotiable user outcome
 
 The provider flow is:

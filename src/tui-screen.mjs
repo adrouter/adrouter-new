@@ -212,6 +212,7 @@ export class TerminalUI {
     return interaction.then(async value=>{if(value===null)await onCancel?.();return value;});
   }
   async task(title, work, { lines = [], cancel = false, onKey } = {}) {
+    if (this.pending) throw new ClientError('terminal_operation_busy');
     if (this.terminated) throw new ClientError('cancelled');
     const abort = new AbortController();let stage=lines,frame=0;const startedAt=Date.now();
     const redraw=()=>this.draw({title,lines:[...stage,`${this.reducedMotion?'Waiting':['◐','◓','◑','◒'][frame++%4]} · ${Math.floor((Date.now()-startedAt)/1000)} seconds elapsed`],footer:cancel?'Esc / Ctrl+C Cancel':'Running'});
