@@ -799,11 +799,12 @@ export async function runTui(options = {}, dependencies = {}) {
     else if(action==='installations')await manageInstallations();
   }
   async function selectProfile() {
-    for(const provider of providersRunning.values())await provider.stop({trigger:'profile_switch'});pruneProviders();if(providersRunning.size){await ui.page('Provider cleanup required',['Finish provider cleanup before switching profiles.']);return;}
     const chosen = await ui.menu('Choose profile', [item('default', 'Default', 'Preserves the original installation'), item('provider', 'Provider', 'Independent provider installation and refresh state'), item('buyer', 'Buyer', 'Independent buyer-only installation and refresh state'), item('operator', 'Operator', 'Independent operator approval'), item('custom', 'Named profile'), item('back', 'Back')]);
     if (!chosen || chosen === 'back') return;
     let profile = chosen;
     if (chosen === 'custom') { const value = await ui.form('New or existing profile', [{ name: 'profile', label: 'Profile name', validate: value => /^[a-z][a-z0-9_-]{0,31}$/.test(value) ? '' : 'Use up to 32 lowercase letters, digits, underscores or hyphens.' }]); if (!value) return; profile = value.profile; }
+    if(profile===store.profile)return;
+    for(const provider of providersRunning.values())await provider.stop({trigger:'profile_switch'});pruneProviders();if(providersRunning.size){await ui.page('Provider cleanup required',['Finish provider cleanup before switching profiles.']);return;}
     const next = new AuthStore(store.home, profile);
     const origin = ((await next.read())?.origin ?? await next.readSelection?.()) ?? network.origin;
     clearIdentity();store = next; network = new Network({ origin, local: network.local, actor: options.actor ?? 'buyer', store });

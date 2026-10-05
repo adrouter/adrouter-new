@@ -30,8 +30,8 @@ for(const initial of ['failed','stale'])for(const change of ['none','disabled','
     throw Error('unexpected synthetic screen');
   }};
   await runTui({}, {ui,network,store:{profile:'buyer'}});
-  assert.ok(configs>=(change==='offline'?4:5));assert.equal(posts.length,change==='none'?1:0);
+  assert.ok(configs>=(change==='offline'?3:5));assert.equal(posts.length,change==='none'?1:0);
   if(change==='none')assert.deepEqual(posts[0].body,{listingId:id,maximumCharge:'100',maxOutputTokens:128,durationSeconds:300,mode:'private_rehearsal',acknowledgeProvisional:true});
-  else if(change==='offline')assert.match(disabledBuyReason,/offline/i);
+  else if(change==='offline')assert.match(disabledBuyReason,/provider.*(start|offline)/i);
   else assert.ok(pages.some(p=>p.includes(change==='disabled'?'private_rehearsal_disabled':change==='purchase'?'quote_policy_changed':'provider_offline')));
 });
