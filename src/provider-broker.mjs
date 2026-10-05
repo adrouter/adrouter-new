@@ -23,20 +23,21 @@ export function validateBinding(node) {
   if (isIP(address) && !publicAddress(address) && !(node.supplyClass === 'self_hosted' && loopback)) throw new ClientError('endpoint_address_rejected');
   return { url, loopback: node.supplyClass === 'self_hosted' && loopback };
 }
-export function tunnelAgent(node, url) {
+export function tunnelAgent(node, url, evidence) {
   if(!node.tunnel)return undefined;
   const agent=new (url.protocol==='http:'?HttpAgent:Agent)({keepAlive:false,maxSockets:1});
   agent.createConnection=(_options,callback)=>{
+    evidence?.stage('tunnel');let completed=false;const finish=(error,socket)=>{if(completed){if(socket)socket.destroy();return;}completed=true;if(error)evidence?.error(error);callback(error,socket);};
     const request=httpRequest({host:'host.microsandbox.internal',port:node.tunnel.port,method:'CONNECT',path:node.tunnel.path??'/upstream',headers:{authorization:`Bearer ${node.tunnel.capability}`},timeout:10000});
     request.once('connect',(response,socket,head)=>{
-      if(response.statusCode!==200||head.length){socket.destroy();callback(new Error('tunnel_rejected'));return;}
-      if(url.protocol==='http:'){callback(null,socket);return;}
-      const secure=tlsConnect({socket,servername:url.hostname,rejectUnauthorized:true});
+      if(response.statusCode!==200||head.length){socket.destroy();finish(Object.assign(new Error('tunnel_rejected'),{code:'tunnel_rejected'}));return;}
+      if(url.protocol==='http:'){finish(null,socket);return;}
+      evidence?.stage('tls');const secure=tlsConnect({socket,servername:url.hostname,rejectUnauthorized:true});
       let ready=false;
-      secure.once('secureConnect',()=>{ready=true;callback(null,secure);});
-      secure.once('error',error=>{if(!ready)callback(error);});
+      secure.once('secureConnect',()=>{ready=true;finish(null,secure);});
+      secure.once('error',error=>{if(!ready)finish(error);});
     });
-    request.once('error',error=>callback(error));request.once('timeout',()=>request.destroy(new Error('tunnel_timeout')));request.end();
+    request.once('error',error=>finish(error));request.once('timeout',()=>request.destroy(Object.assign(new Error('tunnel_timeout'),{code:'tunnel_timeout'})));request.end();
   };
   return agent;
 }

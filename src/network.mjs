@@ -1,3 +1,4 @@
+import { safeFailure } from './failure-diagnostics.mjs';
 import { readCodingStream } from './coding-wire.mjs';
 import { createHash, createPrivateKey, generateKeyPairSync, randomUUID, sign } from 'node:crypto';
 import { constants } from 'node:fs';
@@ -148,7 +149,7 @@ export class Network {
     const bytes = body === undefined ? undefined : JSON.stringify(body);
     let nonce;
     for (let attempt = 0; attempt < 2; attempt++) {
-      const headers = { 'X-Adr-Setup-Policy':'single_request_setup_v1','X-Adr-Model-Status':'1','X-Adr-Coding-Protocol':'coding_v1','X-Adr-Connector-Protocol':'pi_native_v3', accept: onEvent ? 'application/x-ndjson' : 'application/json', ...(bytes === undefined ? {} : { 'Content-Type': 'application/json' }), ...(this.local ? { 'X-Adr-Local-Actor': this.actor } : {}), ...(key ? { 'Idempotency-Key': key } : {}) };
+      const headers = { 'X-Adr-Failure-Diagnostics':'1', 'X-Adr-Setup-Policy':'single_request_setup_v1','X-Adr-Model-Status':'1','X-Adr-Coding-Protocol':'coding_v1','X-Adr-Connector-Protocol':'pi_native_v3', accept: onEvent ? 'application/x-ndjson' : 'application/json', ...(bytes === undefined ? {} : { 'Content-Type': 'application/json' }), ...(this.local ? { 'X-Adr-Local-Actor': this.actor } : {}), ...(key ? { 'Idempotency-Key': key } : {}) };
       if (identity) {
         headers.DPoP = proof(identity, method, this.origin + path, bytes, nonce, token);
         if (bytes !== undefined) headers['Content-Digest'] = `sha-256=:${digest(bytes).toString('base64')}:`;
@@ -166,7 +167,7 @@ export class Network {
       finally { reader?.releaseLock(); }
       let result; try { result = JSON.parse(Buffer.concat(chunks).toString('utf8')); } catch { throw Object.assign(new ClientError(response.ok?'invalid_network_response':'network_request_rejected'),{status:response.status}); }
       if (response.status === 401 && result.code === 'use_dpop_nonce' && identity && attempt === 0) { nonce = response.headers.get('DPoP-Nonce'); if (nonce) continue; }
-      if(!response.ok)throw Object.assign(new ClientError(typeof result.code==='string'&&/^[a-z0-9_]{1,80}$/.test(result.code)?result.code:'network_request_rejected'),{status:response.status,elapsedMs:Date.now()-startedAt,...(result.operation==='configure_models'?{operation:result.operation,changedFields:Array.isArray(result.changedFields)?result.changedFields.filter(v=>/^(provider|connectorProtocol|supplyClass|fields|connection\.[a-zA-Z]+)$/.test(v)):[]}:{})});
+      if(!response.ok)throw Object.assign(new ClientError(typeof result.code==='string'&&/^[a-z0-9_]{1,80}$/.test(result.code)?result.code:'network_request_rejected'),{status:response.status,elapsedMs:Date.now()-startedAt,...(safeFailure(result.failureDiagnostic)?{failureDiagnostic:safeFailure(result.failureDiagnostic)}:{}),...(result.operation==='configure_models'?{operation:result.operation,changedFields:Array.isArray(result.changedFields)?result.changedFields.filter(v=>/^(provider|connectorProtocol|supplyClass|fields|connection\.[a-zA-Z]+)$/.test(v)):[]}:{})});
       return result;
     }
     throw new ClientError('proof_challenge_failed');

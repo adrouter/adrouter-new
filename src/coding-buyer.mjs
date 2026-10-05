@@ -1,3 +1,4 @@
+import { safeFailure, writePrivateDiagnostic, safeOutcomes } from './failure-diagnostics.mjs';
 import { createServer } from 'node:http';
 import { randomBytes, createHash, randomUUID } from 'node:crypto';
 import { readFile, writeFile, rename, mkdir, cp, rm, lstat, readdir } from 'node:fs/promises';
@@ -55,7 +56,7 @@ export async function openCodingBuyer(network,sessionId,{root,files,runtimeConfi
   let authorityDeadline;let guest,workspace,closing,watchdog,statusPoll,expires,checkpoint,saving,snapshot,discarded=false,statusChecking,dependencyApproved=false,dependencyBytes=0;const abort=new AbortController(), queue=new DispatchQueue(),authorities=new Map(),mainCapability=randomBytes(32).toString('base64url');
   const startupSignal=signal?AbortSignal.any([signal,abort.signal]):abort.signal;
   const lifecycle=new BuyerLifecycle(value=>{try{progress({status:value.events.at(-1)?.phase,paused:lifecycle.paused});}catch{}});
-  let runtime,session,display,snapshotExclusions={},privateRoot,storage,storageValidated=false,requestClose,finishStartup;
+  let diagnosticWrites=Promise.resolve(),diagnosticOutcomes=[];let runtime,session,display,snapshotExclusions={},privateRoot,storage,storageValidated=false,requestClose,finishStartup;
   const startupReady=new Promise(resolve=>{finishStartup=resolve;});
   const earlySignal=name=>{lifecycle.event('signal',{code:'cancelled',signal:name,status:'cancelled'});if(requestClose)void requestClose().catch(()=>{});else abort.abort();};
   const signalHandlers=new Map(['SIGINT','SIGTERM','SIGHUP','SIGTSTP'].map(name=>[name,()=>earlySignal(name)]));
@@ -64,7 +65,7 @@ export async function openCodingBuyer(network,sessionId,{root,files,runtimeConfi
   signal?.addEventListener('abort',onAbort,{once:true});if(signal?.aborted)onAbort();
   const persistDiagnostics=async outcomes=>{
     if(!storageValidated)return;
-    await writeFile(join(storage,'lifecycle.json'),JSON.stringify({firstFailure:lifecycle.firstFailure,events:lifecycle.events,outcomes:outcomes.map(({session,...o})=>({...o,state:typeof session?.state==='string'&&/^[a-z_]{1,80}$/.test(session.state)?session.state:null}))}),{mode:0o600});
+    if(outcomes?.length)diagnosticOutcomes=safeOutcomes(outcomes);const value={schemaVersion:1,sessionId,firstFailure:lifecycle.firstFailure,failureDiagnostic:lifecycle.failureDiagnostic??null,events:lifecycle.events.slice(),outcomes:diagnosticOutcomes};diagnosticWrites=diagnosticWrites.catch(()=>{}).then(()=>writePrivateDiagnostic(storage,'lifecycle.json',value));await diagnosticWrites;
   };
   try {
     startupSignal.throwIfAborted();
@@ -153,7 +154,7 @@ export async function openCodingBuyer(network,sessionId,{root,files,runtimeConfi
         const requestAbort=new AbortController(),disconnect=()=>{if(!res.writableEnded)requestAbort.abort();};res.once('close',disconnect);
         try {reply=await queue.run(async()=>{const current=await status();if(Number(current.requestSequence??0)>=current.requestLimit)throw new ClientError('session_request_limit');display.pending=true;return network.request(`/v2/sessions/${sessionId}/inference`,{method:'POST',body:{...body,protocol:'coding_v1',maxOutputTokens:session.maxOutputTokens,purpose:authority.purpose},signal:AbortSignal.any([abort.signal,requestAbort.signal]),onEvent:event=>{if(res.writableLength>262144||res.destroyed)throw new ClientError('coding_stream_backpressure');if(!res.headersSent)res.setHeader('content-type','application/x-ndjson');res.write(JSON.stringify(event)+'\n');}});},requestAbort.signal);display.complete(reply.requestId,reply.usage,reply.settlement);for(const call of reply.toolCalls??[]){const key=authorityKey+':'+call.id;if(usedCalls.has(key)||toolGrants.has(key))throw new ClientError('tool_replay_rejected');toolGrants.set(key,{name:call.function.name,args:JSON.parse(call.function.arguments)});}
         if(!res.headersSent)res.setHeader('content-type','application/x-ndjson');res.end(JSON.stringify({type:'complete',...(reply.nativeMessage?{nativeMessage:reply.nativeMessage}:{}),requestId:reply.requestId,text:reply.text,thinking:reply.thinking??'',toolCalls:reply.toolCalls,usage:reply.usage})+'\n');return;}
-        catch(e){display.failed(e.code);lifecycle.event('inference',{code:e.code??'coding_bridge_rejected'});throw e;}finally{res.removeListener('close',disconnect);}
+        catch(e){display.failed(e.code);lifecycle.event('inference',{code:e.code??'coding_bridge_rejected',failureDiagnostic:safeFailure(e.failureDiagnostic)});try{await persistDiagnostics([]);}catch{lifecycle.event('diagnostic_save',{code:'diagnostic_save_failed'});}throw e;}finally{res.removeListener('close',disconnect);}
       } else if(req.url==='/approval') {
         if(typeof body.name!=='string'||!body.args||JSON.stringify(body.args).length>131072)throw new ClientError('coding_approval_invalid');
         if(!authority.mutation)reply={allow:false};
@@ -171,7 +172,7 @@ export async function openCodingBuyer(network,sessionId,{root,files,runtimeConfi
       else if(req.url?.startsWith('/host/')){const name=req.url.slice(6);if(!['clipboard','editor','share'].includes(name)||authority.purpose!=='main')throw new ClientError('host_bridge_denied');reply=await hostOperation(name,body,(action)=>authorize(action),storage,abort.signal);}
       else throw new ClientError('coding_operation_rejected');
       res.writeHead(200,{'content-type':'application/json'}).end(JSON.stringify(reply));
-    }catch(e){const code=/^[a-z0-9_]{1,80}$/.test(e.code??'')?e.code:'coding_bridge_rejected';if(!res.destroyed){if(res.headersSent)res.end(JSON.stringify({type:'error',code})+'\n');else res.writeHead(400,{'content-type':'application/json'}).end(JSON.stringify({code}));}}
+    }catch(e){const code=/^[a-z0-9_]{1,80}$/.test(e.code??'')?e.code:'coding_bridge_rejected';if(!res.destroyed){if(res.headersSent)res.end(JSON.stringify({type:'error',code,...(safeFailure(e.failureDiagnostic)?{failureDiagnostic:safeFailure(e.failureDiagnostic)}:{})})+'\n');else res.writeHead(400,{'content-type':'application/json'}).end(JSON.stringify({code,...(safeFailure(e.failureDiagnostic)?{failureDiagnostic:safeFailure(e.failureDiagnostic)}:{})}));}}
   });
   requestClose=close;
   try {

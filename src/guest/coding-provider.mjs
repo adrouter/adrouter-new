@@ -1,3 +1,4 @@
+import { safeFailure, failureSummary } from '../failure-diagnostics.mjs';
 import { piContext } from '../pi-context.mjs';
 import { AssistantMessageEventStream } from '@adrouter/ai';
 import { randomUUID } from 'node:crypto';
@@ -36,6 +37,6 @@ export function marketplaceStream(model,context,options={}) {
       if(config.messageFormat==='pi_context_v1'){if(!response.nativeMessage)throw Error('pi_native_response_required');Object.assign(message,response.nativeMessage);}
       message.usage={...message.usage,input:response.usage.inputTokens,output:response.usage.outputTokens,totalTokens:response.usage.inputTokens+response.usage.outputTokens};
       message.stopReason=response.toolCalls?.length?'toolUse':'stop';stream.push({type:'done',reason:message.stopReason,message});stream.end(message);
-    }catch(error) {message.stopReason=options.signal?.aborted?'aborted':'error';message.errorMessage=inferenceErrorMessage(error.code??error.message,options.signal?.aborted);stream.push({type:'error',reason:message.stopReason,error:message});stream.end(message);}
+    }catch(error) {message.stopReason=options.signal?.aborted?'aborted':'error';message.errorMessage=safeFailure(error.failureDiagnostic)?failureSummary(error.failureDiagnostic):inferenceErrorMessage(error.code??error.message,options.signal?.aborted);stream.push({type:'error',reason:message.stopReason,error:message});stream.end(message);}
   })();return stream;
 }

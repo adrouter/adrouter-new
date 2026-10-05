@@ -98,7 +98,7 @@ export async function sdkModel(node,descriptor,secrets,transport,signal,{authFet
  const provider=factory(options),method=a.method;
  return method?provider[method](descriptor.model):provider.languageModel?provider.languageModel(descriptor.model):provider(descriptor.model);
 }
-export async function sdkInference(node,auth,frame,signal,onTiming=()=>{},onEvent=()=>{},fetchFixture){
+export async function sdkInference(node,auth,frame,signal,onTiming=()=>{},onEvent=()=>{},fetchFixture,trace){
  signal?.throwIfAborted();
  const descriptor=node.nativeModels.find(m=>m.model===frame.model);
  if(!descriptor||descriptor.api!==frame.api||node.provider!==frame.provider||descriptor.endpoint!==frame.endpoint||node.nativeRevision!==frame.nativeRevision)throw fail('pi_model_binding_mismatch');
@@ -107,11 +107,11 @@ export async function sdkInference(node,auth,frame,signal,onTiming=()=>{},onEven
  if(compatibility.compat.supportsReasoningEffort===false&&selected!=='off')throw fail('model_setting_unsupported');
  const started=Date.now();let statusCode=null,usage,sequence=0,oldFetch,formatError,responseId,responseModel,transportCause=null;
  const setup=frame.type==='qualification'&&frame.qualification==='setup_probe';const blocks=[],calls=new Map(),parts=new Map();
- const transport=fetchFixture??restrictedPiFetch(node,descriptor,signal,status=>{statusCode=status;});
+ const transport=fetchFixture??restrictedPiFetch(node,descriptor,signal,status=>{statusCode=status;},{evidence:trace});
  const authEndpoints={google_service_account:'https://oauth2.googleapis.com',ibm_api_key:'https://iam.cloud.ibm.com'};
  const authEndpoint=descriptor.authentication==='sap_service_key'?node.fields.AUTH_BASE_URL:authEndpoints[descriptor.authentication];
  const authTransport=authEndpoint?(fetchFixture??restrictedPiFetch(node,{endpoint:authEndpoint},signal,()=>{})):undefined;
- const routed=async(input,init)=>{const url=new URL(typeof input==='string'||input instanceof URL?input:input.url);try{return await (authEndpoint&&url.origin===new URL(authEndpoint).origin?authTransport(input,init):transport(input,init));}catch(error){transportCause=transportCategory(error);throw error;}};
+ const routed=async(input,init)=>{const url=new URL(typeof input==='string'||input instanceof URL?input:input.url);try{const response=await (authEndpoint&&url.origin===new URL(authEndpoint).origin?authTransport(input,init):transport(input,init));trace?.response(response.status);return response;}catch(error){trace?.error(error);transportCause=transportCategory(error);throw error;}};
  try{
   oldFetch=globalThis.fetch;globalThis.fetch=routed;
   const model=await sdkModel(node,descriptor,auth.sdkSecrets,routed,signal,{authFetch:routed,compatibility});
@@ -155,7 +155,7 @@ export async function sdkInference(node,auth,frame,signal,onTiming=()=>{},onEven
   if(!thinking&&blocks.some(b=>b.type==='thinking'&&b.thinking))throw fail('model_setting_unsupported',known);
   if(!setup)for(const call of calls.values()){const tool=frame.tools.find(t=>t.function.name===call.name);if(!tool||!new Ajv({strict:false,validateFormats:false}).compile(tool.function.parameters)(call.arguments))throw fail('upstream_malformed_response',known);}
   for(const [index,call]of display.toolCalls.entries())for(let i=0;i<call.function.arguments.length;i+=8192)await onEvent({type:'coding_delta',requestId:frame.requestId,sequence:++sequence,kind:'tool',index,id:call.id,name:call.function.name,text:call.function.arguments.slice(i,i+8192)});
-  onTiming({phase:'upstream',outcome:'succeeded',statusCode,headersMs:null,totalMs:Date.now()-started});
+  trace?.stage('validation');onTiming({phase:'upstream',outcome:'succeeded',statusCode,headersMs:null,totalMs:Date.now()-started});
   return {type:'result',requestId:frame.requestId,...display,nativeMessage,...known};
  }catch(error){onTiming({phase:'upstream',outcome:error.nativeUsage?'succeeded':'unknown',statusCode,headersMs:null,transportCause:transportCause??transportCategory(error),totalMs:Date.now()-started});throw error.code?error:fail(signal?.aborted?'upstream_timeout':error.statusCode===401||error.statusCode===403?'upstream_authentication_failed':error.statusCode===429?'upstream_rate_limited':error.statusCode===400?'upstream_parameter_rejected':'upstream_failed_outcome_unknown',{statusCode:error.statusCode});}
  finally{if(oldFetch)globalThis.fetch=oldFetch;}

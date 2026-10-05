@@ -1,3 +1,5 @@
+import { safeFailure } from './failure-diagnostics.mjs';
+import { requestEvidence } from './transport-evidence.mjs';
 import { transportCategory } from './pi-transport.mjs';
 import Ajv from 'ajv';
 import {thinkingBudgetForLevel,clampThinkingBudgetToAnswerRoom} from '@earendil-works/pi-ai/api/simple-options';
@@ -78,7 +80,7 @@ export class NativeUsageEvidence {
     return {input:usage.input,output:usage.output,cacheRead:usage.cacheRead,cacheWrite:usage.cacheWrite,...(usage.cacheWrite1h===undefined?{}:{cacheWrite1h:usage.cacheWrite1h}),reasoning:this.reasoningReported?(usage.reasoning??null):null};
   }
 }
-export async function nativeInference(node,auth,frame,signal,onTiming=()=>{},onEvent=()=>{},fetchFixture) {
+async function inferNative(node,auth,frame,signal,onTiming,onEvent,fetchFixture,trace) {
   signal?.throwIfAborted();
   const descriptor=node.nativeModels.find(m=>m.model===frame.model);
   if(!descriptor||frame.provider!==node.provider||frame.api!==descriptor.api||frame.messageFormat!=='pi_context_v1')throw fail('pi_model_binding_mismatch');
@@ -88,13 +90,13 @@ export async function nativeInference(node,auth,frame,signal,onTiming=()=>{},onE
   if(!authority||inputBound>authority.inputBound||frame.maxOutputTokens>node.maxOutputTokens)throw fail('upstream_authority_required');
   const worst=(BigInt(inputBound)*BigInt(authority.inputMicrousdPerMillion)+BigInt(frame.maxOutputTokens)*BigInt(authority.outputMicrousdPerMillion)+999999n)/1000000n;
   if(worst>BigInt(authority.reservedMicrousd))throw fail('upstream_authority_exceeded');
-  if(descriptor.api.startsWith('sdk:'))return sdkInference(node,auth,frame,signal,onTiming,onEvent,fetchFixture);
+  if(descriptor.api.startsWith('sdk:'))return sdkInference(node,auth,frame,signal,onTiming,onEvent,fetchFixture,trace);
   const model=auth.models.getModel(node.provider,frame.model);if(!model)throw fail('pi_model_not_supported');
   if(model.baseUrl!==descriptor.endpoint)throw fail('pi_model_binding_mismatch');
   const fixed={...model,compat:{...model.compat,allowedFallbackModels:[]}};
   const evidence=new NativeUsageEvidence(model.api),started=Date.now();let statusCode=null,headersMs=null,sequence=0,transportCause=null;
-  const rawTransport=fetchFixture??restrictedPiFetch(node,descriptor,signal,status=>{statusCode=status;headersMs=Date.now()-started;});
-  const transport=async(...args)=>{let response;try{response=await rawTransport(...args);}catch(error){transportCause=transportCategory(error);throw error;}statusCode=response.status;headersMs=Date.now()-started;return response;};
+  const rawTransport=fetchFixture??restrictedPiFetch(node,descriptor,signal,status=>{statusCode=status;headersMs=Date.now()-started;},{evidence:trace});
+  const transport=async(...args)=>{let response;try{if(fetchFixture)trace.stage('dispatch');response=await rawTransport(...args);}catch(error){trace.error(error);transportCause=transportCategory(error);throw error;}trace.response(response.status);statusCode=response.status;headersMs=Date.now()-started;return response;};
   const context={messages:frame.messages.map(piMessage),tools:frame.tools.map(t=>({name:t.function.name,description:t.function.description,parameters:t.function.parameters}))};
   const options={signal,maxTokens:frame.maxOutputTokens,maxRetries:0,transport:'sse',timeoutMs:120000,fetch:transport,env:{...node.fields},cacheRetention:'none',...(frame.qualification?{toolChoice:['tool','setup_probe'].includes(frame.qualification)?(model.api==='anthropic-messages'||model.api==='google-generative-ai'||model.api==='mistral-conversations'?'any':'required'):'none'}:{}),onResponse:response=>{statusCode=response.status;headersMs=Date.now()-started;},onProviderStreamEvent:event=>evidence.observe(event)};
   // The raw native stream avoids Pi's history-usage estimator: replay has no
@@ -121,12 +123,12 @@ export async function nativeInference(node,auth,frame,signal,onTiming=()=>{},onE
         for(let i=0;i<event.delta.length;i+=8192)await onEvent({type:'coding_delta',requestId:frame.requestId,sequence:++sequence,kind:event.type==='text_delta'?'text':'thinking',text:event.delta.slice(i,i+8192)});
       }
       if(event.type==='done')final=event.message;
-      if(event.type==='error')throw fail(signal?.aborted?'upstream_timeout':statusCode===401||statusCode===403?'upstream_authentication_failed':statusCode===429?'upstream_rate_limited':statusCode===400?'upstream_parameter_rejected':statusCode===404?'upstream_invalid_model':'upstream_failed_outcome_unknown');
+      if(event.type==='error')throw fail(signal?.aborted?'upstream_timeout':statusCode===401||statusCode===403?'upstream_authentication_failed':statusCode===429?'upstream_rate_limited':statusCode===400?'upstream_parameter_rejected':statusCode===404?'upstream_invalid_model':statusCode===200&&!trace.snapshot('upstream_malformed_response').transportCategory?'upstream_malformed_response':'upstream_failed_outcome_unknown');
     }
     if(!final||!['stop','length','toolUse'].includes(final.stopReason))throw fail('upstream_malformed_response');
     if(!frame.thinking&&final.content.some(block=>block.type==='thinking'&&(block.thinking||block.redacted)))throw fail('pi_thinking_off_unsupported');
     if(final.responseModel&&final.responseModel!==model.id)throw fail('pi_model_fallback_rejected');
-    const nativeMessage=piMessage(final),display=piDisplay(nativeMessage),usage=evidence.normalize(final.usage);
+    trace.stage('validation');const nativeMessage=piMessage(final),display=piDisplay(nativeMessage),usage=evidence.normalize(final.usage);
     if(!frame.thinking)display.thinking='';
     if(usage.input+usage.cacheRead+usage.cacheWrite>authority.inputBound||usage.output>frame.maxOutputTokens)throw fail('upstream_usage_invalid');
     knownUsage={nativeUsage:usage,inputTokens:usage.input+usage.cacheRead+usage.cacheWrite,outputTokens:usage.output};
@@ -138,4 +140,10 @@ export async function nativeInference(node,auth,frame,signal,onTiming=()=>{},onE
     return {type:'result',requestId:frame.requestId,...display,nativeMessage,nativeUsage:usage,inputTokens:usage.input+usage.cacheRead+usage.cacheWrite,outputTokens:usage.output};
   }catch(e){onTiming({phase:'upstream',outcome:'unknown',statusCode,headersMs,transportCause:transportCause??transportCategory(e),totalMs:Date.now()-started});throw Object.assign(fail(/^[a-z0-9_]{1,80}$/.test(e.code??'')?e.code:(signal?.aborted?'upstream_timeout':'upstream_failed_outcome_unknown')),{statusCode,...knownUsage});}
   finally{if(oldFetch)globalThis.fetch=oldFetch;}
+}
+
+export async function nativeInference(node,auth,frame,signal,onTiming=()=>{},onEvent=()=>{},fetchFixture) {
+ const trace=requestEvidence(node,frame);let timing;
+ try {const result=await inferNative(node,auth,frame,signal,value=>{timing=value;},onEvent,fetchFixture,trace);if(timing)onTiming(timing);return result;}
+ catch(error){const failureDiagnostic=safeFailure(trace.snapshot(error.code))??trace.snapshot(signal?.aborted?'upstream_timeout':'upstream_failed_outcome_unknown');onTiming({...timing,phase:'upstream',outcome:'unknown',statusCode:timing?.statusCode??failureDiagnostic.statusCode,headersMs:timing?.headersMs??null,totalMs:failureDiagnostic.elapsedMs,failureDiagnostic});throw Object.assign(error,{failureDiagnostic});}
 }

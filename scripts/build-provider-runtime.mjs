@@ -14,9 +14,9 @@ for(const p of providerCatalog.providers)for(const m of p.models)if(m.adapter?.k
 }
 await rm(out,{recursive:true,force:true});await mkdir(out,{recursive:true});
 for(const [path,entry]of Object.entries(lock.packages))if(path.startsWith('node_modules/')&&!entry.dev){if(entry.link)throw Error('provider_dependency_link_rejected');await mkdir(join(out,path,'..'),{recursive:true});await cp(join(root,path),join(out,path),{recursive:true,dereference:false});}
-for(const f of ['sdk-native.mjs','guest-credentials.mjs','pi-native.mjs','pi-transport.mjs','pi-context.mjs','provider-broker.mjs','coding-wire.mjs','connectors.mjs','provider-setup.mjs'])await cp(join(root,'src',f),join(out,f));
+for(const f of ['sdk-native.mjs','guest-credentials.mjs','pi-native.mjs','pi-transport.mjs','transport-evidence.mjs','failure-diagnostics.mjs','pi-context.mjs','provider-broker.mjs','coding-wire.mjs','connectors.mjs','provider-setup.mjs'])await cp(join(root,'src',f),join(out,f));
 await cp(join(root,'src/guest/provider-console.mjs'),join(out,'provider-console.mjs'));
-await mkdir(join(out,'generated'));for(const f of ['connectors.mjs','pi-catalog.mjs','provider-catalog.mjs'])await cp(join(root,'src/generated',f),join(out,'generated',f));
+await mkdir(join(out,'generated'));for(const f of ['connectors.mjs','pi-catalog.mjs','provider-catalog.mjs','validators.mjs'])await cp(join(root,'src/generated',f),join(out,'generated',f));
 const license=await (await fetch('https://raw.githubusercontent.com/earendil-works/pi/'+piCatalog.revision+'/LICENSE',{signal:AbortSignal.timeout(30000)})).text();
 if(hash(license)!=='0457f5bcec3b3b211605dfb5d1a49042fd638f3686a410fe099c24a25af13c48')throw Error('pi_license_identity_mismatch');
 await writeFile(join(out,'PI-LICENSE-MIT'),license);

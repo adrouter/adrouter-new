@@ -3,7 +3,7 @@ import {request as httpRequest} from 'node:http';
 import { Readable, Transform } from 'node:stream';
 import { tunnelAgent,validateBinding } from './provider-broker.mjs';
 const fail=code=>Object.assign(Error(code),{code});
-export function restrictedPiFetch(node,model,signal,onResponse=()=>{},{discovery=false}={}) {
+export function restrictedPiFetch(node,model,signal,onResponse=()=>{},{discovery=false,evidence}={}) {
   const {url:approved}=validateBinding({...node,endpoint:model.endpoint});let dispatched=false;
   return async (input,init={})=>{
     // One SDK dispatch per authority reservation. Also fences retries performed
@@ -17,19 +17,19 @@ export function restrictedPiFetch(node,model,signal,onResponse=()=>{},{discovery
     const body=discovery?undefined:init.body??await req.text();if(!discovery&&(typeof body!=='string'||Buffer.byteLength(body)>1024*1024))throw fail('pi_request_limit');
     const headers=new Headers(init.headers??req.headers);headers.delete('host');headers.delete('content-length');headers.set('accept-encoding','identity');
     if(node.connection?.authentication==='none')for(const key of ['authorization','x-api-key','api-key','x-goog-api-key'])headers.delete(key);
-    const agent=tunnelAgent({...node,tunnel:{...node.tunnel,path:'/upstream/'+encodeURIComponent(approved.origin)}},url);
+    const agent=tunnelAgent({...node,tunnel:{...node.tunnel,path:'/upstream/'+encodeURIComponent(approved.origin)}},url,evidence);
     return new Promise((resolve,reject)=>{
       const upstream=(url.protocol==='http:'?httpRequest:request)(url,{method,headers:Object.fromEntries(headers),agent,signal:AbortSignal.any([signal??new AbortController().signal,init.signal??req.signal]),timeout:120000},response=>{
-        onResponse(response.statusCode);
+        evidence?.response(response.statusCode);onResponse(response.statusCode);
         if(response.statusCode>=300&&response.statusCode<400){response.destroy();reject(fail('pi_redirect_rejected'));return;}
         let bytes=0;
-        const bounded=new Transform({transform(chunk,_encoding,next){bytes+=chunk.length;if(bytes>2*1024*1024)next(fail('pi_response_limit'));else next(null,chunk);}});
-        response.on('error',e=>bounded.destroy(e));response.pipe(bounded);
+        const bounded=new Transform({transform(chunk,_encoding,next){evidence?.stage('streaming');bytes+=chunk.length;if(bytes>2*1024*1024)next(fail('pi_response_limit'));else next(null,chunk);}});
+        response.on('error',e=>{evidence?.error(e);bounded.destroy(e);});response.pipe(bounded);
         const h=new Headers();for(const [key,value]of Object.entries(response.headers))if(value!==undefined)h.set(key,Array.isArray(value)?value.join(', '):value);
         resolve(new Response(Readable.toWeb(bounded),{status:response.statusCode,headers:h}));
       });
-      upstream.once('error',()=>reject(fail(signal?.aborted?'upstream_timeout':'upstream_failed_outcome_unknown')));
-      upstream.once('timeout',()=>upstream.destroy());upstream.once('close',()=>agent.destroy());upstream.end(body);
+      upstream.once('error',error=>{evidence?.error(error);reject(Object.assign(fail(signal?.aborted?'upstream_timeout':'upstream_failed_outcome_unknown'),{transportCode:error.code}));});
+      upstream.once('socket',socket=>{const dispatched=()=>evidence?.stage('dispatch');if(socket.connecting)socket.once('connect',dispatched);else dispatched();});upstream.once('timeout',()=>upstream.destroy(Object.assign(Error('upstream_timeout'),{code:'ETIMEDOUT'})));upstream.once('close',()=>agent.destroy());upstream.end(body);
     });
   };
 }

@@ -42,7 +42,7 @@ export function normalizeDiagnosis(node,evidence=[]) {
   const notes=[];
   const running=node.status==='published'&&node.ready===true&&Number(node.leaseUntil)>Date.now()&&node.stoppedProviderRunId!==node.providerRunId;
   const run=evidence.find(e=>e.providerRunId===node.providerRunId);
-  const backend=capturedDiagnostic(node.lastRunFailure,{nodeId:node.id});
+  const backend=capturedDiagnostic(node.failureDiagnostic?{phase:'request',operation:'request',code:node.failureDiagnostic.code,requestId:node.failureDiagnostic.requestId,providerRunId:node.failureDiagnostic.providerRunId,failureDiagnostic:node.failureDiagnostic}:node.lastRunFailure,{nodeId:node.id});
   let currentBackend=backend?.providerRunId===node.providerRunId?backend:null;
   const check=currentBackend?.requestId?node.nativeChecks?.[currentBackend.requestId]:null;
   if(currentBackend&&check?.providerRunId===currentBackend.providerRunId){
@@ -52,7 +52,7 @@ export function normalizeDiagnosis(node,evidence=[]) {
   if(backend&&!currentBackend)notes.push('Router failure belongs to a different run.');
   const local=run?.local.terminalFailure??null;
   const bound = d => d && d.providerRunId===node.providerRunId && d.nodeId===node.id &&
-    (!d.requestId || node.nativeChecks?.[d.requestId]?.providerRunId===d.providerRunId);
+    (!d.requestId || node.nativeChecks?.[d.requestId]?.providerRunId===d.providerRunId || d.failureDiagnostic?.requestId===d.requestId&&d.failureDiagnostic.providerRunId===d.providerRunId&&node.diagnosticSessions?.some(s=>s.id===d.failureDiagnostic.sessionId));
   if(local&&!bound(local))notes.push('Local failure check identity does not match Router evidence.');
   const safeLocal=bound(local)?local:null;
   let primary=currentBackend??safeLocal;
@@ -82,7 +82,7 @@ export function normalizeDiagnosis(node,evidence=[]) {
 }
 export function diagnosisLines(result,{controllerAttached}={}) {
   const d=result.diagnosis??normalizeDiagnosis(result.node,result.evidence);
-  return [...(d.primaryFailure?providerDiagnosticLines(d.primaryFailure):[d.running?'Provider is running. No setup failure recorded.':'No setup failure recorded.']),...d.secondaryFailures.flatMap(f=>['Separate unresolved operation:',...providerDiagnosticLines(f)]),
+  return [...(d.primaryFailure?providerDiagnosticLines(d.primaryFailure):[d.running?'Provider is running. No setup or inference failure recorded.':'No setup or inference failure recorded.']),...d.secondaryFailures.flatMap(f=>['Separate unresolved operation:',...providerDiagnosticLines(f)]),
     ...(d.earlierTransientFailure?['Earlier transient diagnostic:',...providerDiagnosticLines(d.earlierTransientFailure)]:[]),
     ...modelStatusLines(d.modelStatuses),`Cleanup: ${d.running&&d.cleanupState==='pending'?'Not requested — provider is running':d.cleanupState}`,...d.cleanupOutcomes.map(o=>`${o.phase}: ${o.status}${o.code?' · '+o.code:''}`),
     `Pending exact reports: ${d.pendingReports}`,...d.evidenceNotes,

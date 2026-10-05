@@ -1,12 +1,14 @@
+import { safeFailure } from './failure-diagnostics.mjs';
 import { ClientError } from './network.mjs';
 
 const identifier = value => /^[a-zA-Z0-9_-]{1,80}$/.test(value ?? '') ? value : null;
 export class BuyerLifecycle {
   constructor(record = () => {}) { this.record = record; this.events = []; this.paused = false; this.firstFailure = null; }
   event(phase, outcome = {}) {
-    const entry = { at: Date.now(), phase: identifier(phase), code: identifier(outcome.code),
+    const entry = { ...(safeFailure(outcome.failureDiagnostic)?{failureDiagnostic:safeFailure(outcome.failureDiagnostic)}:{}), at: Date.now(), phase: identifier(phase), code: identifier(outcome.code),
       exitCode: Number.isInteger(outcome.exitCode) ? outcome.exitCode : null,
       signal: identifier(outcome.signal), state: identifier(outcome.state), status: identifier(outcome.status) };
+    if(safeFailure(outcome.failureDiagnostic))this.failureDiagnostic??=safeFailure(outcome.failureDiagnostic);
     if (entry.code && !this.firstFailure) this.firstFailure = entry;
     this.events.push(entry); if (this.events.length > 256) this.events.shift();
     this.record({ firstFailure: this.firstFailure, events: this.events.slice() });

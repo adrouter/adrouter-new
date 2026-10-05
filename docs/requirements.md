@@ -123,3 +123,14 @@ connector compatibility; GPU passthrough is not an MVP dependency.
 Baseline specification SHA-256: `ae7e6277b0a30da833350bada9d7507e806618752c1ff642752e60052fb7a953`.
 The baseline table is retained with the stated overrides; original references and
 proposals do not establish current provider authorization or deployment status.
+
+
+## Inference interruption evidence — 6 October 2026
+
+Provider inference failures retain their original stable code independently of buyer Stop, deadline expiry, provider connection loss and authority loss. Request/session/provider-run identifiers, accepted model/API, elapsed time, a bounded phase timeline, allowlisted transport codes, HTTP status and separate dispatch/response evidence travel in optional `failure_diagnostics_v1` metadata. Expanded buyer/session/provider views require `X-Adr-Failure-Diagnostics: 1`; providers send expanded relay metadata only after capability negotiation. Historical absence stays unavailable. Missing response headers do not prove a request was not sent.
+
+Router stores evidence in existing request/session JSON records; no hosted schema migration or financial reconciliation is part of this repair. A primary provider failure cannot become cancellation merely because execution is subsequently stopped. Unknown inference remains held and is never replayed or zero-settled. Forged request/session/run/model bindings and unrestricted metadata fields are rejected. Public listing projections remain unchanged.
+
+Buyer coding/session and provider workspaces expose summary plus Failure details. A private JSON export uses retained metadata without inference. Owner-only atomic profile records retain the primary failure and bounded timeline through teardown/reopening; cleanup and diagnostic-save failures remain separate. Prompts, responses, tool arguments/results, project files, credentials, headers, SDK messages, stacks and financial data are excluded.
+
+The observed Flash/Pro failures belong to node 87fb7693-3462-4a5d-8c85-bccfc0f22f57, run 2f84c8e5-d5da-4e54-9ac8-0b6a814a8109. Metadata confirms first Flash and third Pro failures at 27/20 ms without recorded headers. Synthetic restricted-transport baseline requests pass; the initiating live cause remains unresolved until fresh diagnostic evidence demonstrates it. Private alpha.46 preparation and operator-only real acceptance remain distinct gates.

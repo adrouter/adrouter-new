@@ -1,3 +1,4 @@
+import { safeFailure } from './failure-diagnostics.mjs';
 class ClientError extends Error { constructor(code){super(code);this.code=code;} }
 export async function readCodingStream(response, onEvent = () => {}) {
   if (!response.body || !response.headers.get('content-type')?.includes('application/x-ndjson')) throw new ClientError('coding_stream_required');
@@ -11,7 +12,7 @@ export async function readCodingStream(response, onEvent = () => {}) {
       if (!line || line.length > 1024*1024) throw new ClientError('coding_stream_invalid');
       if(complete)throw new ClientError('coding_stream_invalid');
       const event = JSON.parse(line);
-      if (event.type === 'error') throw new ClientError(/^[a-z0-9_]{1,80}$/.test(event.code) ? event.code : 'coding_outcome_unknown');
+      if (event.type === 'error') throw Object.assign(new ClientError(/^[a-z0-9_]{1,80}$/.test(event.code) ? event.code : 'coding_outcome_unknown'),safeFailure(event.failureDiagnostic)?{failureDiagnostic:safeFailure(event.failureDiagnostic)}:{});
       if (event.type === 'complete') { if (complete) throw new ClientError('coding_stream_invalid'); complete = event; }
       else if (event.type === 'coding_delta' && event.sequence === ++sequence && ['text','thinking','tool'].includes(event.kind) && typeof event.text === 'string' && event.text.length <= 8192) await onEvent(event);
       else throw new ClientError('coding_stream_invalid');

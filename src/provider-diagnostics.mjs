@@ -1,3 +1,4 @@
+import { safeFailure, failureLines } from './failure-diagnostics.mjs';
 // Metadata only. Never use exception messages, bodies, headers or guest output.
 const label = (value, pattern = /^[a-zA-Z0-9_-]{1,80}$/) => typeof value === 'string' && pattern.test(value) ? value : null;
 export const operationSources = Object.freeze({
@@ -6,7 +7,7 @@ export const operationSources = Object.freeze({
   configure_models: 'router_configuration', publication: 'router_configuration',
   remote_stop: 'router_control', guest_removal: 'local_runtime', broker_cleanup: 'local_runtime',
   execution_release: 'router_reporting', check_execution_release: 'router_reporting', cleanup_failure_report: 'router_reporting',
-  diagnostic_save: 'local_storage', check_inspection: 'router_reporting'
+  request:'upstream_api', diagnostic_save: 'local_storage', check_inspection: 'router_reporting'
 });
 const historicalOperations = Object.freeze({qualification_complete:'setup_report_submit', qualification_response_validation:'setup_response_validate',
   qualification_tool:'setup_model_request',qualification_roundtrip:'setup_model_request',qualification_setup_probe:'setup_model_request'});
@@ -17,7 +18,7 @@ export function providerDiagnostic(phase, error = {}, context = {}, now = Date.n
   const code = /^[a-z][a-z0-9_]{0,79}$/.test(error.code??'')?error.code:operation==='setup_report_save'?'completion_report_save_failed':'provider_control_failed';
   const evidence = context.requestEvidence ?? error.requestEvidence ?? (context.requestId ? 'outcome_unknown' : 'not_sent');
   const transport = label(error.transportCause) ?? ({upstream_timeout:'timeout',network_timeout:'timeout',upstream_connection_failed:'connection',network_unavailable_outcome_unknown:'connection'}[code] ?? null);
-  return { operation, provenance:operationSources[operation] ?? 'local_runtime', transportCause:transport,
+  return { ...(safeFailure(context.failureDiagnostic??error.failureDiagnostic)?{failureDiagnostic:safeFailure(context.failureDiagnostic??error.failureDiagnostic)}:{}), sessionId:label(context.sessionId??error.sessionId), operation, provenance:operationSources[operation] ?? 'local_runtime', transportCause:transport,
     elapsedMs:Number.isSafeInteger(error.elapsedMs)&&error.elapsedMs>=0?error.elapsedMs:null,
     requestEvidence:evidenceValues.includes(evidence)?evidence:'outcome_unknown',
     changedFields:Array.isArray(error.changedFields)?error.changedFields.slice(0,32).filter(v=>/^(provider|connectorProtocol|supplyClass|fields|connection\.[a-zA-Z]+)$/.test(v)):[],
@@ -46,6 +47,7 @@ export function setupProbeFailure(result) {
 const explanations = Object.freeze({setup_probe_missing:'The model response did not contain the required setup probe.',setup_probe_wrong_tool:'The model called the wrong tool or called more than one tool.',setup_probe_invalid_arguments:'The setup probe arguments did not match the required value.',setup_response_truncated:'The model response ended at its output limit before completing the setup probe.'});
 export function providerDiagnosticLines(d) {
   if (!d) return [];
+  if(safeFailure(d.failureDiagnostic))return failureLines(d.failureDiagnostic);
   return [`${/^(qualification|configure_models)/.test(d.phase??d.operation??'')?'SETUP FAILED':'Operation'} — ${d.operation??d.phase??'operation unavailable'}`,`Cause: ${d.code??'Cause not captured'} · ${d.provenance??'source not captured'}`, ...(explanations[d.code]?[explanations[d.code]]:[]),`Model request: ${d.requestEvidence==='not_sent'?'No model request sent':d.requestEvidence==='response_received'?'Response received':'Outcome unknown'}`,`Transport: ${d.transportCause??'Transport cause not captured'}`, ...(Number.isSafeInteger(d.elapsedMs)?[`Elapsed: ${d.elapsedMs} ms`]:[]), ...(d.changedFields?.length?[`Changed settings: ${d.changedFields.join(', ')}`]:[]), `HTTP ${d.statusCode ?? 'unavailable'} · ${Number.isSafeInteger(d.observedAt??d.at)?new Date(d.observedAt??d.at).toISOString():'time unavailable'}`,
     ...(d.model ? [`Model: ${d.model} · API: ${d.api ?? 'unknown'}`] : []),
     ...(d.providerRunId ? [`Run: ${d.providerRunId}`] : []), ...(d.requestId||d.checkId ? [`Check/request: ${d.requestId??d.checkId}`] : [])];

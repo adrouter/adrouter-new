@@ -1,3 +1,4 @@
+import { safeFailure, failureLines, failureSummary, readPrivateDiagnostic, exportFailure } from './failure-diagnostics.mjs';
 import { pollLiveMenu } from './tui-polling.mjs';
 import packageMetadata from '../package.json' with {type:'json'};
 import { diagnoseProvider, diagnosisLines, retryProviderReports, retryProviderCleanup, providerEvidence, normalizeDiagnosis } from './provider-diagnose.mjs';
@@ -21,7 +22,7 @@ import { AuthStore, Network, ClientError, networkOrigin, safeText, authRecoveryC
 import { MarketplaceDraft, MarketplaceListing, MarketplaceNetworkConfig, ProviderNodeDeletion } from './generated/validators.mjs';
 
 export const accountingLines=s=>s?[`Execution: ${words(s.executionState??(s.stoppedAt?'stopped':s.state))}`,`Accounting: ${words(s.accountingState??s.state)}`,`Cleanup: ${words(s.cleanupState??'pending')}`,`Reserved ${s.funded} · Charged ${s.charged} · Refunded ${s.refunded} test credits`,`Unresolved liability: ${s.reserved}`,s.state==='settlement_pending'?'Receipt pending: upstream outcome is unresolved.':`Settlement: ${words(s.state)}`]:['Receipt pending: remote stop/accounting could not be confirmed. Inspect My sessions.'];
-export const providerStatusLines = (s, now = Date.now()) => [...providerDiagnosticLines(s.setupFailure),s.stopped ? 'Provider operation has stopped.' : 'Keep this TUI open.',
+export const providerStatusLines = (s, now = Date.now()) => [...(s.diagnosticSaveFailed?['Diagnostic save failed · retained evidence may be incomplete']:[]),...providerDiagnosticLines(s.setupFailure),s.stopped ? 'Provider operation has stopped.' : 'Keep this TUI open.',
   `VM: ${s.stopped ? s.teardownVerified === false ? 'teardown unverified' : s.teardownVerified === true ? 'not running' : 'stopping' : s.guestReady ? 'ready' : 'starting'}`,
   `Backend: ${s.stopped ? 'offline' : s.backendConfirmedAt && now - s.backendConfirmedAt < 15000 && s.relayReady && s.relayLeaseUntil > now ? 'Hot · ready' : s.firstFailure ? 'reconnecting' : 'awaiting relay confirmation'}`,
   `State: ${words(s.runtimeState??s.state ?? (s.stopped?'stopped':'connecting'))}`,
@@ -442,7 +443,7 @@ export async function runTui(options = {}, dependencies = {}) {
       const monitor=new ProviderActivityMonitor(network,node.id,()=>ui.pending?.redraw?.());await monitor.start();
       let selection;try{selection = await ui.menu(created ? 'Your listing is drafted' : node.name, [
         ...(['pi_native_v1','pi_native_v2','pi_native_v3'].includes(node.connectorProtocol)?[item('editNative','Edit provider configuration',bindingCurrent?'Pause and stop serving before changing models or limits.':'Older installation: use operator cleanup or reclaim after verified teardown.',!bindingCurrent||!['draft','paused'].includes(node.status)||busy)]:[]),
-        item('status','Provider status'),item('diagnose','Diagnose','Read owned run/check metadata; no model request.'),item('retryReport','Retry result report',exactReports?'Deliver only saved exact reports; no VM or inference.':'No exact completion report saved.',!exactReports),
+        item('failureDetails','Failure details','Inspect/export retained inference evidence; no model request.'),item('status','Provider status'),item('diagnose','Diagnose','Read owned run/check metadata; no model request.'),item('retryReport','Retry result report',exactReports?'Deliver only saved exact reports; no VM or inference.':'No exact completion report saved.',!exactReports),
         item('setup', 'Test and start', bindingCurrent?'Authorizes a new bounded model attempt. All models must pass.':'Older installation: use operator cleanup or reclaim the paused connection.', busy||!bindingCurrent),
         ...(node.cleanupState==='failed'||node.cleanupState==='pending'||providersRunning.get(node.id)?.status.cleanupRequired?[item('cleanup','Retry cleanup','Verify creation evidence and current run before teardown.',!providersRunning.get(node.id)?.status.cleanupRequired&&!recovery?.recoveryActions.includes('retry_verified_cleanup'))]:[]),
         ...(!native?[item('launch', node.availability === 'cold' ? 'Start cold control' : 'Launch hot VM', 'Keep this TUI open while providing.', busy)]:[]),
@@ -462,6 +463,7 @@ export async function runTui(options = {}, dependencies = {}) {
         const visibleMonitor=new ProviderActivityMonitor(network,node.id,()=>ui.pending?.redraw?.());
         try{await visibleMonitor.start();await ui.page('Provider status',()=>[...(providersRunning.has(node.id)?providerStatusLines(providersRunning.get(node.id).status):['No controller attached in this terminal']),...providerActivityLines(visibleMonitor.view())]);}finally{visibleMonitor.stop();}continue;
       }
+      if(selection==='failureDetails'){const result=await diagnoseProvider(network,node.id,store.profile);const d=result.diagnosis;await failureDetails(d.primaryFailure?.failureDiagnostic,d.cleanupOutcomes);continue;}
       if(selection==='diagnose'){const result=await diagnoseProvider(network,node.id,store.profile);const controller=providersRunning.get(node.id);await ui.page('Provider diagnosis',diagnosisLines(result,{controllerAttached:!!controller&&controller.status.providerRunId===result.node.providerRunId}));continue;}
       if(selection==='retryReport'){await attempt(()=>providersRunning.get(node.id)?.retryResultReports?providersRunning.get(node.id).retryResultReports():retryProviderReports(network,node.id,store.profile));continue;}
       if(selection==='cleanup'){await attempt(()=>providersRunning.has(node.id)?stopProvider(node.id):retryProviderCleanup(network,node.id,store.profile));continue;}
@@ -647,7 +649,7 @@ export async function runTui(options = {}, dependencies = {}) {
         try{saved=await ui.task('Save private coding checkpoint',()=>buyer.save());location=`Saved privately: ${saved.resumeId} · ${date(saved.savedAt)}`;}
         catch(e){await ui.page('Checkpoint could not be updated',[...errorLines(e),'The last successful checkpoint remains available.']);}
         let current,statusUnavailable=false;try{current=await buyer.status();lastSession=current;}catch{current=lastSession;statusUnavailable=true;}
-        const action=await ui.menu('Coding workspace',[item('continue','Continue coding','Requires current accepted session authority.',!!buyer.lifecycle.closing||statusUnavailable||!!current.stoppedAt||!['ready','active'].includes(current.state)),item('apply','Review and Apply'),item('export','Review and export snapshot'),...(interrupted?[item('recover','Recover interrupted application')]:[]),item('finish','Finish session')],{lines:[location,...(current.stoppedAt?[`Stopped: ${words(current.stopReason??current.state)}`,`Cleanup: ${words(current.cleanupState??'pending')}`]:[]),...(statusUnavailable?['Session status unavailable · inference and mutations paused.']:[]),`Accepted time remaining: ${Math.max(0,Math.floor((current.expiresAt-Date.now())/1000))} seconds`,`Dispatches: ${statusUnavailable?'unavailable':current.requestSequence??0}/${current.requestLimit}`,`Reserved allowance: ${current.funded??'unknown'} · Charged: ${statusUnavailable?'unavailable':current.charged??'unknown'} test credits`,`Held liability: ${statusUnavailable?'unavailable':current.reserved??'unknown'} · Refunded: ${statusUnavailable?'unavailable':current.refunded??'unknown'}`,'Host application requires separate content review.']});
+        const action=await ui.menu('Coding workspace',[item('failureDetails','Failure details','Inspect/export retained evidence; no model request.'),item('continue','Continue coding','Requires current accepted session authority.',!!buyer.lifecycle.closing||statusUnavailable||!!current.stoppedAt||!['ready','active'].includes(current.state)),item('apply','Review and Apply'),item('export','Review and export snapshot'),...(interrupted?[item('recover','Recover interrupted application')]:[]),item('finish','Finish session')],{lines:[location,...(buyer.lifecycle.failureDiagnostic?[failureSummary(buyer.lifecycle.failureDiagnostic)]:[]),...(current.stoppedAt?[`Stopped: ${words(current.stopReason??current.state)}`,`Cleanup: ${words(current.cleanupState??'pending')}`]:[]),...(statusUnavailable?['Session status unavailable · inference and mutations paused.']:[]),`Accepted time remaining: ${Math.max(0,Math.floor((current.expiresAt-Date.now())/1000))} seconds`,`Dispatches: ${statusUnavailable?'unavailable':current.requestSequence??0}/${current.requestLimit}`,`Reserved allowance: ${current.funded??'unknown'} · Charged: ${statusUnavailable?'unavailable':current.charged??'unknown'} test credits`,`Held liability: ${statusUnavailable?'unavailable':current.reserved??'unknown'} · Refunded: ${statusUnavailable?'unavailable':current.refunded??'unknown'}`,'Host application requires separate content review.']});
         if(action==='continue'){enterCoding=true;continue;}
         if(['apply','recover','export'].includes(action)){
           try{
@@ -658,6 +660,7 @@ export async function runTui(options = {}, dependencies = {}) {
           }catch(e){await ui.page('Saved-work recovery',[...errorLines(e),location,'Review, Apply and Export use the last saved snapshot. Further inference requires active compute.']);}
           continue;
         }
+        if(action==='failureDetails'){await failureDetails(buyer.lifecycle.failureDiagnostic);continue;}
         if(!action||action==='finish'){
           let changes;try{changes=await buyer.changes();}catch(e){await ui.page('Changes could not be inspected',errorLines(e));continue;}
           const finish=await ui.menu('Finish with saved work',[item('apply','Review and Apply'),item('save','Save and finish'),item('discard','Discard VM work and finish'),item('back','Back')],{lines:[location,`Unapplied changes: ${changes.changes.length}`,...changes.changes.map(c=>`${c.kind}: ${c.path}`)]});
@@ -688,11 +691,25 @@ export async function runTui(options = {}, dependencies = {}) {
     }
   }
 
+  async function failureDetails(diagnostic,outcomes=[]) {
+    for(;;){const choice=await ui.menu('Failure details',[item('exportDiagnostic','Export private diagnostic JSON','Metadata only; no model request.',!safeFailure(diagnostic)),item('back','Back')],{lines:failureLines(diagnostic,outcomes)});
+      if(!choice||choice==='back')return;
+      if(choice==='exportDiagnostic')await attempt(async()=>{const {mkdir}=await import('node:fs/promises'),{join}=await import('node:path');const directory=join(await store.directory(),'failure-exports');await mkdir(directory,{mode:0o700}).catch(e=>{if(e.code!=='EEXIST')throw e;});const path=await exportFailure(directory,diagnostic,outcomes);await ui.page('Private diagnostic export',[path,'Request metadata and cleanup outcomes only.']);});
+    }
+  }
+  async function buyerFailure(id,remote) {
+    if(safeFailure(remote)&&remote.sessionId===id)return {failureDiagnostic:remote,outcomes:[]};
+    try {const {join}=await import('node:path'),{lstat}=await import('node:fs/promises');const base=join(await store.directory(),'coding');const st=await lstat(base);if(!st.isDirectory()||st.isSymbolicLink()||st.uid!==process.getuid()||(st.mode&0o077))return {};
+      const local=await readPrivateDiagnostic(join(base,id),'lifecycle.json'),d=safeFailure(local.failureDiagnostic??local.firstFailure?.failureDiagnostic);return d?.sessionId===id?{failureDiagnostic:d,outcomes:local.outcomes}:{};
+    }catch{return {};}
+  }
   async function sessionDetail(id) {
     for (;;) {
       const session = await get(`/sessions/${id}`);
-      const choice = await ui.menu('Test-credit session', [item('agent', 'Start buyer coding agent', 'Select files, approve tools and export a reviewed workspace.', !['ready','active'].includes(session.state)), item('events', 'Activity and recovery'), item('stop', 'Stop and release unused credits'), ...(!session.buyerDeletedAt?[item('delete','Stop and delete session','Retires after confirmed cleanup. Saved work and outstanding liabilities remain.')]:[]), item('refresh', 'Refresh'), item('back', 'Back')], { lines: [`Execution: ${words(session.executionState??(session.stoppedAt?'stopped':session.state))}`,`Reason: ${words(session.stopReason??'none')}`,`Accounting: ${words(session.accountingState??session.state)}`, `Reserved access: ${session.funded} · Charged: ${session.charged}`, `Unresolved liability: ${session.reserved} · Refunded: ${session.refunded}`, `Expires: ${date(session.expiresAt)}`, `Reference: ${session.id}`, '', 'Reconnect restores status. Paid requests and tool actions are never replayed.'] });
+      const evidence=await buyerFailure(id,session.failureDiagnostic);
+      const choice = await ui.menu('Test-credit session', [item('failureDetails','Failure details','Inspect/export retained evidence; no model request.'),item('agent', 'Start buyer coding agent', 'Select files, approve tools and export a reviewed workspace.', !['ready','active'].includes(session.state)), item('events', 'Activity and recovery'), item('stop', 'Stop and release unused credits'), ...(!session.buyerDeletedAt?[item('delete','Stop and delete session','Retires after confirmed cleanup. Saved work and outstanding liabilities remain.')]:[]), item('refresh', 'Refresh'), item('back', 'Back')], { lines: [...(evidence.failureDiagnostic?[failureSummary(evidence.failureDiagnostic)]:[]),`Execution: ${words(session.executionState??(session.stoppedAt?'stopped':session.state))}`,`Reason: ${words(session.stopReason??'none')}`,`Accounting: ${words(session.accountingState??session.state)}`, `Reserved access: ${session.funded} · Charged: ${session.charged}`, `Unresolved liability: ${session.reserved} · Refunded: ${session.refunded}`, `Expires: ${date(session.expiresAt)}`, `Reference: ${session.id}`, '', 'Reconnect restores status. Paid requests and tool actions are never replayed.'] });
       if (!choice || choice === 'back') return;
+      if(choice==='failureDetails'){await failureDetails(evidence.failureDiagnostic,evidence.outcomes);continue;}
       if(['delete','restore'].includes(choice)){await post(`/sessions/${id}/${choice}`,{});return;}
       if (choice === 'agent') await buyerAgent(session);
       if (choice === 'events') { const events = await get(`/sessions/${id}/events`); await ui.page('Session activity', events.length ? events.map(e => `${date(e.at)} · ${words(e.type)}`) : ['No activity yet.']); }

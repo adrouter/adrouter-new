@@ -11,7 +11,7 @@ import {providerDiagnostic,setupProbeFailure} from '../src/provider-diagnostics.
 test('healthy running diagnosis does not invent a failure or pending teardown and attachment is explicit',()=>{
  const node={id:randomUUID(),providerRunId:randomUUID(),status:'published',ready:true,leaseUntil:Date.now()+30000,cleanupState:'pending',modelStatuses:[]};
  const result={node,evidence:[]};const attached=diagnosisLines(result,{controllerAttached:true}).join('\n');
- assert.match(attached,/Provider is running. No setup failure recorded/);assert.match(attached,/Cleanup: Not requested/);assert.match(attached,/Controller attached/);
+ assert.match(attached,/Provider is running. No setup or inference failure recorded/);assert.match(attached,/Cleanup: Not requested/);assert.match(attached,/Controller attached/);
  assert.doesNotMatch(attached,/Terminal failure was not captured|No controller attached|Cleanup: pending/);
  assert.match(diagnosisLines(result,{controllerAttached:false}).join('\n'),/No controller attached/);
  assert.match(diagnosisLines(result).join('\n'),/attachment not checked/);

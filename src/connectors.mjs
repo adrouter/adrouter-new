@@ -1,7 +1,7 @@
 import { connectorCatalog, connectorDescriptorSchema } from './generated/connectors.mjs';
 export { connectorCatalog };
 export const CONNECTOR_PROTOCOL=connectorCatalog.protocol;
-export const upstreamFailureCodes=['provider_outcome_unknown','upstream_authentication_failed','upstream_invalid_model','upstream_rate_limited','upstream_malformed_response','upstream_timeout','upstream_failed_outcome_unknown','upstream_usage_missing','upstream_usage_invalid','upstream_parameter_rejected','pi_model_fallback_rejected','pi_thinking_off_unsupported','pi_model_binding_mismatch'];
+export const upstreamFailureCodes=['provider_outcome_unknown','upstream_authentication_failed','upstream_invalid_model','upstream_rate_limited','upstream_malformed_response','upstream_timeout','upstream_failed_outcome_unknown','upstream_usage_missing','upstream_usage_invalid','upstream_parameter_rejected','pi_model_fallback_rejected','pi_thinking_off_unsupported','pi_model_binding_mismatch','upstream_authority_required','upstream_authority_exceeded','pi_request_limit','pi_destination_rejected','pi_redirect_rejected','pi_response_limit','upstream_retry_forbidden','upstream_tool_invalid','model_setting_unsupported'];
 export function resolveConnector(node) {
   let value=node.connector;
   if(!value){const official=connectorCatalog.presets.find(p=>p.endpoint===node.endpoint);value=connectorCatalog.profiles.find(p=>p.id===(official?.profile??'openai-compatible-v1'));}

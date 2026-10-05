@@ -1065,3 +1065,52 @@ Qualification operation attribution, safe terminal/secondary persistence, exact 
 
 ### Verification-gap delivery completion — 5 October 2026
 Steps A–E above are done for private implementation, synthetic/native acceptance and paired delivery. Alpha.44 client product source 69c42468f53d20156baee74465849ffb1a4d21b5 and Router product source 927f4f80f1b14a95b22592043a0d4d03cf249b61 are immutable artifact identities; later documentation commits do not replace them. Source checks (885 client, 89 marketplace, six contracts, 12 PostgreSQL), source/installed drift, product CI, 644 native adapter cases, ten installed setup/diagnostic cases and full 660-second lifecycle pass. Exact installed/source files, 24 serving modules, sole relay, private policy/resources, Pages and liability fingerprints are verified. The three regressions are closed against this delivery. No schema, dependencies/catalog, public channels, old artifacts, credentials, spending controls or real-provider acceptance was changed. Both specs and the exact-version manual handoff are updated; the new receipt supersedes the old readiness conclusion. Real Flash, Pro and Custom API tests remain independent operator follow-up. Source/receipt: outputs/adr-verification-gaps-2026-10-05/delivery-receipt.json.
+
+
+# Buyer coding interruptions and failure diagnostics — 5 October 2026
+
+## Goal
+Preserve the original provider failure and bounded safe evidence across guest, relay and workspace, reproduce through the restricted transport, and privately deliver compatible paired artifacts.
+
+## Context
+Continue clean canonical reliability clones on codex/adrv2-reliability-20261001; retain prior plan sections, alpha.45, provider process, profiles, Pages and unresolved liabilities.
+
+## Constraints
+No retries, timeout increases, model switching, relaxed validation, hosted schema changes, public publication, financial reconciliation or unrelated cleanup. npm authentication explicitly deferred by operator; other kickoff checks passed. Missing headers never prove not sent.
+
+## Step A: Reproduction and evidence
+### Status
+`in_progress`
+- [ ] Reproduce first/repeated native coding requests and tool history through guest/tunnel/synthetic upstream.
+- [ ] Correlate failure request/session/run metadata; record unresolved cause if inconclusive.
+- [ ] Capture bounded preparation, tunnel, TLS, dispatch, headers, streaming and validation stages with allowlisted transport codes.
+
+## Step B: Primary failure and compatible contracts
+### Status
+`done`
+- [ ] Separate provider failure, cancellation, deadline, disconnect and authority termination; preserve uncertain accounting and cleanup.
+- [ ] Optional strict versioned diagnostics, negotiated buyer responses; commit authoritative Router contracts before regeneration.
+
+## Step C: Workspace persistence and details
+### Status
+`done`
+- [ ] Summary/details, retained owner-only atomic records, bounded timeline and private metadata-only JSON export.
+- [ ] Preserve primary failure through teardown and surface save failures independently.
+
+## Step D: Final verification and private delivery
+### Status
+`in_progress`
+- [ ] Client checks/provenance, Router tests/typecheck/build/contracts, privacy/compatibility and installed PTY/native/lifecycle gates.
+- [ ] Freeze unused private version from clean commits; deploy compatible Router first with sole-machine replacement and preservation checks.
+- [ ] Verify installed/serving bytes and source CI, then select launcher; retain controlled provider restart and real-provider handoff.
+
+## Follow-up Work
+Operator-only Flash, Pro, Custom API, tool, Apply, reconnect, Stop and retained-credential restart acceptance. Synthetic results cannot establish the live failure repaired.
+
+## Decision Log
+| Date | Decision | Rationale | Impact |
+| --- | --- | --- | --- |
+| 2026-10-05 | Carry explicit npm deferral and standing deployment authority | Current user instruction | Private delivery only; preserve other platform gates |
+
+### Source validation — 6 October 2026
+896 client tests and provenance pass; Router full tests/typecheck/build and 97 marketplace cases pass, including legacy/new/streaming errors, forged bindings and separate termination causes. Both installed alpha.45 baseline model transports pass first, repeated and coding tool-history paths; no initiating live defect was reproduced. Actual live sessions correlate to node 87fb7693-3462-4a5d-8c85-bccfc0f22f57 and run 2f84c8e5-d5da-4e54-9ac8-0b6a814a8109. Stage A remains review for initiating cause; retain diagnostics and do not claim interruption repaired. Exact private alpha.46 installed/hosted gates follow.

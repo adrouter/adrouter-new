@@ -1,3 +1,4 @@
+import { safeFailure } from '../failure-diagnostics.mjs';
 import { reviewedRead } from './coding-read-policy.mjs';
 import { readFile } from 'node:fs/promises';
 const configuration = JSON.parse(await readFile('/tmp/adr-coding.json','utf8'));
@@ -5,7 +6,7 @@ let authority;
 export async function bridge(path, body, signal, raw=false) {
   if(!authority && path!=='/child') authority = configuration.capability;
   const response=await fetch(`${configuration.control}${path}`,{method:'POST',redirect:'error',headers:{authorization:`Bearer ${authority??configuration.capability}`,'content-type':'application/json'},body:JSON.stringify(body),signal});
-  if(!response.ok){let code;try{code=(await response.json()).code;}catch{}throw Object.assign(Error(/^[a-z0-9_]{1,80}$/.test(code??'')?code:'coding_bridge_rejected'),{code:/^[a-z0-9_]{1,80}$/.test(code??'')?code:'coding_bridge_rejected'});}return raw?response:response.json();
+  if(!response.ok){let code,diagnostic;try{const body=await response.json();code=body.code;diagnostic=safeFailure(body.failureDiagnostic);}catch{}throw Object.assign(Error(/^[a-z0-9_]{1,80}$/.test(code??'')?code:'coding_bridge_rejected'),{code:/^[a-z0-9_]{1,80}$/.test(code??'')?code:'coding_bridge_rejected',...(diagnostic?{failureDiagnostic:diagnostic}:{})});}return raw?response:response.json();
 }
 export async function bindChild(purpose, mutation=false) {const grant=await bridge('/child',{purpose,mutation});authority=grant.capability;return grant;}
 export async function authorize(request,signal) { const result=await bridge('/approval',{name:request.toolName,args:request.arguments,toolCallId:request.toolCallId},signal);return {allow:result.allow===true,reason:result.allow?'':'Action denied by user.'}; }
