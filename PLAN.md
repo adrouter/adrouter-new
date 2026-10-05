@@ -1040,14 +1040,14 @@ Close the alpha.43 qualification-lifetime, failure-attribution and reopened-diag
 No dependency/catalog expansion, hosted migration, public publication/promotion, broad cleanup or session deletion. Preserve alpha.43 recovery artifacts, profiles, limits and uncertain liabilities. Keep completion payloads and routes unchanged; ship a new immutable private version from clean commits. Historical plan sections remain intact.
 
 ### Scoped steps
-- [ ] A (`in_progress`): Bind qualification to model/run/configuration/policy; preserve continuous qualification while retaining fresh checks for new publication and independent connectivity/capacity/budget/tariff gates.
-- [ ] B (`todo`): Classify explicit failed operations; preserve response validation as primary with reporting/storage failures separate; persist safe terminal evidence.
-- [ ] C (`todo`): Merge exact node/run/check evidence for shared TUI/CLI diagnosis, bounded historical recovery and applicable inference-free actions.
-- [ ] D (`todo`): Update both specifications, manual acceptance runbook and scoped manifest after final bytes; add a successor receipt.
-- [ ] E (`todo`): Full client/Router/contracts/OpenAPI/disposable PostgreSQL regressions; installed native diagnostics and 660-second lifecycle; clean private packaging, sole-Machine Router rollout, installed/serving/Pages verification and launcher selection.
+- [x] A (`done`): Bind qualification to model/run/configuration/policy; preserve continuous qualification while retaining fresh checks for new publication and independent connectivity/capacity/budget/tariff gates.
+- [x] B (`done`): Classify explicit failed operations; preserve response validation as primary with reporting/storage failures separate; persist safe terminal evidence.
+- [x] C (`done`): Merge exact node/run/check evidence for shared TUI/CLI diagnosis, bounded historical recovery and applicable inference-free actions.
+- [x] D (`done`): Update both specifications, manual acceptance runbook and scoped manifest after final bytes; add a successor receipt.
+- [x] E (`done`): Full client/Router/contracts/OpenAPI/disposable PostgreSQL regressions; installed native diagnostics and 660-second lifecycle; clean private packaging, sole-Machine Router rollout, installed/serving/Pages verification and launcher selection.
 
 ### Validation results
-Kickoff Fly identity/Machine/recovery registry, Pages identity/project/deployment/Git integration, Supabase active project/linked database and canonical GitHub permissions/fresh refs passed. Router ruleset reads retain the existing provider-plan 403; no protection changes. npm authentication explicitly waived by the operator. Implementation tests: not run.
+Kickoff Fly identity/Machine/recovery registry, Pages identity/project/deployment/Git integration, Supabase active project/linked database and canonical GitHub permissions/fresh refs passed. Router ruleset reads retain the existing provider-plan 403; no protection changes. npm authentication explicitly waived by the operator. All required implementation and private-delivery gates passed; see completion evidence below.
 
 ### Follow-up work
 Exact-version operator manual Flash, Pro and Custom API acceptance; no automatic paid rechecks.
@@ -1060,3 +1060,6 @@ Exact-version operator manual Flash, Pro and Custom API acceptance; no automatic
 
 ### Client source verification checkpoint
 Qualification operation attribution, safe terminal/secondary persistence, exact reopened evidence and shared CLI/TUI diagnosis are implemented. 885 source checks pass; targeted probe/storage/report regressions and pinned runtime provenance are reverified before freezing alpha.44. No dependency/catalog or external completion-contract change. Installed native/setup/660-second lifecycle and final serving verification remain pending.
+
+### Verification-gap delivery completion — 5 October 2026
+Steps A–E above are done for private implementation, synthetic/native acceptance and paired delivery. Alpha.44 client product source 69c42468f53d20156baee74465849ffb1a4d21b5 and Router product source 927f4f80f1b14a95b22592043a0d4d03cf249b61 are immutable artifact identities; later documentation commits do not replace them. Source checks (885 client, 89 marketplace, six contracts, 12 PostgreSQL), source/installed drift, product CI, 644 native adapter cases, ten installed setup/diagnostic cases and full 660-second lifecycle pass. Exact installed/source files, 24 serving modules, sole relay, private policy/resources, Pages and liability fingerprints are verified. The three regressions are closed against this delivery. No schema, dependencies/catalog, public channels, old artifacts, credentials, spending controls or real-provider acceptance was changed. Both specs and the exact-version manual handoff are updated; the new receipt supersedes the old readiness conclusion. Real Flash, Pro and Custom API tests remain independent operator follow-up. Source/receipt: outputs/adr-verification-gaps-2026-10-05/delivery-receipt.json.

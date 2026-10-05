@@ -1,6 +1,6 @@
 # ADRv2 detailed specification: strict setup, model status and failure recovery
 
-Revision: **5 October 2026**. Status: **verification-gap repair implemented and source-tested; exact installed/hosted verification pending; independent paid acceptance pending**.
+Revision: **5 October 2026**. Status: **verification gaps repaired and exact private installed/hosted delivery verified; independent paid acceptance pending**.
 
 This replaces earlier setup, qualification, provider/listing UI, diagnostics and failure-cleanup requirements. Alpha.43 is the verification baseline. Its prior synthetic gates did not cover the three subsequently reproduced gaps recorded below. Real-provider acceptance remains pending.
 
@@ -382,7 +382,7 @@ Completion requires a demonstrated synthetic failure that produces a specific di
 
 The final handoff is **implementation verified and ready for an independent manual retest**. Real Flash/Pro/Custom API acceptance is not claimed until the operator records it. No agent-run paid inference or interactive live-test walkthrough is authorized.
 
-## 14. Verified private delivery — 5 October 2026
+## 14. Historical alpha.43 baseline — 5 October 2026
 
 Private `@adrouter/adr-cli 0.1.0-alpha.43` is installed and selected. Product source is `521efa1dde33ca0458b3f376c4146a28aee4fb8f`; tarball SHA-256 is `ec82e30796c7053216b9c1b39de560ea6407e89dfafee4bd5d770e8d45dd3c68`. Router product `feb7a897dc0954ecb5c59d82326a39b13bf0f459` serves on the existing sole Machine with verified platform digest `sha256:c0add06c7bbd05a8c6b8e7d47e7fbda1f1a74aa282815ecce513cccdc029fc56`.
 
@@ -428,3 +428,12 @@ TUI and CLI use one normalized diagnosis. CLI JSON adds an optional `diagnosis` 
 Clock-controlled hourly boundaries, same-run reconnect, new-run/configuration/policy mismatch, independent availability gates, exact failure sources and reopened evidence must pass. Run client checks, Router typecheck/full tests, contract drift, OpenAPI and disposable PostgreSQL; extend actual installed setup diagnostics and retain the 660-second lifecycle gate. No new dependency/catalog expansion, hosted migration, broad cleanup or session deletion. Build the next unused private client from a clean commit; deploy paired Router first by sole-Machine drain/replacement, verify serving/installed bytes and Pages preservation, then select the client. Preserve alpha.43 recovery material, profiles, limits and outstanding liabilities. Update the exact-version manual handoff and a successor receipt before calling these gaps closed.
 
 Source checkpoint: 885 client checks, 89 Router marketplace cases, six contract tests and 12 disposable PostgreSQL cases pass. Router typecheck/full tests/build and OpenAPI validation pass. Exact alpha.44 native/setup/lifecycle and serving verification remain pending; the source checkpoint alone does not close delivery.
+
+
+## 16. Verification-gap delivery completed — 5 October 2026
+
+Private alpha.44 is installed and selected after paired Router source 927f4f80f1b14a95b22592043a0d4d03cf249b61 was replaced on the same sole Machine. Client product source is 69c42468f53d20156baee74465849ffb1a4d21b5; immutable tarball SHA-256 is 8eea48025e667cddde9d04e0a191225d186f673f665d45d253c8e40d9d0e2fc9. All 51,554 installed files match source and package bytes. The three reproduced regressions are closed for this delivered implementation: controlled-clock continuous qualification, precise primary/secondary attribution and exact reopened diagnostics pass.
+
+885 client tests, 89 Router marketplace tests, six contracts, 12 disposable PostgreSQL cases, source/installed drift, OpenAPI, native adapter matrix (644 required cases), ten actual installed setup diagnostic cases, retained-credential PTY and full 660-second lifecycle pass. Installed CLI/TUI diagnosis agrees and approved hosted profiles authenticate without inference. Canonical product CI passes on its recorded immutable revisions. All 24 serving modules, sole relay lease, private access/resources, 28 Pages comparisons and liability fingerprints are verified. No hosted schema change, public publication/channel movement, extra session deletion or real-provider inference occurred.
+
+The [successor delivery receipt](../../../outputs/adr-verification-gaps-2026-10-05/delivery-receipt.json) supersedes alpha.43's readiness conclusion for these gaps without changing its immutable receipt or recovery material. The [exact-version manual handoff](../../../outputs/adr-live-test-2026-10-05/live-test-run.md) retains blank operator results. Real Flash, Pro and Custom API acceptance remains pending independently. Reopen the client to load alpha.44; running processes retain their loaded bytes.
