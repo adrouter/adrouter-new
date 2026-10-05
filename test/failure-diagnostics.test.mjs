@@ -1,7 +1,8 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { randomUUID } from 'node:crypto';
-import { mkdtemp, chmod, readFile, lstat, rm, symlink } from 'node:fs/promises';
+import { mkdtemp, chmod, readFile, lstat, rm, symlink, mkdir, copyFile } from 'node:fs/promises';
+import { execFileSync } from 'node:child_process';
 import { join } from 'node:path';
 import { safeFailure, failureLines, writePrivateDiagnostic, readPrivateDiagnostic, exportFailure } from '../src/failure-diagnostics.mjs';
 import { ProviderLifecycle } from '../src/provider-lifecycle.mjs';
@@ -12,6 +13,14 @@ import { readCodingStream } from '../src/coding-wire.mjs';
 import { Network } from '../src/network.mjs';
 
 const fixture=()=>({schemaVersion:1,requestId:randomUUID(),sessionId:randomUUID(),providerRunId:randomUUID(),model:'deepseek-flash',api:'openai-completions',phase:'tunnel',code:'upstream_failed_outcome_unknown',elapsedMs:27,statusCode:null,transportCategory:'dns',transportCode:'ENOTFOUND',dispatchEvidence:'outcome_unknown',responseEvidence:'not_observed',timeline:[{phase:'preparation',elapsedMs:0},{phase:'tunnel',elapsedMs:20}]});
+test('legacy inference guest imports without buyer validators or npm dependencies',async()=>{
+ const directory=await mkdtemp('/private/tmp/adr-legacy-import-');
+ try{
+  await mkdir(join(directory,'generated'));
+  for(const file of ['provider-broker.mjs','coding-wire.mjs','connectors.mjs','generated/connectors.mjs'])await copyFile(new URL('../src/'+file,import.meta.url),join(directory,file));
+  execFileSync(process.execPath,['--input-type=module','-e',`const m=await import(${JSON.stringify('file://'+join(directory,'provider-broker.mjs'))});if(typeof m.upstreamInference!=='function')throw Error('guest_import_failed');`],{stdio:'pipe'});
+ }finally{await rm(directory,{recursive:true,force:true});}
+});
 test('strict diagnostics reject extra private fields, invalid evidence and unbounded timelines',()=>{
  const d=fixture();assert.deepEqual(safeFailure(d),d);
  for(const patch of [{prompt:'PRIVATE_SENTINEL'},{transportCode:'PRIVATE_SENTINEL'},{code:'PRIVATE_SENTINEL'},{timeline:[{phase:'tls',elapsedMs:28}]},{timeline:[{phase:'tls',elapsedMs:20},{phase:'dispatch',elapsedMs:1}]},{statusCode:400}])assert.equal(safeFailure({...d,...patch}),null);
@@ -20,7 +29,7 @@ test('strict diagnostics reject extra private fields, invalid evidence and unbou
 test('preparation, dispatch and response evidence are independent; transport causes survive wrappers',()=>{
  let now=100;const d=fixture(),trace=requestEvidence({providerRunId:d.providerRunId},{requestId:d.requestId,sessionId:d.sessionId,model:d.model,api:d.api},()=>now);
  assert.equal(trace.snapshot(d.code).dispatchEvidence,'not_sent');trace.stage('tunnel');now+=20;trace.error({cause:{code:'ENOTFOUND',message:'PRIVATE_SENTINEL'}});
- assert.equal(trace.snapshot(d.code).dispatchEvidence,'outcome_unknown');assert.equal(trace.snapshot(d.code).transportCategory,'dns');trace.stage('dispatch');assert.equal(trace.snapshot(d.code).dispatchEvidence,'dispatched');trace.response(503);assert.equal(trace.snapshot(d.code).responseEvidence,'headers_received');trace.stage('streaming');now+=7;assert.equal(safeFailure(trace.snapshot(d.code)).elapsedMs,27);
+ assert.equal(trace.snapshot(d.code).dispatchEvidence,'outcome_unknown');assert.equal(trace.snapshot(d.code).transportCategory,'dns');trace.stage('dispatch');assert.equal(trace.snapshot(d.code).dispatchEvidence,'dispatched');trace.response(503);assert.equal(trace.snapshot(d.code).responseEvidence,'headers_received');trace.stage('streaming');trace.response(503);assert.equal(trace.snapshot(d.code).phase,'streaming');now+=7;assert.equal(safeFailure(trace.snapshot(d.code)).elapsedMs,27);
  assert.equal(JSON.stringify(trace.snapshot(d.code)).includes('PRIVATE_SENTINEL'),false);
 });
 test('primary request evidence survives provider cleanup and buyer status failures',async()=>{

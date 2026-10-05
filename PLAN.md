@@ -1114,3 +1114,5 @@ Operator-only Flash, Pro, Custom API, tool, Apply, reconnect, Stop and retained-
 
 ### Source validation — 6 October 2026
 896 client tests and provenance pass; Router full tests/typecheck/build and 97 marketplace cases pass, including legacy/new/streaming errors, forged bindings and separate termination causes. Both installed alpha.45 baseline model transports pass first, repeated and coding tool-history paths; no initiating live defect was reproduced. Actual live sessions correlate to node 87fb7693-3462-4a5d-8c85-bccfc0f22f57 and run 2f84c8e5-d5da-4e54-9ac8-0b6a814a8109. Stage A remains review for initiating cause; retain diagnostics and do not claim interruption repaired. Exact private alpha.46 installed/hosted gates follow.
+
+6 October: immutable alpha.46 failed its installed legacy provider startup gate because a static coding-wire import pulled Ajv into the dependency-free legacy guest. Preserve alpha.46 unselected. Alpha.47 fixes forward by loading failure validation only when reading a buyer error stream; runtime generation and exact installed gates must run again. The initiating live failure remains unresolved.
