@@ -10,10 +10,11 @@ if(!root||process.platform!=='darwin'||process.arch!=='arm64')throw Error('insta
 const from=name=>pathToFileURL(join(root,'src',name)).href;
 const {startProvider}=await import(from('provider.mjs'));
 const {providerCatalog}=await import(from('generated/provider-catalog.mjs'));
+const {diagnoseProvider,diagnosisLines}=await import(from('provider-diagnose.mjs'));
 const {reportDigest}=await import(from('provider-reports.mjs'));
 const {SandboxRuntime}=await import(from('runtime.mjs'));
 const paths=JSON.parse(await readFile(process.env.ADR_ACCEPTANCE_RUNTIME_PATHS,'utf8'));
-for(const scenario of ['first_failure','failed_usage_ack','lost_before_commit','lost_after_commit']) {
+for(const scenario of ['first_failure','failed_usage_ack','lost_before_commit','lost_after_commit','reservation_rejected','invalid_report_failed','report_failed','missing_probe','wrong_tool','truncated_probe']) {
  const runtime=new SandboxRuntime(paths);await runtime.verify();
  const diagnosticsDirectory=await mkdtemp('/tmp/adr-strict-diag-');
  let modelRequests=0,reportRequests=0,reportLost=false,controller;
@@ -24,8 +25,9 @@ for(const scenario of ['first_failure','failed_usage_ack','lost_before_commit','
   assert.equal(body.tools[0].function.name,'adr_setup_probe');
   res.writeHead(200,{'content-type':'text/event-stream'});
   const base={id:'synthetic',object:'chat.completion.chunk',model:body.model};
-  res.write('data: '+JSON.stringify({...base,choices:[{index:0,delta:{role:'assistant',tool_calls:[{index:0,id:'probe',type:'function',function:{name:'adr_setup_probe',arguments:scenario==='failed_usage_ack'?'{"value":4}':'{"value":"ready"}'}}]},finish_reason:null}]})+'\n\n');
-  res.write('data: '+JSON.stringify({...base,choices:[{index:0,delta:{},finish_reason:'tool_calls'}]})+'\n\n');
+  const delta={role:'assistant',...(scenario==='missing_probe'?{}:{tool_calls:[{index:0,id:'probe',type:'function',function:{name:scenario==='wrong_tool'?'wrong_probe':'adr_setup_probe',arguments:['failed_usage_ack','invalid_report_failed'].includes(scenario)?'{"value":4}':'{"value":"ready"}'}}]})};
+  res.write('data: '+JSON.stringify({...base,choices:[{index:0,delta,finish_reason:null}]})+'\n\n');
+  res.write('data: '+JSON.stringify({...base,choices:[{index:0,delta:{},finish_reason:scenario==='truncated_probe'?'length':scenario==='missing_probe'?'stop':'tool_calls'}]})+'\n\n');
   res.end('data: '+JSON.stringify({...base,choices:[],usage:{prompt_tokens:10,completion_tokens:2,total_tokens:12}})+'\n\ndata: [DONE]\n\n');
  });await new Promise(resolve=>server.listen(0,'127.0.0.1',resolve));
  const endpoint=`http://127.0.0.1:${server.address().port}/v1`,price={input:0,output:0,cacheRead:0,cacheWrite:0};
@@ -36,17 +38,25 @@ for(const scenario of ['first_failure','failed_usage_ack','lost_before_commit','
   if(path==='/v2/network/config')return {capabilities:['single_request_setup_v1']};
   if(path.endsWith('/me'))return {userId:node.ownerId};
   if(path.endsWith('/prepare')){node.providerRunId=o.body.providerRunId;return {providerRunId:node.providerRunId};}
-  if(path.endsWith('/pi-checks')){assert.equal(o.body.phase,'setup_probe');const c={...o.body,id:randomUUID(),installationId:node.installationId,state:'dispatched',nativeRevision:0,deadline:Date.now()+120000,inputBound:8192,outputBound:512,upstreamReserved:'0',rates:{inputMicrousdPerMillion:'0',outputMicrousdPerMillion:'0'}};node.nativeChecks[c.id]=c;return c;}
-  if(path.endsWith('/pi-checks/complete')){reportRequests++;if(!reportLost&&scenario==='lost_before_commit'){reportLost=true;throw Object.assign(Error('synthetic lost report'),{code:'network_unavailable_outcome_unknown'});}Object.assign(node.nativeChecks[o.body.id],{state:'settled',passed:o.body.tools&&o.body.completed,reportDigest:reportDigest(o.body)});if(!reportLost&&['lost_after_commit','failed_usage_ack'].includes(scenario)){reportLost=true;throw Object.assign(Error('synthetic lost acknowledgement'),{code:'network_unavailable_outcome_unknown'});}return {passed:node.nativeChecks[o.body.id].passed};}
+  if(path.endsWith('/pi-checks')){if(scenario==='reservation_rejected')throw Object.assign(Error('synthetic rejection'),{code:'pi_check_not_allowed',status:409});assert.equal(o.body.phase,'setup_probe');const c={...o.body,id:randomUUID(),installationId:node.installationId,state:'dispatched',nativeRevision:0,deadline:Date.now()+120000,inputBound:8192,outputBound:512,upstreamReserved:'0',rates:{inputMicrousdPerMillion:'0',outputMicrousdPerMillion:'0'}};node.nativeChecks[c.id]=c;return c;}
+  if(path.endsWith('/pi-checks/complete')){reportRequests++;if(['invalid_report_failed','report_failed'].includes(scenario))throw Object.assign(Error('synthetic report rejection'),{code:'installation_revoked',status:401});if(!reportLost&&scenario==='lost_before_commit'){reportLost=true;throw Object.assign(Error('synthetic lost report'),{code:'network_unavailable_outcome_unknown'});}Object.assign(node.nativeChecks[o.body.id],{state:'settled',passed:o.body.tools&&o.body.completed,reportDigest:reportDigest(o.body)});if(!reportLost&&['lost_after_commit','failed_usage_ack'].includes(scenario)){reportLost=true;throw Object.assign(Error('synthetic lost acknowledgement'),{code:'network_unavailable_outcome_unknown'});}return {passed:node.nativeChecks[o.body.id].passed};}
   if(path.endsWith('/publish')){node.status='published';node.listingIds=models.map(()=>randomUUID());node.listingRevision=1;return node;}
   if(path.endsWith('/relay-ticket'))return {providerRunId:node.providerRunId,ticket:'t'.repeat(43),reauthenticateSeconds:10};
-  if(path.endsWith('/stop')){node.ready=false;node.status='paused';return node;}
+  if(path.endsWith('/stop')){node.ready=false;node.status='paused';node.cleanupState='succeeded';if(o.body.failure)node.lastRunFailure={...o.body.failure,providerRunId:o.body.providerRunId};return node;}
   return node;
  }};
  try{
   controller=await startProvider(network,node.id,{prepareOnly:true,noKey:true,runtime,Socket,diagnosticsDirectory});
-  if(['first_failure','failed_usage_ack'].includes(scenario)){await assert.rejects(controller.start());assert.equal(modelRequests,1);if(scenario==='failed_usage_ack'){assert.equal(reportRequests,1);assert.equal(controller.status.setupFailure.requestEvidence,'response_received');}assert.equal(controller.status.stopped,true);assert.equal(controller.status.teardownVerified,true);assert.equal(controller.status.publication,'not_published');assert.equal(controller.status.qualification[1].status,'pending');}
+  if(!['lost_before_commit','lost_after_commit'].includes(scenario)){await assert.rejects(controller.start());assert.equal(modelRequests,scenario==='reservation_rejected'?0:1);if(scenario==='failed_usage_ack'){assert.equal(reportRequests,1);assert.equal(controller.status.setupFailure.requestEvidence,'response_received');}assert.equal(controller.status.stopped,true);assert.equal(controller.status.teardownVerified,true);assert.equal(controller.status.publication,'not_published');assert.equal(controller.status.qualification[1].status,'pending');}
   else{await controller.start();assert.equal(modelRequests,2);assert.equal(reportRequests,scenario==='lost_before_commit'?3:2);assert.equal(controller.status.publication,'published');await controller.stop();}
+  if(controller.status.setupFailure){
+    const result=await diagnoseProvider(network,node.id,'provider',{directory:diagnosticsDirectory});
+    assert.equal(result.diagnosis.primaryFailure.operation,controller.status.setupFailure.operation);
+    if(scenario!=='reservation_rejected'){assert.equal(result.diagnosis.primaryFailure.model,models[0]);assert.equal(result.diagnosis.primaryFailure.api,'openai-completions');assert.ok(Number.isSafeInteger(result.diagnosis.primaryFailure.elapsedMs));}
+    assert.ok(diagnosisLines(result).some(line=>line.includes(controller.status.setupFailure.code)));
+    if(scenario==='reservation_rejected'){assert.equal(result.diagnosis.primaryFailure.provenance,'router_control');assert.equal(result.diagnosis.primaryFailure.requestEvidence,'not_sent');}
+    if(scenario==='invalid_report_failed'){assert.equal(result.diagnosis.primaryFailure.operation,'setup_response_validate');assert.equal(result.diagnosis.secondaryFailures[0].operation,'setup_report_submit');}
+  }
   assert.equal(runtime.owned.size,0);
   console.log(JSON.stringify({caseId:'installed-strict-'+scenario,status:'passed',modelRequests,reportRequests,actualVm:true,paidInference:false,guestRemoved:true}));
  }finally{

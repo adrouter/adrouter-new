@@ -16,7 +16,7 @@ export class ProviderLifecycle {
     if (directory && !isAbsolute(directory)) throw Error('provider_diagnostic_path_invalid');
     this.base = directory ?? join(homedir(), '.adr-v2', 'profiles', profile, 'provider');
     this.path = join(this.base, this.nodeId, this.providerRunId, 'lifecycle.json');
-    this.directory = directory; this.profile = profile; this.now = now; this.events = []; this.firstFailure = null; this.stopTrigger = null;
+    this.directory = directory; this.profile = profile; this.now = now; this.events = []; this.firstFailure = null; this.terminalFailure = null; this.secondaryFailures = []; this.stopTrigger = null;
     this.pending = Promise.resolve(); this.outcomes = []; this.saveFailed = false;
   }
   event(phase, value = {}) {
@@ -27,6 +27,12 @@ export class ProviderLifecycle {
     if(!entry.code)delete entry.kind;
     if (entry.code && !this.firstFailure) this.firstFailure = entry;
     this.events.push(entry); if (this.events.length > 256) this.events.shift();
+    this.persist(); return entry;
+  }
+  fail(diagnostic, {secondary = false} = {}) {
+    const entry = this.event(diagnostic.phase ?? diagnostic.operation, diagnostic);
+    if (secondary) { this.secondaryFailures.push(entry); this.secondaryFailures = this.secondaryFailures.slice(-32); }
+    else this.terminalFailure ??= entry;
     this.persist(); return entry;
   }
   stop(trigger, value = {}) { this.stopTrigger ??= { at: this.now(), trigger: identifier(trigger), signal: identifier(value.signal) }; this.event('stop', { ...value, status: 'stopping' }); }
@@ -50,7 +56,7 @@ export class ProviderLifecycle {
   }
   persist() {
     const value = JSON.stringify({ schemaVersion: 1, nodeId: this.nodeId, providerRunId: this.providerRunId, pid: process.pid, clientVersion: version,
-      ownership:this.ownership??null, firstFailure: this.firstFailure, stopTrigger: this.stopTrigger, events: this.events.slice(), outcomes: this.outcomes });
+      ownership:this.ownership??null, firstFailure: this.firstFailure, terminalFailure: this.terminalFailure, secondaryFailures: this.secondaryFailures.slice(), stopTrigger: this.stopTrigger, events: this.events.slice(), outcomes: this.outcomes });
     this.pending = this.pending.catch(() => {}).then(async () => {
       await this.prepare(); const temporary = this.path + '.' + randomUUID() + '.tmp';
       try { await writeFile(temporary, value, { flag: 'wx', mode: 0o600 }); await rename(temporary, this.path); this.saveFailed = false; }

@@ -46,6 +46,11 @@ export class ProviderReports {
     }
     return values;
   }
+  async confirm(record) {
+    const started=Date.now();
+    try { await this.save(record,record.payload,'confirmed'); }
+    catch(error) { throw Object.assign(error,{operation:'setup_report_save',elapsedMs:Date.now()-started}); }
+  }
   async deliver(network, record, { signal, now=Date.now } = {}) {
     const expires=now()+45000;
     for(let attempt=0;attempt<3&&now()<expires;attempt++) {
@@ -53,16 +58,16 @@ export class ProviderReports {
       try {
         const result=await network.request(`/v2/providers/nodes/${record.nodeId}/pi-checks/complete`,{method:'POST',body:record.payload,signal:signal?AbortSignal.any([signal,AbortSignal.timeout(Math.min(10000,expires-now()))]):AbortSignal.timeout(Math.min(10000,expires-now()))});
         if(typeof result?.passed!=='boolean')throw new ClientError('invalid_network_response');
-        await this.save(record,record.payload,'confirmed'); return result;
+        await this.confirm(record); return result;
       } catch(error) {
         if(signal?.aborted)throw error;
         if(!['network_unavailable_outcome_unknown','invalid_network_response'].includes(error.code)&&!(error.status>=500))throw error;
         try {
           const node=await network.request(`/v2/providers/nodes/${record.nodeId}?view=diagnostics`,{signal:AbortSignal.timeout(Math.min(5000,Math.max(1,expires-now())))});
           const check=node.nativeChecks?.[record.payload.id];
-          if(check?.state==='settled'&&check.reportDigest===record.digest&&check.installationId===record.installationId&&check.providerRunId===record.providerRunId){await this.save(record,record.payload,'confirmed');return {passed:check.passed};}
+          if(check?.state==='settled'&&check.reportDigest===record.digest&&check.installationId===record.installationId&&check.providerRunId===record.providerRunId){await this.confirm(record);return {passed:check.passed};}
           if(check?.state==='settled'&&check.reportDigest!==record.digest)throw new ClientError('pi_report_conflict');
-        } catch(inspectError) { if(inspectError.code==='pi_report_conflict'||inspectError.status===401||inspectError.status===403)throw inspectError; }
+        } catch(inspectError) { if(inspectError.operation==='setup_report_save'||inspectError.code==='pi_report_conflict'||inspectError.status===401||inspectError.status===403)throw inspectError; }
         if(attempt===2)throw error;
       }
     }

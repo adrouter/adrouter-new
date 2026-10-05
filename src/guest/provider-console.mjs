@@ -56,7 +56,8 @@ if (process.argv[2] !== '--worker') {
         if (lastTiming) await controlRequest('/timing', lastTiming);
         await controlRequest('/result', result);
       } catch(error) {
-        if(error.nativeUsage)await controlRequest('/usage',{requestId:frame.requestId,nativeUsage:error.nativeUsage,inputTokens:error.inputTokens,outputTokens:error.outputTokens}).catch(()=>{});
+        if (lastTiming) await controlRequest('/timing', lastTiming).catch(() => {});
+        if(error.nativeUsage)await controlRequest('/usage',{requestId:frame.requestId,...(frame.type==='qualification'?{failureCode:error.code??'provider_outcome_unknown'}:{}),nativeUsage:error.nativeUsage,inputTokens:error.inputTokens,outputTokens:error.outputTokens}).catch(()=>{});
         if (context.cancelled) await controlRequest('/cancelled', { requestId: frame.requestId }).catch(() => {});
         else {
           if (lastTiming) await controlRequest('/timing', lastTiming).catch(() => {});

@@ -1,3 +1,4 @@
+import { transportCategory } from './pi-transport.mjs';
 // Loaded only in the isolated inference guest or synthetic adapter tests.
 import {providerCatalog} from './generated/provider-catalog.mjs';
 import {Readable} from 'node:stream';
@@ -104,12 +105,13 @@ export async function sdkInference(node,auth,frame,signal,onTiming=()=>{},onEven
  const selected=frame.modelSettings?.reasoning??'off';if(!descriptor.supportedSettings?.reasoning.includes(selected))throw fail('model_setting_unsupported');
  const compatibility=sdkCompatibility({...node,compatibilityMessages:frame.messages},descriptor);
  if(compatibility.compat.supportsReasoningEffort===false&&selected!=='off')throw fail('model_setting_unsupported');
- const started=Date.now();let statusCode=null,usage,sequence=0,oldFetch,formatError,responseId,responseModel;const blocks=[],calls=new Map(),parts=new Map();
+ const started=Date.now();let statusCode=null,usage,sequence=0,oldFetch,formatError,responseId,responseModel,transportCause=null;
+ const setup=frame.type==='qualification'&&frame.qualification==='setup_probe';const blocks=[],calls=new Map(),parts=new Map();
  const transport=fetchFixture??restrictedPiFetch(node,descriptor,signal,status=>{statusCode=status;});
  const authEndpoints={google_service_account:'https://oauth2.googleapis.com',ibm_api_key:'https://iam.cloud.ibm.com'};
  const authEndpoint=descriptor.authentication==='sap_service_key'?node.fields.AUTH_BASE_URL:authEndpoints[descriptor.authentication];
  const authTransport=authEndpoint?(fetchFixture??restrictedPiFetch(node,{endpoint:authEndpoint},signal,()=>{})):undefined;
- const routed=async(input,init)=>{const url=new URL(typeof input==='string'||input instanceof URL?input:input.url);return authEndpoint&&url.origin===new URL(authEndpoint).origin?authTransport(input,init):transport(input,init);};
+ const routed=async(input,init)=>{const url=new URL(typeof input==='string'||input instanceof URL?input:input.url);try{return await (authEndpoint&&url.origin===new URL(authEndpoint).origin?authTransport(input,init):transport(input,init));}catch(error){transportCause=transportCategory(error);throw error;}};
  try{
   oldFetch=globalThis.fetch;globalThis.fetch=routed;
   const model=await sdkModel(node,descriptor,auth.sdkSecrets,routed,signal,{authFetch:routed,compatibility});
@@ -140,7 +142,7 @@ export async function sdkInference(node,auth,frame,signal,onTiming=()=>{},onEven
     if(kind==='text'||thinking)for(let i=0;i<event.delta.length;i+=8192)await onEvent({type:'coding_delta',requestId:frame.requestId,sequence:++sequence,kind,text:event.delta.slice(i,i+8192)});
    }
    if(event.type==='text-end'||event.type==='reasoning-end'){const block=parts.get(event.id),meta=metadata(event.providerMetadata);if(block&&meta)block.providerMetadata=meta;}
-   if(event.type==='tool-call'){if(event.providerExecuted)throw fail('provider_tool_execution_forbidden');let args;try{args=JSON.parse(event.input);}catch{formatError='upstream_malformed_response';continue;}const block={type:'toolCall',id:event.toolCallId,name:event.toolName,arguments:args,...(metadata(event.providerMetadata)?{providerMetadata:metadata(event.providerMetadata)}:{})};blocks.push(block);calls.set(block.id,block);}
+   if(event.type==='tool-call'){if(event.providerExecuted)throw fail('provider_tool_execution_forbidden');let args;try{args=JSON.parse(event.input);}catch{formatError=setup?'setup_probe_invalid_arguments':'upstream_malformed_response';continue;}const block={type:'toolCall',id:event.toolCallId,name:event.toolName,arguments:args,...(metadata(event.providerMetadata)?{providerMetadata:metadata(event.providerMetadata)}:{})};blocks.push(block);calls.set(block.id,block);}
    if(event.type==='finish'){usage=normalizeSDKUsage(event.usage);finish=typeof event.finishReason==='string'?event.finishReason:event.finishReason?.unified;}
   }
   if(!usage)throw fail('upstream_usage_missing');
@@ -151,10 +153,10 @@ export async function sdkInference(node,auth,frame,signal,onTiming=()=>{},onEven
   const known={nativeUsage:usage,inputTokens:usage.input+usage.cacheRead+usage.cacheWrite,outputTokens:usage.output};
   if(formatError||calls.size>8)throw fail(formatError??'upstream_malformed_response',known);
   if(!thinking&&blocks.some(b=>b.type==='thinking'&&b.thinking))throw fail('model_setting_unsupported',known);
-  for(const call of calls.values()){const tool=frame.tools.find(t=>t.function.name===call.name);if(!tool||!new Ajv({strict:false,validateFormats:false}).compile(tool.function.parameters)(call.arguments))throw fail('upstream_malformed_response',known);}
+  if(!setup)for(const call of calls.values()){const tool=frame.tools.find(t=>t.function.name===call.name);if(!tool||!new Ajv({strict:false,validateFormats:false}).compile(tool.function.parameters)(call.arguments))throw fail('upstream_malformed_response',known);}
   for(const [index,call]of display.toolCalls.entries())for(let i=0;i<call.function.arguments.length;i+=8192)await onEvent({type:'coding_delta',requestId:frame.requestId,sequence:++sequence,kind:'tool',index,id:call.id,name:call.function.name,text:call.function.arguments.slice(i,i+8192)});
   onTiming({phase:'upstream',outcome:'succeeded',statusCode,headersMs:null,totalMs:Date.now()-started});
   return {type:'result',requestId:frame.requestId,...display,nativeMessage,...known};
- }catch(error){onTiming({phase:'upstream',outcome:error.nativeUsage?'succeeded':'unknown',statusCode,headersMs:null,totalMs:Date.now()-started});throw error.code?error:fail(signal?.aborted?'upstream_timeout':error.statusCode===401||error.statusCode===403?'upstream_authentication_failed':error.statusCode===429?'upstream_rate_limited':error.statusCode===400?'upstream_parameter_rejected':'upstream_failed_outcome_unknown',{statusCode:error.statusCode});}
+ }catch(error){onTiming({phase:'upstream',outcome:error.nativeUsage?'succeeded':'unknown',statusCode,headersMs:null,transportCause:transportCause??transportCategory(error),totalMs:Date.now()-started});throw error.code?error:fail(signal?.aborted?'upstream_timeout':error.statusCode===401||error.statusCode===403?'upstream_authentication_failed':error.statusCode===429?'upstream_rate_limited':error.statusCode===400?'upstream_parameter_rejected':'upstream_failed_outcome_unknown',{statusCode:error.statusCode});}
  finally{if(oldFetch)globalThis.fetch=oldFetch;}
 }

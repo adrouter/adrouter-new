@@ -1,5 +1,5 @@
 import packageMetadata from '../package.json' with {type:'json'};
-import { diagnoseProvider, diagnosisLines, retryProviderReports, retryProviderCleanup, providerEvidence } from './provider-diagnose.mjs';
+import { diagnoseProvider, diagnosisLines, retryProviderReports, retryProviderCleanup, providerEvidence, normalizeDiagnosis } from './provider-diagnose.mjs';
 import { modelStatusLines, providerRow, visibleModelStatus } from './model-status.mjs';
 import { connectionCapabilities } from './provider-models.mjs';
 import {providerRequiresBudget} from './generated/provider-budget.mjs';
@@ -435,7 +435,9 @@ export async function runTui(options = {}, dependencies = {}) {
   async function manageNode(id, created = false) {
     for (;;) {
       const node = await get(`/providers/nodes/${id}`);
-      const exactReports=(await providerEvidence(node,store.profile,{origin:network.origin})).reduce((sum,e)=>sum+e.pending.length,0);
+      const evidence=await providerEvidence(node,store.profile,{origin:network.origin});
+      const exactReports=evidence.reduce((sum,e)=>sum+e.pending.length,0);
+      const recovery=evidence.length?normalizeDiagnosis(await get(`/providers/nodes/${id}?view=diagnostics`),evidence):null;
       const bindingCurrent=network.local||(await readAuth())?.installation_id===node.installationId;
       const busy = !providerCanLaunch(providersRunning.get(node.id));
       const native = ['pi_native_v1','pi_native_v2','pi_native_v3'].includes(node.connectorProtocol);
@@ -446,7 +448,7 @@ export async function runTui(options = {}, dependencies = {}) {
         ...(['pi_native_v1','pi_native_v2','pi_native_v3'].includes(node.connectorProtocol)?[item('editNative','Edit provider configuration',bindingCurrent?'Pause and stop serving before changing models or limits.':'Older installation: use operator cleanup or reclaim after verified teardown.',!bindingCurrent||!['draft','paused'].includes(node.status)||busy)]:[]),
         item('status','Provider status'),item('diagnose','Diagnose','Read owned run/check metadata; no model request.'),item('retryReport','Retry result report',exactReports?'Deliver only saved exact reports; no VM or inference.':'No exact completion report saved.',!exactReports),
         item('setup', 'Test and start', bindingCurrent?'Authorizes a new bounded model attempt. All models must pass.':'Older installation: use operator cleanup or reclaim the paused connection.', busy||!bindingCurrent),
-        ...(node.cleanupState==='failed'||node.cleanupState==='pending'||providersRunning.get(node.id)?.status.cleanupRequired?[item('cleanup','Retry cleanup','Verify creation evidence and current run before teardown.')]:[]),
+        ...(node.cleanupState==='failed'||node.cleanupState==='pending'||providersRunning.get(node.id)?.status.cleanupRequired?[item('cleanup','Retry cleanup','Verify creation evidence and current run before teardown.',!providersRunning.get(node.id)?.status.cleanupRequired&&!recovery?.recoveryActions.includes('retry_verified_cleanup'))]:[]),
         ...(!native?[item('launch', node.availability === 'cold' ? 'Start cold control' : 'Launch hot VM', 'Keep this TUI open while providing.', busy)]:[]),
         ...(providersRunning.get(node.id)?.status.activation?.length ? [item('activate', 'Activate reserved buyer session', 'Launch the VM and enter the key before the 120-second deadline.')] : []),
         ...(!native?[item('publish', 'Publish listing', 'Exposes listing metadata as a new immutable revision.', node.suspended)]:[]),

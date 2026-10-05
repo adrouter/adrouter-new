@@ -2,7 +2,7 @@ import { ProviderReports, SETUP_POLICY } from './provider-reports.mjs';
 import {providerCatalog} from './generated/provider-catalog.mjs';
 import {providerRequiresBudget} from './generated/provider-budget.mjs';
 import { verifiedThinking } from './provider-models.mjs';
-import { providerDiagnostic } from './provider-diagnostics.mjs';
+import { providerDiagnostic, setupProbeFailure, setupResponseCodes } from './provider-diagnostics.mjs';
 import {credentialVolume} from './credential-volume.mjs';
 import { resolveConnector, CONNECTOR_PROTOCOL, upstreamFailureCodes } from './connectors.mjs';
 import { connect } from 'node:net';
@@ -82,7 +82,7 @@ async function createProviderController(networkInput, nodeId, { prepareOnly = fa
   let activation = [];
   const abort = new AbortController();
   const bounded = ms => AbortSignal.any([abort.signal, AbortSignal.timeout(ms)]);
-  const snapshot = () => ({ runtimeState:state==='serving'?(pending?'busy':'available'):state, state: state==='serving' && (!backendConfirmedAt || now()-backendConfirmedAt>=15000) ? 'reconnecting' : state, publication, backendConfirmedAt, setupFailure, cleanupOutcomes: cleanupOutcomes.map(o=>({...o})), recoveryPending, qualification: qualification.map(q=>({...q})), stopped, guestReady, relayReady, calls, activation, providerRunId, relayGeneration, relayLeaseUntil, cleanupRequired, teardownVerified, lastUpstreamFailure:lastUpstreamFailure?{...lastUpstreamFailure}:undefined, firstFailure: lifecycle.firstFailure, stopTrigger: lifecycle.stopTrigger });
+  const snapshot = () => ({ runtimeState:state==='serving'?(pending?'busy':'available'):state, state: state==='serving' && (!backendConfirmedAt || now()-backendConfirmedAt>=15000) ? 'reconnecting' : state, publication, backendConfirmedAt, setupFailure, cleanupOutcomes: cleanupOutcomes.map(o=>({...o})), recoveryPending, qualification: qualification.map(q=>({...q})), stopped, guestReady, relayReady, calls, activation, providerRunId, relayGeneration, relayLeaseUntil, cleanupRequired, teardownVerified, lastUpstreamFailure:lastUpstreamFailure?{...lastUpstreamFailure}:undefined, firstFailure: lifecycle.firstFailure, terminalFailure:lifecycle.terminalFailure, secondaryFailures:lifecycle.secondaryFailures.slice(), stopTrigger: lifecycle.stopTrigger });
   const announce = value => { try { notify({ ...value, ...snapshot() }); } catch {} };
   const failure = (phase, error, fallback) => lifecycle.event(phase, { ...providerDiagnostic(phase, {...error, code:error?.code ?? fallback}, {providerRunId}, now), signal: error?.signal, exitCode: error?.exitCode });
   const clearReadiness = code => { state = 'reconnecting'; backendConfirmedAt = null; relayReady = false; relayLeaseUntil = 0; clearTimeout(leaseTimer); lifecycle.event('relay', { code, status: 'reconnecting' }); announce({ status: 'reconnecting' }); };
@@ -101,7 +101,7 @@ async function createProviderController(networkInput, nodeId, { prepareOnly = fa
       let bytes = ''; for await (const chunk of req) { bytes += chunk; if (Buffer.byteLength(bytes) > 1024 * 1024) throw new Error('body_limit'); }
       let reply = { ok: true };
       if (req.method === 'POST' && req.url === '/ready' && bytes === '{"ready":true}') { guestReady = true; lastGuestPoll = now(); }
-      else if (req.method === 'GET' && req.url === '/work') { lastGuestPoll = now(); reply = stopped ? { type: 'stop' } : control.shift() ?? pending?.frame ?? null; if (reply === pending?.frame) pending.frame = undefined; }
+      else if (req.method === 'GET' && req.url === '/work') { lastGuestPoll = now(); reply = stopped ? { type: 'stop' } : control.shift() ?? pending?.frame ?? null; if (reply === pending?.frame) { pending.sent = true; pending.frame = undefined; } }
       else if(req.method==='POST'&&req.url==='/discovered'){const data=JSON.parse(bytes);if(!pending?.discovery||data.requestId!==pending.id)throw Error('discovery_binding');const request=pending;pending=undefined;if(data.error)request.reject(new ClientError(['upstream_authentication_failed','model_discovery_unavailable'].includes(data.error)?data.error:'model_discovery_unavailable'));else if(Array.isArray(data.models)&&data.models.length<=256&&data.models.every(m=>typeof m==='string'&&/^[\x20-\x7e]{1,256}$/.test(m)))request.resolve({models:data.models});else request.reject(new ClientError('model_discovery_unavailable'));}
       else if(req.method==='POST'&&req.url==='/configured') {
         const data=JSON.parse(bytes);if(!pending?.configuration||data.requestId!==pending.id||data.nativeRevision!==node.nativeRevision)throw Error('configuration_binding');
@@ -117,11 +117,17 @@ async function createProviderController(networkInput, nodeId, { prepareOnly = fa
       } else if (req.method === 'POST' && req.url === '/timing') {
         const timing = JSON.parse(bytes);
         if (!pending || timing.requestId !== pending.id || timing.phase !== 'upstream' || !['unknown','succeeded'].includes(timing.outcome) || (timing.statusCode !== null && (!Number.isInteger(timing.statusCode) || timing.statusCode < 100 || timing.statusCode > 599)) || !Number.isInteger(timing.totalMs) || timing.totalMs < 0 || timing.totalMs > 135000 || (timing.headersMs !== null && (!Number.isInteger(timing.headersMs) || timing.headersMs < 0 || timing.headersMs > timing.totalMs))) throw new Error('timing_rejected');
-        pending.upstreamStatus=timing.statusCode;pending.upstreamTotalMs=timing.totalMs;
+        pending.upstreamStatus=timing.statusCode;pending.upstreamTotalMs=timing.totalMs;pending.transportCause=['dns','tls','connection','timeout'].includes(timing.transportCause)?timing.transportCause:null;
         if (!pending.cancelled && relayReady && pending.socket === socket) socket.send(JSON.stringify({type:'diagnostic',requestId:timing.requestId,phase:'upstream',outcome:timing.outcome,statusCode:timing.statusCode,headersMs:timing.headersMs,totalMs:timing.totalMs}));
       } else if (req.method === 'POST' && req.url === '/usage') {
         const data=JSON.parse(bytes),binding=executionBindings.get(data.requestId);
-        if(pending?.qualification&&pending.id===data.requestId){const record=await reports.save({nodeId,providerRunId,installationId:node.installationId,nativeRevision:node.nativeRevision},{id:data.requestId,usage:data.nativeUsage,streaming:true,tools:false,completed:false});await reports.deliver(network,record);res.writeHead(200,{'content-type':'application/json'}).end('{"ok":true}');return;}
+        if(pending?.qualification&&pending.id===data.requestId){
+          if(data.failureCode){setupFailure=providerDiagnostic('qualification_setup_probe',{code:[...upstreamFailureCodes,...setupResponseCodes].includes(data.failureCode)?data.failureCode:'provider_outcome_unknown',statusCode:pending.upstreamStatus,elapsedMs:pending.upstreamTotalMs,transportCause:pending.transportCause},{nodeId,operation:setupResponseCodes.includes(data.failureCode)?'setup_response_validate':'setup_model_request',provider:node.provider,model:pending.binding.model,api:pending.binding.api,providerRunId,requestId:pending.id,requestEvidence:pending.upstreamStatus?'response_received':pending.sent?'outcome_unknown':'not_sent',maxOutputTokens:pending.binding.maxOutputTokens},now);lifecycle.fail(setupFailure);}
+          let operation='setup_report_save';
+          try{const record=await reports.save({nodeId,providerRunId,installationId:node.installationId,nativeRevision:node.nativeRevision},{id:data.requestId,usage:data.nativeUsage,streaming:true,tools:false,completed:false});operation='setup_report_submit';await reports.deliver(network,record);}
+          catch(error){lifecycle.fail(providerDiagnostic(operation,error,{nodeId,operation,providerRunId,requestId:data.requestId,requestEvidence:setupFailure?.requestEvidence??'outcome_unknown'},now),{secondary:!!setupFailure});throw error;}
+          res.writeHead(200,{'content-type':'application/json'}).end('{"ok":true}');return;
+        }
         if(!binding)throw new Error('execution_binding');
         await network.request(`/v2/providers/nodes/${nodeId}/execution-usage`,{method:'POST',body:{...binding,inputTokens:data.inputTokens,outputTokens:data.outputTokens,...(data.nativeUsage?{nativeUsage:data.nativeUsage}:{})},signal:AbortSignal.timeout(10000)});
       } else if (req.method === 'POST' && req.url === '/execution-complete') {
@@ -134,7 +140,7 @@ async function createProviderController(networkInput, nodeId, { prepareOnly = fa
         // Retain completed bindings for idempotent retries after a lost reply.
       } else if (req.method === 'POST' && req.url === '/result') {
         const result = JSON.parse(bytes);
-        if(pending?.qualification){if(result.requestId!==pending.id)throw Error('qualification_binding');const check=pending;pending=undefined;check.resolve(result);res.writeHead(200,{'content-type':'application/json'}).end('{"ok":true}');return;}
+        if(pending?.qualification){if(result.requestId!==pending.id)throw Error('qualification_binding');const check=pending;pending=undefined;check.resolve({...result,diagnosticTiming:{transportCause:check.transportCause??null,elapsedMs:check.upstreamTotalMs??null,statusCode:check.upstreamStatus??null}});res.writeHead(200,{'content-type':'application/json'}).end('{"ok":true}');return;}
         if (!pending || result.type !== 'result' || result.requestId !== pending.id || typeof result.text !== 'string' || !Number.isSafeInteger(result.inputTokens) || !Number.isSafeInteger(result.outputTokens)) throw new Error('result_binding');
         if (!pending.cancelled && relayReady && pending.socket === socket) socket.send(JSON.stringify(result)); pending = undefined;
         if (!continuous && calls >= maxCalls) void stop({ trigger: 'request_limit' });
@@ -143,7 +149,7 @@ async function createProviderController(networkInput, nodeId, { prepareOnly = fa
         pending = undefined; lifecycle.event('request', { status: 'cancelled' });
       } else if (req.method === 'POST' && req.url === '/failed') {
         const result = JSON.parse(bytes);
-        if(result.scope==='request'&&pending?.qualification&&result.requestId===pending.id){const check=pending;pending=undefined;check.reject(Object.assign(new ClientError(upstreamFailureCodes.includes(result.code)?result.code:'provider_outcome_unknown'),{provider:node.provider,model:check.binding.model,api:check.binding.api,maxOutputTokens:check.binding.maxOutputTokens,elapsedMs:check.upstreamTotalMs??null,statusCode:check.upstreamStatus??(Number.isInteger(result.statusCode)&&result.statusCode>=100&&result.statusCode<=599?result.statusCode:null),requestId:check.id}));res.writeHead(200,{'content-type':'application/json'}).end('{"ok":true}');return;}
+        if(result.scope==='request'&&pending?.qualification&&result.requestId===pending.id){const check=pending;pending=undefined;check.reject(Object.assign(new ClientError([...upstreamFailureCodes,...setupResponseCodes].includes(result.code)?result.code:'provider_outcome_unknown'),{provider:node.provider,model:check.binding.model,api:check.binding.api,maxOutputTokens:check.binding.maxOutputTokens,operation:setupResponseCodes.includes(result.code)?'setup_response_validate':'setup_model_request',transportCause:check.transportCause??null,elapsedMs:check.upstreamTotalMs??null,statusCode:check.upstreamStatus??(Number.isInteger(result.statusCode)&&result.statusCode>=100&&result.statusCode<=599?result.statusCode:null),requestId:check.id,requestEvidence:check.upstreamStatus||result.statusCode?'response_received':check.sent?'outcome_unknown':'not_sent'}));res.writeHead(200,{'content-type':'application/json'}).end('{"ok":true}');return;}
         if (result.scope === 'request' && pending && result.requestId === pending.id) {
           const frame = { type: 'request_failed', requestId: pending.id, sessionId: pending.binding.sessionId, bindingRevision: pending.binding.bindingRevision, sequence: pending.binding.sequence, code: upstreamFailureCodes.includes(result.code)?result.code:'provider_outcome_unknown' };
           if (!ProviderRequestFailure(frame)) throw Error('request_failure_binding');
@@ -339,34 +345,46 @@ async function createProviderController(networkInput, nodeId, { prepareOnly = fa
   async function startNative() {
     if(!native||!prepared||stopped||!guestReady||startAttempted)throw new ClientError('pi_provider_not_prepared');
     startAttempted = true; state = 'qualifying';
-    let phase = 'qualification', currentModel, currentCheck, responseReceived=false;
+    let phase = 'qualification', operation='setup_reserve', currentModel, currentCheck, responseReceived=false, requestEvidence='not_sent', timing={}, operationStartedAt=now();
+    const diagnostic = error => providerDiagnostic(phase,{...error,elapsedMs:error.elapsedMs??Math.max(0,now()-operationStartedAt)},{nodeId,operation:error.operation??operation,provider:node.provider,model:currentModel?.model,api:currentModel?.api,providerRunId,requestId:currentCheck?.id,requestEvidence:error.requestEvidence??requestEvidence,maxOutputTokens:currentCheck?.outputBound},now);
     const probe={type:'function',function:{name:'adr_setup_probe',description:'Return the supplied value unchanged.',parameters:{type:'object',properties:{value:{type:'string'}},required:['value'],additionalProperties:false}}};
     for (const model of node.nativeModels) for (const checkPhase of ['setup_probe']) qualification.push({model:model.model,api:model.api,phase:checkPhase,status:'pending'});
     try {
       for(const model of node.nativeModels){
         currentModel = model; let previous;
         for(const checkPhase of ['setup_probe']){
-          currentCheck = undefined;responseReceived=false;
+          currentCheck = undefined;responseReceived=false;requestEvidence='not_sent';timing={};operation='setup_reserve';operationStartedAt=now();
           const progress = qualification.find(q=>q.model===model.model && q.phase===checkPhase);
           phase = 'qualification_' + checkPhase; progress.status = 'reserving'; announce({status:state});
           if(now()-lastGuestPoll>15000)throw new ClientError('provider_worker_unresponsive');
           const check=await network.request(`/v2/providers/nodes/${nodeId}/pi-checks`,{method:'POST',body:{providerRunId,model:model.model,phase:checkPhase},key:randomUUID(),signal:bounded(10000)});
           currentCheck = check; nativeCheckIds.push(check.id); abort.signal.throwIfAborted(); Object.assign(progress,{requestId:check.id,status:'running'}); announce({status:state});
           const messages=[{role:'user',content:'Call adr_setup_probe with value "ready" exactly once.',timestamp:0}];
+          const requestStartedAt=now();
           const frame={type:'qualification',requestId:check.id,model:model.model,provider:node.provider,api:model.api,...(['pi_native_v2','pi_native_v3'].includes(node.connectorProtocol)?{nativeRevision:node.nativeRevision,endpoint:model.endpoint}:{}),messageFormat:'pi_context_v1',qualification:checkPhase,messages,tools:[probe],maxOutputTokens:check.outputBound,deadlineUnixMs:check.deadline,modelSettings:model.defaultSettings,thinking:!!model.defaultSettings&&model.defaultSettings.reasoning!=='off',upstreamBudget:{inputBound:check.inputBound,reservedMicrousd:check.upstreamReserved,...check.rates}};
-          const result=await new Promise((resolve,reject)=>{const timer=setTimeout(()=>{const statusCode=pending?.upstreamStatus;if(pending?.id===check.id)pending=undefined;reject(Object.assign(new ClientError('upstream_timeout'),{statusCode}));},Math.max(1,check.deadline-now()));pending={id:check.id,qualification:true,binding:frame,frame,resolve:r=>{clearTimeout(timer);resolve(r);},reject:e=>{clearTimeout(timer);reject(e);}};});
-          responseReceived=true;
-          const tools=result.toolCalls?.length===1&&result.toolCalls[0].function.name==='adr_setup_probe'&&(()=>{try{const args=JSON.parse(result.toolCalls[0].function.arguments);return Object.keys(args).length===1&&args.value==='ready';}catch{return false;}})();
-          phase = 'qualification_complete';
-          const record=await reports.save({nodeId,providerRunId,installationId:node.installationId,nativeRevision:node.nativeRevision},{id:check.id,usage:result.nativeUsage,streaming:true,tools,completed:result.nativeMessage?.stopReason!=='length'});
-          const completed=await reports.deliver(network,record,{signal:abort.signal,now});
+          operation='setup_model_request';
+          const result=await new Promise((resolve,reject)=>{const timer=setTimeout(()=>{const statusCode=pending?.upstreamStatus,elapsedMs=pending?.upstreamTotalMs??Math.max(0,now()-requestStartedAt),requestEvidence=pending?.sent?'outcome_unknown':'not_sent';if(pending?.id===check.id)pending=undefined;reject(Object.assign(new ClientError('upstream_timeout'),{statusCode,elapsedMs,requestEvidence,transportCause:'timeout'}));},Math.max(1,check.deadline-now()));pending={id:check.id,qualification:true,binding:frame,frame,resolve:r=>{clearTimeout(timer);resolve(r);},reject:e=>{clearTimeout(timer);reject(e);}};});
+          responseReceived=true;requestEvidence='response_received';timing=result.diagnosticTiming??{};
+          operation='setup_response_validate';
+          const validationCode=setupProbeFailure(result),tools=!validationCode;
+          if(validationCode){setupFailure=diagnostic({...timing,code:validationCode});lifecycle.fail(setupFailure);}
+          phase = 'qualification_complete';operation='setup_report_save';operationStartedAt=now();
+          let completed;
+          try {
+            const record=await reports.save({nodeId,providerRunId,installationId:node.installationId,nativeRevision:node.nativeRevision},{id:check.id,usage:result.nativeUsage,streaming:true,tools,completed:result.nativeMessage?.stopReason!=='length'});
+            operation='setup_report_submit';operationStartedAt=now();completed=await reports.deliver(network,record,{signal:abort.signal,now});
+          } catch(error) {
+            if(setupFailure){lifecycle.fail(diagnostic(error),{secondary:true});throw new ClientError(setupFailure.code);}
+            throw error;
+          }
+          if(validationCode){progress.status='failed';throw new ClientError(validationCode);}
           abort.signal.throwIfAborted();
           progress.status=completed.passed?'passed':'failed';progress.checks={configuration:'passed',credentials:'passed',streaming:'passed',usage:'passed',setupProbe:tools?'passed':'failed'}; announce({status:state});
-          if(!completed.passed)throw new ClientError('pi_compatibility_check_failed');previous=result;
+          if(!completed.passed){operation='setup_response_validate';throw new ClientError('pi_compatibility_check_failed');}previous=result;
         }
       }
       abort.signal.throwIfAborted();
-      phase='publication'; currentCheck=undefined; currentModel=undefined; publication='pending'; announce({status:state});
+      phase='publication';operation='publication';operationStartedAt=now(); currentCheck=undefined; currentModel=undefined; publication='pending'; announce({status:state});
       await network.request(`/v2/providers/nodes/${nodeId}/publish`,{method:'POST',body:{},key:randomUUID(),signal:bounded(10000)});
       publication='published';
       node=await network.request(`/v2/providers/nodes/${nodeId}`,{signal:bounded(10000)});
@@ -374,8 +392,9 @@ async function createProviderController(networkInput, nodeId, { prepareOnly = fa
       control.push({type:'bind',listingIds:node.listingIds,listingRevision:node.listingRevision});
       prepared=false;state='connecting';await renewal.run();await statusPoll.run();return snapshot();
     } catch(error) {
-      setupFailure = providerDiagnostic(phase,abort.signal.aborted && lifecycle.stopTrigger?.trigger==='setup_cancelled' ? {code:'cancelled'} : error,{provider:node.provider,model:currentModel?.model,api:currentModel?.api,providerRunId,requestId:currentCheck?.id,requestEvidence:responseReceived||Number.isInteger(error.statusCode)?'response_received':currentCheck?'outcome_unknown':'not_sent',maxOutputTokens:currentCheck?.outputBound},now);
-      lifecycle.event(phase,setupFailure);
+      requestEvidence=responseReceived?'response_received':error.requestEvidence??requestEvidence;
+      setupFailure ??= diagnostic(abort.signal.aborted && lifecycle.stopTrigger?.trigger==='setup_cancelled' ? {code:'cancelled'} : error);
+      lifecycle.fail(setupFailure);
       if (currentModel) {const progress=qualification.find(q=>q.model===currentModel.model&&['reserving','running'].includes(q.status));if(progress)progress.status='unknown';}
       try { await inspectChecks(); } catch(inspectError) { failure('check_inspection',inspectError,'check_inspection_failed'); }
       if (closing) { await closing; closing=undefined; }
@@ -385,7 +404,7 @@ async function createProviderController(networkInput, nodeId, { prepareOnly = fa
   }
   async function stop({ trigger = 'operator_stop', error, signal, remote = true } = {}) {
     if (closing) return closing;
-    if (error) failure('failure', error, 'provider_failed');
+    if (error) lifecycle.fail(failure('failure', error, 'provider_failed'));
     lifecycle.stop(trigger, { signal });
     if(pending?.qualification||pending?.discovery||pending?.configuration){pending.reject(new ClientError(trigger==='setup_cancelled'?'cancelled':'provider_stopped'));pending=undefined;}
     state = 'stopping'; backendConfirmedAt = null; stopped = true; guestReady = false; relayReady = false; for(const tunnel of tunnels)tunnel.destroy(); abort.abort();
@@ -396,7 +415,7 @@ async function createProviderController(networkInput, nodeId, { prepareOnly = fa
       const outcomes = [];
       const outcome = async (phase, work) => { try { await work(); outcomes.push({phase,status:'succeeded'});lifecycle.event(phase,{status:'succeeded'}); } catch(e){outcomes.push({phase,status:'failed',code:providerDiagnostic(phase,e).code});lifecycle.event(phase,{status:'failed',code:providerDiagnostic(phase,e).code});} };
       if (remote && claimed) {
-        try { await network.request(`/v2/providers/nodes/${nodeId}/stop`, { method: 'POST', body: { scope: 'run', providerRunId, trigger, ...(setupFailure?{failure:{operation:setupFailure.phase,code:setupFailure.code,...(setupFailure.requestId?{checkId:setupFailure.requestId}:{}),statusCode:setupFailure.statusCode,requestEvidence:setupFailure.requestEvidence}}:{}) }, signal: AbortSignal.timeout(30000) }); outcomes.push({phase:'remote_stop',status:'succeeded'});lifecycle.event('remote_stop',{status:'succeeded'}); }
+        try { await network.request(`/v2/providers/nodes/${nodeId}/stop`, { method: 'POST', body: { scope: 'run', providerRunId, trigger, ...(setupFailure?{failure:{operation:setupFailure.operation,code:setupFailure.code,...(setupFailure.requestId?{checkId:setupFailure.requestId}:{}),statusCode:setupFailure.statusCode,requestEvidence:setupFailure.requestEvidence}}:{}) }, signal: AbortSignal.timeout(30000) }); outcomes.push({phase:'remote_stop',status:'succeeded'});lifecycle.event('remote_stop',{status:'succeeded'}); }
         catch(e){const superseded=['provider_run_superseded','not_found'].includes(e.code);outcomes.push({phase:'remote_stop',status:superseded?'superseded':'failed',code:providerDiagnostic('remote_stop',e).code});lifecycle.event('remote_stop',{status:superseded?'superseded':'failed',...(!superseded?{code:providerDiagnostic('remote_stop',e).code}:{})});}
       } else outcomes.push({phase:'remote_stop',status:'not_requested'});
       await allocation?.catch(()=>{});
@@ -409,7 +428,7 @@ async function createProviderController(networkInput, nodeId, { prepareOnly = fa
       cleanupOutcomes = outcomes;
       const failed = recoveryPending || outcomes.some(o=>o.status==='failed'),removed=outcomes.find(o=>o.phase==='guest_removal').status==='succeeded';
       cleanupRequired = failed; teardownVerified = removed; state = failed ? 'cleanup_required' : 'stopped';
-      const result = { status: failed ? 'cleanup_required' : 'stopped', completedCalls: calls, credentials: removed ? (vault?'guest_disk_retained':'discarded') : 'teardown_unverified', providerRunId, firstFailure: lifecycle.firstFailure, stopTrigger: lifecycle.stopTrigger, outcomes };
+      const result = { status: failed ? 'cleanup_required' : 'stopped', completedCalls: calls, credentials: removed ? (vault?'guest_disk_retained':'discarded') : 'teardown_unverified', providerRunId, firstFailure: lifecycle.firstFailure, terminalFailure:lifecycle.terminalFailure, secondaryFailures:lifecycle.secondaryFailures.slice(), stopTrigger: lifecycle.stopTrigger, outcomes };
       announce(result); complete(result); return result;
     })();
     return closing;
@@ -424,7 +443,7 @@ async function createProviderController(networkInput, nodeId, { prepareOnly = fa
       const timer=setTimeout(()=>{reject(new ClientError('guest_configuration_unconfirmed'));void stop({trigger:'configuration_failed'});},15000);
       pending={id:requestId,configuration:true,binding:{type:'configure'},frame:{type:'configure',requestId,node,maxOutputTokens},resolve:value=>{clearTimeout(timer);resolve(value);},reject:error=>{clearTimeout(timer);reject(error);}};
     });
-    }catch(error){setupFailure=providerDiagnostic('configure_models',error,{providerRunId,requestEvidence:'not_sent'},now);lifecycle.event('configure_models',setupFailure);await stop({trigger:'configuration_failed'});throw error;}
+    }catch(error){setupFailure=providerDiagnostic('configure_models',error,{providerRunId,requestEvidence:'not_sent'},now);lifecycle.fail(setupFailure);await stop({trigger:'configuration_failed'});throw error;}
   };
   controller.retryCleanup = async () => {
     if (!stopped || !cleanupRequired) return closing;

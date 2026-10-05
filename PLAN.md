@@ -1029,3 +1029,34 @@ A new real request is needed to obtain the validated HTTP status; bundle entitle
 GLM coding/thinking/usage and native Ghostty operator outcomes remain NOT TESTED.
 Metadata-only individual outcomes and artifact/launcher identities are recorded in
 `../../outputs/adr-gateway-2026-10-02/acceptance-status.json` and adjacent receipts.
+
+
+## Verification gaps repair — 5 October 2026
+
+### Goal and context
+Close the alpha.43 qualification-lifetime, failure-attribution and reopened-diagnostics regressions in the paired canonical client/Router inputs. Implement the operator-supplied plan; real Flash, Pro and Custom API acceptance stays pending.
+
+### Constraints and reversibility
+No dependency/catalog expansion, hosted migration, public publication/promotion, broad cleanup or session deletion. Preserve alpha.43 recovery artifacts, profiles, limits and uncertain liabilities. Keep completion payloads and routes unchanged; ship a new immutable private version from clean commits. Historical plan sections remain intact.
+
+### Scoped steps
+- [ ] A (`in_progress`): Bind qualification to model/run/configuration/policy; preserve continuous qualification while retaining fresh checks for new publication and independent connectivity/capacity/budget/tariff gates.
+- [ ] B (`todo`): Classify explicit failed operations; preserve response validation as primary with reporting/storage failures separate; persist safe terminal evidence.
+- [ ] C (`todo`): Merge exact node/run/check evidence for shared TUI/CLI diagnosis, bounded historical recovery and applicable inference-free actions.
+- [ ] D (`todo`): Update both specifications, manual acceptance runbook and scoped manifest after final bytes; add a successor receipt.
+- [ ] E (`todo`): Full client/Router/contracts/OpenAPI/disposable PostgreSQL regressions; installed native diagnostics and 660-second lifecycle; clean private packaging, sole-Machine Router rollout, installed/serving/Pages verification and launcher selection.
+
+### Validation results
+Kickoff Fly identity/Machine/recovery registry, Pages identity/project/deployment/Git integration, Supabase active project/linked database and canonical GitHub permissions/fresh refs passed. Router ruleset reads retain the existing provider-plan 403; no protection changes. npm authentication explicitly waived by the operator. Implementation tests: not run.
+
+### Follow-up work
+Exact-version operator manual Flash, Pro and Custom API acceptance; no automatic paid rechecks.
+
+### Decision log
+| Date | Decision | Rationale | Impact |
+| --- | --- | --- | --- |
+| 2026-10-05 | Preserve same-run unchanged qualification without age expiry | Confirmed operator policy | New publication retains freshness; all independent availability gates remain |
+| 2026-10-05 | Use canonical reliability clones and private delivery | Supplied implementation plan and verified GitHub identities | Preserve dirty top-level checkout and alpha.43 recovery |
+
+### Client source verification checkpoint
+Qualification operation attribution, safe terminal/secondary persistence, exact reopened evidence and shared CLI/TUI diagnosis are implemented. 885 source checks pass; targeted probe/storage/report regressions and pinned runtime provenance are reverified before freezing alpha.44. No dependency/catalog or external completion-contract change. Installed native/setup/660-second lifecycle and final serving verification remain pending.

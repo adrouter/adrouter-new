@@ -1,3 +1,4 @@
+import { transportCategory } from './pi-transport.mjs';
 import Ajv from 'ajv';
 import {thinkingBudgetForLevel,clampThinkingBudgetToAnswerRoom} from '@earendil-works/pi-ai/api/simple-options';
 import {providerCatalog} from './generated/provider-catalog.mjs';
@@ -91,9 +92,9 @@ export async function nativeInference(node,auth,frame,signal,onTiming=()=>{},onE
   const model=auth.models.getModel(node.provider,frame.model);if(!model)throw fail('pi_model_not_supported');
   if(model.baseUrl!==descriptor.endpoint)throw fail('pi_model_binding_mismatch');
   const fixed={...model,compat:{...model.compat,allowedFallbackModels:[]}};
-  const evidence=new NativeUsageEvidence(model.api),started=Date.now();let statusCode=null,headersMs=null,sequence=0;
+  const evidence=new NativeUsageEvidence(model.api),started=Date.now();let statusCode=null,headersMs=null,sequence=0,transportCause=null;
   const rawTransport=fetchFixture??restrictedPiFetch(node,descriptor,signal,status=>{statusCode=status;headersMs=Date.now()-started;});
-  const transport=async(...args)=>{const response=await rawTransport(...args);statusCode=response.status;headersMs=Date.now()-started;return response;};
+  const transport=async(...args)=>{let response;try{response=await rawTransport(...args);}catch(error){transportCause=transportCategory(error);throw error;}statusCode=response.status;headersMs=Date.now()-started;return response;};
   const context={messages:frame.messages.map(piMessage),tools:frame.tools.map(t=>({name:t.function.name,description:t.function.description,parameters:t.function.parameters}))};
   const options={signal,maxTokens:frame.maxOutputTokens,maxRetries:0,transport:'sse',timeoutMs:120000,fetch:transport,env:{...node.fields},cacheRetention:'none',...(frame.qualification?{toolChoice:['tool','setup_probe'].includes(frame.qualification)?(model.api==='anthropic-messages'||model.api==='google-generative-ai'||model.api==='mistral-conversations'?'any':'required'):'none'}:{}),onResponse:response=>{statusCode=response.status;headersMs=Date.now()-started;},onProviderStreamEvent:event=>evidence.observe(event)};
   // The raw native stream avoids Pi's history-usage estimator: replay has no
@@ -129,11 +130,12 @@ export async function nativeInference(node,auth,frame,signal,onTiming=()=>{},onE
     if(!frame.thinking)display.thinking='';
     if(usage.input+usage.cacheRead+usage.cacheWrite>authority.inputBound||usage.output>frame.maxOutputTokens)throw fail('upstream_usage_invalid');
     knownUsage={nativeUsage:usage,inputTokens:usage.input+usage.cacheRead+usage.cacheWrite,outputTokens:usage.output};
-    if(display.toolCalls.length>8||display.toolCalls.some(c=>!frame.tools.some(t=>t.function.name===c.function.name)))throw fail('upstream_tool_invalid');
-    for(const call of display.toolCalls){const definition=frame.tools.find(t=>t.function.name===call.function.name);if(!new Ajv({strict:false,validateFormats:false}).compile(definition.function.parameters)(JSON.parse(call.function.arguments)))throw fail('upstream_malformed_response');}
+    const setup=frame.type==='qualification'&&frame.qualification==='setup_probe';
+    if(display.toolCalls.length>8||!setup&&display.toolCalls.some(c=>!frame.tools.some(t=>t.function.name===c.function.name)))throw fail('upstream_tool_invalid');
+    if(!setup)for(const call of display.toolCalls){const definition=frame.tools.find(t=>t.function.name===call.function.name);if(!new Ajv({strict:false,validateFormats:false}).compile(definition.function.parameters)(JSON.parse(call.function.arguments)))throw fail('upstream_malformed_response');}
     for(const [index,call]of display.toolCalls.entries())for(let i=0;i<call.function.arguments.length;i+=8192)await onEvent({type:'coding_delta',requestId:frame.requestId,sequence:++sequence,kind:'tool',index,id:call.id,name:call.function.name,text:call.function.arguments.slice(i,i+8192)});
     onTiming({phase:'upstream',outcome:'succeeded',statusCode,headersMs,totalMs:Date.now()-started});
     return {type:'result',requestId:frame.requestId,...display,nativeMessage,nativeUsage:usage,inputTokens:usage.input+usage.cacheRead+usage.cacheWrite,outputTokens:usage.output};
-  }catch(e){onTiming({phase:'upstream',outcome:'unknown',statusCode,headersMs,totalMs:Date.now()-started});throw Object.assign(fail(/^[a-z0-9_]{1,80}$/.test(e.code??'')?e.code:(signal?.aborted?'upstream_timeout':'upstream_failed_outcome_unknown')),{statusCode,...knownUsage});}
+  }catch(e){onTiming({phase:'upstream',outcome:'unknown',statusCode,headersMs,transportCause:transportCause??transportCategory(e),totalMs:Date.now()-started});throw Object.assign(fail(/^[a-z0-9_]{1,80}$/.test(e.code??'')?e.code:(signal?.aborted?'upstream_timeout':'upstream_failed_outcome_unknown')),{statusCode,...knownUsage});}
   finally{if(oldFetch)globalThis.fetch=oldFetch;}
 }

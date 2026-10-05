@@ -33,3 +33,16 @@ export function restrictedPiFetch(node,model,signal,onResponse=()=>{},{discovery
     });
   };
 }
+
+// Bounded cause inspection; never exception messages or URL/header content.
+export function transportCategory(error) {
+  let cause=error;
+  for(let depth=0;cause&&depth<4;depth++,cause=cause.cause){
+    if(cause.name==='TimeoutError')return 'timeout';
+    if(['ENOTFOUND','EAI_AGAIN'].includes(cause.code))return 'dns';
+    if(['CERT_HAS_EXPIRED','UNABLE_TO_VERIFY_LEAF_SIGNATURE','ERR_TLS_CERT_ALTNAME_INVALID','DEPTH_ZERO_SELF_SIGNED_CERT'].includes(cause.code))return 'tls';
+    if(['ETIMEDOUT','UND_ERR_CONNECT_TIMEOUT','UND_ERR_HEADERS_TIMEOUT','UND_ERR_BODY_TIMEOUT'].includes(cause.code))return 'timeout';
+    if(['ECONNRESET','ECONNREFUSED','EPIPE','UND_ERR_SOCKET'].includes(cause.code))return 'connection';
+  }
+  return null;
+}

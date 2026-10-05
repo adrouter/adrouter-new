@@ -1,8 +1,8 @@
 # ADRv2 detailed specification: strict setup, model status and failure recovery
 
-Revision: **5 October 2026**. Status: **implemented and installed/hosted verified; independent paid acceptance pending**.
+Revision: **5 October 2026**. Status: **verification-gap repair implemented and source-tested; exact installed/hosted verification pending; independent paid acceptance pending**.
 
-This replaces earlier setup, qualification, provider/listing UI, diagnostics and failure-cleanup requirements. The existing alpha.38 product is the baseline; its earlier synthetic acceptance does not establish that the changes below exist or that live acceptance passed. The current setup blocker must be fixed before another live setup attempt is recommended.
+This replaces earlier setup, qualification, provider/listing UI, diagnostics and failure-cleanup requirements. Alpha.43 is the verification baseline. Its prior synthetic gates did not cover the three subsequently reproduced gaps recorded below. Real-provider acceptance remains pending.
 
 ## 1. Non-negotiable user outcome
 
@@ -29,7 +29,7 @@ The operator performs the real live test independently. The agent may implement 
 
 The reported run `a4815984-dd5f-42d3-96df-aee6fee78533` belonged to node `e721ed92-40db-44f1-b22f-df0b080cbb0a`. Its metadata records guest readiness, then HTTP 409 `connection_restart_required`, followed by successful remote Stop, guest removal, broker cleanup and execution release. No qualification checks were created for this attempt. The node was subsequently observed as deleted.
 
-Router's prepared-connection guard currently compares public configuration objects using `JSON.stringify`. The saved connection's key order was:
+The historical alpha.38 prepared-connection guard compared public configuration objects using `JSON.stringify`. The saved connection's key order was:
 
 ```text
 kind, compat, headerNames, modelDefinitions
@@ -41,7 +41,7 @@ The same connection passed through Router's schema has this order:
 kind, headerNames, modelDefinitions, compat
 ```
 
-An offline check against the actual schema returned semantic equality but unequal serialized strings. Consequently, saving model selection can be rejected even when the underlying API settings have not changed. The existing in-memory happy-path test does not cover this persisted-order case.
+An offline check against the actual schema returned semantic equality but unequal serialized strings. Consequently, saving model selection could be rejected even when the underlying API settings have not changed. That original in-memory happy-path test did not cover the persisted-order case. The semantic comparison and PostgreSQL JSONB regression are implemented in the alpha.43 baseline; retain this incident as historical evidence.
 
 Required repair:
 
@@ -53,7 +53,7 @@ Required repair:
 - Use failure phase `configure_models`, not generic `failure`.
 - Add a PostgreSQL JSONB round-trip regression as well as a local semantic-comparison regression.
 
-The current incident must be explained as:
+The historical incident was explained as:
 
 > AdRouter rejected saving the selected models because its configuration comparison treated a different JSON key order as a settings change. No model request was sent. The provider VM was removed. Repeating the unchanged setup does not repair this bug.
 
@@ -372,7 +372,7 @@ Run actual installed Mac VM/PTY gates for changed setup, reporting and lifecycle
 
 Implement in the designated canonical client and Router checkouts. Preserve unrelated source/documentation work. Complete required platform preflight before deployment/private delivery, carrying forward the explicit npm-authentication deferral and existing deployment authority.
 
-Fix the confirmed setup comparison defect before polishing status presentation. Then implement the one-request gate, statuses/failure reports, report recovery and scoped old-entry cleanup. Do not expand catalog coverage or change spending/access policies.
+The configuration comparison, one-request gate and earlier scoped cleanup are baseline implementation. Close the qualification lifetime, precise failure attribution and reopened diagnostics gaps below; do not repeat old-entry cleanup. Do not expand catalog coverage or change spending/access policies.
 
 Commit authoritative Router inputs before generating client contracts. Build the next unused immutable private client; never overwrite alpha.38. Deploy Router changes through the sole-relay drain and in-place replacement procedure. Preserve Pages, database history, existing protected gates and retained recovery artifacts. Verify exact installed and serving identities and run affected release checks.
 
@@ -389,3 +389,42 @@ Private `@adrouter/adr-cli 0.1.0-alpha.43` is installed and selected. Product so
 All 875 client source tests, 87 marketplace tests, six contracts and 11 disposable PostgreSQL cases passed. Actual installed Mac gates passed for 644 native/SDK cases, retained guest credentials, fail-fast/one-probe/report-loss behavior, coding selected Apply and the full 660-second lifecycle. Serving bytes, sole relay, private policy/resources and 28 Pages comparisons passed. The ten authorized obsolete nodes were retired with financial evidence preserved; the intended connection and newer excluded node remain.
 
 The [consolidated delivery receipt](../../../outputs/adr-integrated-2026-10-05/delivery-receipt.json) owns exact identities and results. The [manual retest file](../../../outputs/adr-live-test-2026-10-05/live-test-run.md) owns operator actions and blank real-provider results. Synthetic acceptance is not paid Flash/Pro/Custom API acceptance. No real key was entered and no paid inference was dispatched by the agent.
+
+
+## 15. Continuous qualification and diagnostic repair — 5 October 2026
+
+Alpha.43's delivery receipt remains immutable historical evidence. Its readiness conclusion is superseded for the three reproduced gaps: continuous qualification expired after one hour; phase-pattern classification could blame the wrong system; reopened diagnostics preferred sparse Router metadata over richer matching local evidence. These regressions remain open until their new tests and exact installed gates pass. Real Flash, Pro and Custom API acceptance stays pending independently.
+
+### Qualification lifetime and availability
+A passed check remains valid during the same unchanged provider run and configuration. Match the model, providerRunId, nativeRevision, qualification policy and canonical configuration digest. New runs or changed settings require another explicitly authorized test. A **new publication** still requires completed checks younger than one hour (strict boundary). Relay/status freshness and tariff validity have separate lifetimes; continuous qualification itself has no hourly expiry. Reconnect keeps the same evidence and never schedules paid rechecks.
+
+Provider status, public listings, buyer quotes and acceptance use the same matched qualification result. A lost relay is Offline; occupied execution is Busy; suspension, cleanup, depleted allowance/budget or expired tariff are Blocked with the actual reason. These conditions do not rewrite a passed model result. Stop withdraws access; reconciliation of unknown usage remains separate from release of execution capacity.
+
+### Exact failed operation
+| Operation | Failure source |
+| --- | --- |
+| setup_reserve | Router control; the model request has not been sent |
+| setup_model_request | Upstream API or transport |
+| setup_response_validate | Model response validation |
+| setup_report_save | Local completion-metadata storage |
+| setup_report_submit / setup_report_confirm | Router reporting |
+| publication / configure_models | Router configuration/publication |
+| remote_stop / guest_removal / broker_cleanup / execution_release | The named cleanup step and its control, runtime or reporting source |
+
+Validation distinguishes `setup_probe_missing`, `setup_probe_wrong_tool`, `setup_probe_invalid_arguments` and `setup_response_truncated`. Capture validation before reporting usage. If both validation and reporting fail, validation remains primary and reporting is a separate unresolved operation; accounting still follows exact saved-report rules. Reporting alone yields Result unconfirmed rather than a falsely failed model. Recognize old qualification phases without phase-name pattern guessing. Keep HTTP status, elapsed time, transport category and not_sent/response_received/outcome_unknown evidence separate. Missing evidence remains unknown.
+
+### Reopened evidence and actions
+Persist an optional terminalFailure with existing lifecycle metadata; firstFailure preserves earlier transient errors, secondaryFailures preserves unresolved operations, and cleanup outcomes stay separate. Diagnostic reads use exact node/run/check identities. Backend execution/accounting state is authoritative. Matching local evidence supplies richer model/API/timing/transport metadata field by field. Label absent/conflicting evidence; never combine different attempts or choose a run by array position. Older lifecycle records are read through bounded allowlisted metadata recovery; missing details are not invented.
+
+TUI and CLI use one normalized diagnosis. CLI JSON adds an optional `diagnosis` while preserving existing fields. Show only applicable actions: resend an existing exact report, retry cleanup after verified ownership/controller exit, edit configuration after teardown, or explicitly authorize a new test. A successful cleanup never erases the first failure. No credentials, prompts, response bodies or tool arguments appear in diagnostics.
+
+### Required examples
+- Healthy provider at 59:59.999, 60:00.000, 60:00.001 and four hours: Passed and Available with continuous relay confirmation and valid tariff/limits; no new model request. A new publication with old checks is rejected.
+- Router rejects setup_reserve with HTTP 409: Router control; no model request sent; no publication or next-model request.
+- Model returns an invalid probe and usage reports successfully: primary setup_response_validate / setup_probe_invalid_arguments; response received; usage remains settled; setup stops before the next model.
+- Reopen after that failure: matching local model/API and timing enrich Router run/check metadata; original validation stays visible alongside successful guest removal. A lost acknowledgement is a separate Router reporting operation and may retry only saved metadata.
+
+### Verification and delivery
+Clock-controlled hourly boundaries, same-run reconnect, new-run/configuration/policy mismatch, independent availability gates, exact failure sources and reopened evidence must pass. Run client checks, Router typecheck/full tests, contract drift, OpenAPI and disposable PostgreSQL; extend actual installed setup diagnostics and retain the 660-second lifecycle gate. No new dependency/catalog expansion, hosted migration, broad cleanup or session deletion. Build the next unused private client from a clean commit; deploy paired Router first by sole-Machine drain/replacement, verify serving/installed bytes and Pages preservation, then select the client. Preserve alpha.43 recovery material, profiles, limits and outstanding liabilities. Update the exact-version manual handoff and a successor receipt before calling these gaps closed.
+
+Source checkpoint: 885 client checks, 89 Router marketplace cases, six contract tests and 12 disposable PostgreSQL cases pass. Router typecheck/full tests/build and OpenAPI validation pass. Exact alpha.44 native/setup/lifecycle and serving verification remain pending; the source checkpoint alone does not close delivery.

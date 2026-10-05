@@ -150,3 +150,12 @@ test('Custom API DeepSeek connection retains verified off control and output lim
  const auth=await nativeLogin(n,key);let calls=0;
  try{const result=await nativeInference(n,auth,{...frame(n),nativeRevision:1,endpoint:model.baseUrl},AbortSignal.timeout(3000),()=>{},()=>{},async(_url,init)=>{calls++;const body=JSON.parse(init.body);assert.equal(body.model,model.id);assert.deepEqual(body.thinking,{type:'disabled'});assert.equal(body.max_tokens,4096);return streamResponse(completion);});assert.equal(result.text,'ready');assert.equal(result.nativeMessage.provider,'my-deepseek-api');assert.equal(calls,1);}finally{await auth.close();}
 });
+
+
+test('authorized setup returns invalid probe evidence for precise host validation while ordinary tools remain strict',async()=>{
+ const n=connection('deepseek','openai-completions'),auth=await nativeLogin(n,key),request=frame(n);
+ request.type='qualification';request.qualification='setup_probe';request.tools=[{type:'function',function:{name:'adr_setup_probe',description:'Synthetic setup probe',parameters:{type:'object',properties:{value:{type:'string'}},required:['value']}}}];
+ const events=structuredClone(toolCompletion);events[0].choices[0].delta.tool_calls[0].function.name='adr_setup_probe';events[0].choices[0].delta.tool_calls[0].function.arguments='{"value":42}';
+ try{const result=await nativeInference(n,auth,request,AbortSignal.timeout(5000),()=>{},()=>{},checkedFetch(n,async()=>streamResponse(events)));assert.equal(JSON.parse(result.toolCalls[0].function.arguments).value,42);assert.equal(result.nativeUsage.input,10);}
+ finally{await auth.close();}
+});
