@@ -8,6 +8,7 @@ export class BuyerLifecycle {
     const entry = { ...(safeFailure(outcome.failureDiagnostic)?{failureDiagnostic:safeFailure(outcome.failureDiagnostic)}:{}), at: Date.now(), phase: identifier(phase), code: identifier(outcome.code),
       exitCode: Number.isInteger(outcome.exitCode) ? outcome.exitCode : null,
       signal: identifier(outcome.signal), state: identifier(outcome.state), status: identifier(outcome.status) };
+    if(phase==='diagnostic_save'&&entry.code)this.diagnosticSaveFailed=true;
     if(safeFailure(outcome.failureDiagnostic))this.failureDiagnostic??=safeFailure(outcome.failureDiagnostic);
     if (entry.code && !this.firstFailure) this.firstFailure = entry;
     this.events.push(entry); if (this.events.length > 256) this.events.shift();

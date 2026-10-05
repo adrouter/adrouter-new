@@ -116,7 +116,7 @@ async function inferNative(node,auth,frame,signal,onTiming,onEvent,fetchFixture,
     // There is one inference at a time in this guest. Control traffic keeps its
     // separately captured fetch; no host/global transport is modified.
     if(model.api==='google-generative-ai'){oldFetch=globalThis.fetch;globalThis.fetch=transport;options.fetch=transport;}
-    const stream=auth.models.stream(fixed,context,options);
+    trace.attempt();const stream=auth.models.stream(fixed,context,options);
     let final;
     for await(const event of stream){
       if(event.type==='text_delta'||event.type==='thinking_delta'&&frame.thinking){

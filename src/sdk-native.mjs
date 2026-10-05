@@ -113,7 +113,7 @@ export async function sdkInference(node,auth,frame,signal,onTiming=()=>{},onEven
  const authTransport=authEndpoint?(fetchFixture??restrictedPiFetch(node,{endpoint:authEndpoint},signal,()=>{})):undefined;
  const routed=async(input,init)=>{const url=new URL(typeof input==='string'||input instanceof URL?input:input.url);try{const response=await (authEndpoint&&url.origin===new URL(authEndpoint).origin?authTransport(input,init):transport(input,init));trace?.response(response.status);return response;}catch(error){trace?.error(error);transportCause=transportCategory(error);throw error;}};
  try{
-  oldFetch=globalThis.fetch;globalThis.fetch=routed;
+  trace?.attempt();oldFetch=globalThis.fetch;globalThis.fetch=routed;
   const model=await sdkModel(node,descriptor,auth.sdkSecrets,routed,signal,{authFetch:routed,compatibility});
   const thinking=selected!=='off',namespace=model.provider.split('.')[0],id=descriptor.adapter.id;
   const budgetTokens=thinking?clampThinkingBudgetToAnswerRoom(thinkingBudgetForLevel(selected),frame.maxOutputTokens):0;

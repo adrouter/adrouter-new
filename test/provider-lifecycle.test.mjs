@@ -207,3 +207,11 @@ test('local report-save failure is storage and retains the received model eviden
  const {ProviderReports}=await import('../src/provider-reports.mjs');const save=ProviderReports.prototype.save;const f=await fixture({native:true});
  try{const c=await f.start();ProviderReports.prototype.save=async()=>{throw Object.assign(Error('private marker'),{code:'ENOSPC'});};const started=c.start(),rejected=assert.rejects(started,{code:'completion_report_save_failed'});await completeCheck(f,await nextCheck(f));await rejected;assert.equal(c.status.setupFailure.operation,'setup_report_save');assert.equal(c.status.setupFailure.provenance,'local_storage');assert.equal(c.status.setupFailure.requestEvidence,'response_received');assert.equal(c.status.publication,'not_published');assert.equal(f.state.requests.filter(r=>r.path.endsWith('/pi-checks/complete')).length,0);}finally{ProviderReports.prototype.save=save;await f.close();}
 });
+
+test('missing diagnostic negotiation retains legacy failure frames and richer local cause',async()=>{
+ const f=await fixture();try{
+  const controller=await f.start();await until(()=>controller.status.relayReady);const socket=f.state.sockets.at(-1),send=socket.send.bind(socket),frames=[];socket.send=value=>{const frame=JSON.parse(value);if(frame.type==='request_failed')frames.push(frame);return send(value);};
+  const requestId=randomUUID();socket.frame({type:'inference',sessionId:randomUUID(),requestId,bindingRevision:f.node.listingId,sequence:1,deadlineUnixMs:Date.now()+30000,messages:[{role:'user',content:'synthetic'}],maxOutputTokens:1024,upstreamBudget:{reservedMicrousd:'1',inputBound:10,tariffVersion:'synthetic',inputMicrousdPerMillion:'1',outputMicrousdPerMillion:'1'},tools:[]});await until(()=>controller.status.calls===1);await f.control('/work');await f.control('/failed',{scope:'request',requestId,code:'pi_request_limit'});
+  assert.equal(frames.length,1);assert.equal(frames[0].code,'provider_outcome_unknown');assert.equal('failureDiagnostic' in frames[0],false);assert.equal(controller.status.terminalFailure.code,'pi_request_limit');assert.equal(controller.status.terminalFailure.requestId,requestId);assert.equal(controller.status.terminalFailure.requestEvidence,'outcome_unknown');
+ }finally{await f.close();}
+});

@@ -649,7 +649,7 @@ export async function runTui(options = {}, dependencies = {}) {
         try{saved=await ui.task('Save private coding checkpoint',()=>buyer.save());location=`Saved privately: ${saved.resumeId} · ${date(saved.savedAt)}`;}
         catch(e){await ui.page('Checkpoint could not be updated',[...errorLines(e),'The last successful checkpoint remains available.']);}
         let current,statusUnavailable=false;try{current=await buyer.status();lastSession=current;}catch{current=lastSession;statusUnavailable=true;}
-        const action=await ui.menu('Coding workspace',[item('failureDetails','Failure details','Inspect/export retained evidence; no model request.'),item('continue','Continue coding','Requires current accepted session authority.',!!buyer.lifecycle.closing||statusUnavailable||!!current.stoppedAt||!['ready','active'].includes(current.state)),item('apply','Review and Apply'),item('export','Review and export snapshot'),...(interrupted?[item('recover','Recover interrupted application')]:[]),item('finish','Finish session')],{lines:[location,...(buyer.lifecycle.failureDiagnostic?[failureSummary(buyer.lifecycle.failureDiagnostic)]:[]),...(current.stoppedAt?[`Stopped: ${words(current.stopReason??current.state)}`,`Cleanup: ${words(current.cleanupState??'pending')}`]:[]),...(statusUnavailable?['Session status unavailable · inference and mutations paused.']:[]),`Accepted time remaining: ${Math.max(0,Math.floor((current.expiresAt-Date.now())/1000))} seconds`,`Dispatches: ${statusUnavailable?'unavailable':current.requestSequence??0}/${current.requestLimit}`,`Reserved allowance: ${current.funded??'unknown'} · Charged: ${statusUnavailable?'unavailable':current.charged??'unknown'} test credits`,`Held liability: ${statusUnavailable?'unavailable':current.reserved??'unknown'} · Refunded: ${statusUnavailable?'unavailable':current.refunded??'unknown'}`,'Host application requires separate content review.']});
+        const action=await ui.menu('Coding workspace',[item('failureDetails','Failure details','Inspect/export retained evidence; no model request.'),item('continue','Continue coding','Requires current accepted session authority.',!!buyer.lifecycle.closing||statusUnavailable||!!current.stoppedAt||!['ready','active'].includes(current.state)),item('apply','Review and Apply'),item('export','Review and export snapshot'),...(interrupted?[item('recover','Recover interrupted application')]:[]),item('finish','Finish session')],{lines:[location,...(buyer.lifecycle.diagnosticSaveFailed?['Diagnostic save failed · retained evidence may be incomplete']:[]),...(buyer.lifecycle.failureDiagnostic?[failureSummary(buyer.lifecycle.failureDiagnostic)]:[]),...(current.stoppedAt?[`Stopped: ${words(current.stopReason??current.state)}`,`Cleanup: ${words(current.cleanupState??'pending')}`]:[]),...(statusUnavailable?['Session status unavailable · inference and mutations paused.']:[]),`Accepted time remaining: ${Math.max(0,Math.floor((current.expiresAt-Date.now())/1000))} seconds`,`Dispatches: ${statusUnavailable?'unavailable':current.requestSequence??0}/${current.requestLimit}`,`Reserved allowance: ${current.funded??'unknown'} · Charged: ${statusUnavailable?'unavailable':current.charged??'unknown'} test credits`,`Held liability: ${statusUnavailable?'unavailable':current.reserved??'unknown'} · Refunded: ${statusUnavailable?'unavailable':current.refunded??'unknown'}`,'Host application requires separate content review.']});
         if(action==='continue'){enterCoding=true;continue;}
         if(['apply','recover','export'].includes(action)){
           try{
@@ -660,7 +660,7 @@ export async function runTui(options = {}, dependencies = {}) {
           }catch(e){await ui.page('Saved-work recovery',[...errorLines(e),location,'Review, Apply and Export use the last saved snapshot. Further inference requires active compute.']);}
           continue;
         }
-        if(action==='failureDetails'){await failureDetails(buyer.lifecycle.failureDiagnostic);continue;}
+        if(action==='failureDetails'){await failureDetails(buyer.lifecycle.failureDiagnostic,buyer.lifecycle.events.filter(e=>e.phase==='diagnostic_save'&&e.code).map(e=>({phase:e.phase,status:'failed',code:e.code})));continue;}
         if(!action||action==='finish'){
           let changes;try{changes=await buyer.changes();}catch(e){await ui.page('Changes could not be inspected',errorLines(e));continue;}
           const finish=await ui.menu('Finish with saved work',[item('apply','Review and Apply'),item('save','Save and finish'),item('discard','Discard VM work and finish'),item('back','Back')],{lines:[location,`Unapplied changes: ${changes.changes.length}`,...changes.changes.map(c=>`${c.kind}: ${c.path}`)]});
@@ -698,10 +698,10 @@ export async function runTui(options = {}, dependencies = {}) {
     }
   }
   async function buyerFailure(id,remote) {
-    if(safeFailure(remote)&&remote.sessionId===id)return {failureDiagnostic:remote,outcomes:[]};
-    try {const {join}=await import('node:path'),{lstat}=await import('node:fs/promises');const base=join(await store.directory(),'coding');const st=await lstat(base);if(!st.isDirectory()||st.isSymbolicLink()||st.uid!==process.getuid()||(st.mode&0o077))return {};
-      const local=await readPrivateDiagnostic(join(base,id),'lifecycle.json'),d=safeFailure(local.failureDiagnostic??local.firstFailure?.failureDiagnostic);return d?.sessionId===id?{failureDiagnostic:d,outcomes:local.outcomes}:{};
-    }catch{return {};}
+    const remoteDiagnostic=safeFailure(remote)&&remote.sessionId===id?remote:null;
+    try {const {join}=await import('node:path'),{lstat}=await import('node:fs/promises');const base=join(await store.directory(),'coding');const st=await lstat(base);if(!st.isDirectory()||st.isSymbolicLink()||st.uid!==process.getuid()||(st.mode&0o077))return {failureDiagnostic:remoteDiagnostic,outcomes:[]};
+      const local=await readPrivateDiagnostic(join(base,id),'lifecycle.json'),d=safeFailure(local.failureDiagnostic??local.firstFailure?.failureDiagnostic);return {failureDiagnostic:remoteDiagnostic??(d?.sessionId===id?d:null),outcomes:[...(local.outcomes??[]),...(local.events??[]).filter(e=>e.phase==='diagnostic_save'&&e.code).map(e=>({phase:'diagnostic_save',status:'failed',code:e.code}))]};
+    }catch{return {failureDiagnostic:remoteDiagnostic,outcomes:[]};}
   }
   async function sessionDetail(id) {
     for (;;) {
