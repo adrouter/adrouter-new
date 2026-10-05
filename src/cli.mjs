@@ -1,3 +1,4 @@
+import { diagnoseProvider, diagnosisLines, retryProviderReports, retryProviderCleanup } from './provider-diagnose.mjs';
 import { MarketplaceDraft, MarketplaceListing, MarketplaceNetworkConfig, MarketplaceQuoteRequest, ProviderNodeDeletion } from './generated/validators.mjs';
 import { randomUUID } from 'node:crypto';
 import { Network, AuthStore, ClientError } from './network.mjs';
@@ -131,7 +132,10 @@ export async function run(args, dependencies = {}) {
       output(await get(`/listings?${query}`, true));
     } else throw new ClientError('unknown_command');
   } else if (command === 'provider') {
-    if (sub === 'create') output(await post('/providers/nodes', await draft(o, json)));
+    if(sub==='diagnose'){const result=await diagnoseProvider(network,requireId(id),store.profile);output(json?{...result.node,localReports:result.evidence.map(e=>({providerRunId:e.providerRunId,pendingReports:e.pending.length,firstFailure:e.local.firstFailure,outcomes:e.local.outcomes}))}:diagnosisLines(result).join('\n'));}
+    else if(sub==='retry-cleanup')output(await retryProviderCleanup(network,requireId(id),store.profile));
+    else if(sub==='retry-result-report')output(await retryProviderReports(network,requireId(id),store.profile));
+    else if (sub === 'create') output(await post('/providers/nodes', await draft(o, json)));
     else if (sub === 'capabilities') {if(!['off','supported'].includes(o.thinking))throw new ClientError('invalid_thinking_setting');output(await post(`/providers/nodes/${requireId(id)}/capabilities`,{thinkingEnabled:o.thinking==='supported'}));}
     else if (sub === 'listings') output(await get('/providers/nodes'));
     else if (sub === 'inspect') output(await get(`/providers/nodes/${requireId(id)}`));

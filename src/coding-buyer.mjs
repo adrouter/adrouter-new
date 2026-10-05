@@ -52,7 +52,7 @@ export class DispatchQueue {
 export async function openCodingBuyer(network,sessionId,{root,files,runtimeConfig,runtime:provided,signal,approve=approvalRequired,trusted=false,profile='buyer',resumeId,confirmProject=async()=>false,coordinator,progress=()=>{},intervals={}}={}) {
   if(!/^[a-z][a-z0-9_-]{0,31}$/.test(profile))throw new ClientError('invalid_profile_name');
   if(!/^[a-f0-9-]{36}$/.test(sessionId))throw new ClientError('coding_session_required');
-  let guest,workspace,closing,watchdog,statusPoll,expires,checkpoint,saving,snapshot,discarded=false,statusChecking,dependencyApproved=false,dependencyBytes=0;const abort=new AbortController(), queue=new DispatchQueue(),authorities=new Map(),mainCapability=randomBytes(32).toString('base64url');
+  let authorityDeadline;let guest,workspace,closing,watchdog,statusPoll,expires,checkpoint,saving,snapshot,discarded=false,statusChecking,dependencyApproved=false,dependencyBytes=0;const abort=new AbortController(), queue=new DispatchQueue(),authorities=new Map(),mainCapability=randomBytes(32).toString('base64url');
   const startupSignal=signal?AbortSignal.any([signal,abort.signal]):abort.signal;
   const lifecycle=new BuyerLifecycle(value=>{try{progress({status:value.events.at(-1)?.phase,paused:lifecycle.paused});}catch{}});
   let runtime,session,display,snapshotExclusions={},privateRoot,storage,storageValidated=false,requestClose,finishStartup;
@@ -84,7 +84,7 @@ export async function openCodingBuyer(network,sessionId,{root,files,runtimeConfi
   const close=async()=>{
     if(closing)return closing;lifecycle.closing=true;lifecycle.event('closure',{status:'closing'});
     queue.stop();approvals.stop();for(const [name,handler] of signalHandlers)process.removeListener(name,handler);
-    signal?.removeEventListener('abort',onAbort);watchdog?.stop();statusPoll?.stop();checkpoint?.stop();clearTimeout(expires);
+    signal?.removeEventListener('abort',onAbort);watchdog?.stop();statusPoll?.stop();checkpoint?.stop();clearTimeout(expires);clearTimeout(authorityDeadline);
     closing=(async()=>{
       if(!snapshot)abort.abort();
       await startupReady;
@@ -107,8 +107,8 @@ export async function openCodingBuyer(network,sessionId,{root,files,runtimeConfi
       try {
         const current=await network.request(`/v2/sessions/${sessionId}`,{signal:AbortSignal.any([abort.signal,AbortSignal.timeout(15000)])});
         if(!['ready','active'].includes(current.state)||current.expiresAt<=Date.now()||current.protocol!=='coding_v1'||current.listingId!==session.listingId||current.listingRevision!==session.listingRevision)throw new ClientError('session_not_active');
-        lifecycle.paused=false;return current;
-      }catch(e){lifecycle.paused=true;lifecycle.event('status',{code:e.code??'status_failed',status:recoverableStatusFailure(e)?'paused':'failed'});if(!recoverableStatusFailure(e))void close().catch(()=>{});throw e;}
+        lifecycle.paused=false;clearTimeout(authorityDeadline);authorityDeadline=undefined;return current;
+      }catch(e){lifecycle.paused=true;if(!authorityDeadline)authorityDeadline=setTimeout(()=>{lifecycle.event('authority_expiry',{code:'authority_unavailable'});void close().catch(()=>{});},Math.min(30000,Math.max(1,session.expiresAt-Date.now())));lifecycle.event('status',{code:e.code??'status_failed',status:recoverableStatusFailure(e)?'paused':'failed'});if(!recoverableStatusFailure(e))void close().catch(()=>{});throw e;}
     })();try{return await statusChecking;}finally{statusChecking=undefined;}
   };
   const approvals=new DispatchQueue();
@@ -191,7 +191,7 @@ export async function openCodingBuyer(network,sessionId,{root,files,runtimeConfi
     if(resumeId){if(!/^[a-f0-9-]{36}$/.test(resumeId))throw new ClientError('resume_id_invalid');const saved=(await openSavedCodingWork(profile,resumeId,{root:workspace.root,confirmProject})).state;if(saved.root!==root||Object.keys(saved.manifest).length!==Object.keys(workspace.manifest).length||Object.entries(saved.manifest).some(([p,h])=>!Object.hasOwn(workspace.manifest,p)||workspace.manifest[p]!==h))throw new ClientError('resume_workspace_mismatch');await restoreGuestState(runtime,guest,saved.files,saved.resources,Object.keys(saved.manifest).filter(p=>!Object.hasOwn(saved.files,p)));}
     startupSignal.throwIfAborted();
     watchdog=backgroundOperation(()=>runtime.touch(guest,{signal:AbortSignal.any([abort.signal,AbortSignal.timeout(10000)])}),intervals.keepalive??20000,e=>{lifecycle.event('keepalive',{code:e.code??'keepalive_failed'});void close();});
-    statusPoll=backgroundOperation(status,intervals.status??20000,()=>{});
+    statusPoll=backgroundOperation(status,intervals.status??5000,()=>{});
     expires=setTimeout(()=>{lifecycle.event('expiry',{code:'session_expired'});void close().catch(()=>{});},Math.max(1,session.expiresAt-Date.now()));
     const exportFiles=async()=>{const result=JSON.parse(await runtime.readCheckpoint(guest,['node','-e',`let input='';process.stdin.on('data',b=>input+=b).on('end',async()=>{const {workspaceSnapshot}=await import('/workspace/.adr-runtime/guest/workspace-snapshot.mjs');console.log(JSON.stringify(await workspaceSnapshot('/workspace',JSON.parse(input))));});`],{signal:abort.signal,outputBytes:24*1024*1024,input:JSON.stringify(Object.keys(workspace.manifest))}));snapshotExclusions=result.excluded;return result.files;};
     snapshot=async()=>{

@@ -1,39 +1,39 @@
-# Plan: Reliable API hosting and buyer coding — 4 October 2026
+> **Active plan — 5 October 2026:** Execute the [single ADRv2 implementation plan](/Users/ahmadzuhri/antigravity/3days/PLAN.md) through all five steps as one coordinated client/Router release. It covers the confirmed configuration 409, one-request setup gate, durable result reporting, complete failure cleanup, per-model status/diagnostics, old-entry retirement and manual retest handoff. Router/client source implementation and focused verification are in progress; integrated installed/hosted release gates remain pending. The prior sections below remain historical context; their earlier ready/done labels do not certify this repair.
+
+> **Historical alpha.38 blocker — 5 October 2026:** A new setup run reproduced HTTP 409 `connection_restart_required` before any model request. Router compares semantically identical configuration objects using order-sensitive JSON strings. The replacement specification requires a semantic comparison, one request per selected model, a strict all-pass publication gate, per-model status and full failure cleanup. The semantic comparison and integrated repair are now implemented in designated source; installed/hosted release acceptance is pending. Earlier readiness evidence below remains historical for alpha.38; do not claim the new setup path is ready until the fix and its gates pass. See `docs/provider-api-model-account-management-spec.md` in the designated client checkout.
+
+# Plan: Manual live-test readiness and storage cleanup — 5 October 2026
 
 ## Goal
-Implement the supplied replacement specification end to end; this repository owns provider and buyer VMs, bundled adapters, setup, selected-file Apply, private installed artifact.
+Deliver synchronized provider specifications, a self-contained operator-run Flash/Pro/Custom API test file and measured storage cleanup. This repository owns client installation and TUI. Current model coverage is sufficient; live reliability remains unproven.
 
 ## Context
-Designated clean inputs: client 537d31e6d38e7c1b0ee0762eb8b7de1521eadedc; Router ef3d80dbb3145b2b0e78589ae83aa19f858e4ea1. The approved replacement specification supersedes contradictory historical requirements. Earlier plan sections are preserved below.
+Designated canonical implementation checkout, branch `codex/adrv2-reliability-20261001`. Private alpha.38 product source `2323c25c076d8911f37b9a520f8ac0514bfaf035`; Router product `10bc3c4ac5d2125093d9f16db48e807967267a2d`. Both local documentation heads matched fresh canonical GitHub feature-branch reads on 5 October. The launcher selects the retained alpha.38 installation. No runtime fix or deployment is planned. Earlier sections below preserve historical evidence.
 
 ## Research Summary
-Fresh GitHub release reads freeze Pi v1.0.2 and OpenCode v1.18.34. DeepSeek documents retained reasoning_content for all preceding assistant turns when tools are supplied. OpenCode uses SDK-backed providers and custom endpoints. Existing source holds full unused session funding on uncertainty and requires manual execution release. Context7 is unavailable; official documentation and pinned executable source provide verification.
+Pinned executable source and retained alpha.38 receipts establish the menu labels, model binding, native gates and recovery path. Fresh installed/source byte comparison and canonical GitHub branch reads passed. Docker's official pruning and Mac disk-space documentation supports explicit unused-image removal, selected builder-cache pruning and allocation measurement. The supplied manual-live-test plan governs this continuation; broader model completion is deferred.
 
 ## Constraints
-Preserve guest-only secrets, role isolation, account spending limits, no replay, one provider VM/slot, original projects and saved work. No database reset or planned schema migration. Generate contracts/catalog from Router source. Separate accounting from execution and cleanup. Dependencies may change only for pinned required adapters. Deployment uses clean committed inputs, sole-relay drain/in-place replacement and unchanged Pages.
+Documentation and storage only. Preserve guest-only keys, valid role profiles, original projects, saved work, spending limits and unresolved liabilities. No inference, computer use, dependency update, rebuild or full 660-second rerun. A concrete DeepSeek-blocking runtime defect requires a new immutable artifact and affected release gates. Deployment/publication preflight is not invoked for this local/documentation task; npm authentication is explicitly deferred.
 
 ## Out of Scope
-Public npm publication/promotion, unrelated users' cleanup, access-policy/protection changes, secret export and legacy-client changes.
+Agent-run live testing, public npm publication/promotion, unrelated session cleanup, hosted database/access-policy/protection mutations and legacy-client changes.
 
 ## Reversibility
-Keep previous immutable artifacts and installations. Make source changes in the designated checkouts. Append ledger/receipt evidence; preserve unresolved holds. Cleanup is limited to authorized old failed acceptance execution resources.
+Retain compressed alpha.36/.37/.38, selected alpha.38 installation, current/previous Router images and small source/hash/diagnostic receipts. Remove only manifested replaceable paths. Preserve every Docker volume/container, ownership-unverified guest, active/dirty implementation checkout and unique ignored data/captures. Recovery is from retained source/lockfiles, immutable packages and registry references.
 
 ## Step A: Specification and reproducible inputs
 ### Status
 `done`
 ### Tasks
-- [x] Replace both specification copies and freeze upstream source/dependency/catalog identities.
+- [x] Replace both specifications with the DeepSeek-first reliability scope and separate implementation/readiness/live statuses.
+- [x] Verify frozen artifact identities and source-backed shipped controls.
 ### Relevant Files
-- docs/provider-api-model-account-management-spec.md (client); backend/scripts/generate-pi-catalog.mjs (Router).
+- docs/provider-api-model-account-management-spec.md in the designated and original client checkouts.
 ### Acceptance Criteria
-- [x] Specifications agree; eligible adapters have explicit coverage and provenance.
+- [x] Both specs agree; current catalog sufficient; manual operator acceptance is distinct from installed synthetic verification.
 ### Validation Results
-Five-platform kickoff: Fly app/Machine/registry, Pages project/deployment, Supabase project/database, GitHub repository/ref access passed. Router protections endpoint is plan-limited (403), branch metadata reports unprotected. npm E401 explicitly waived by operator on 4 October for this private delivery. No public publishing path is selected.
-
-
-Continuation preflight on 4 October 2026: Fly app/Machine, Pages project/deployment, Supabase linked database and canonical GitHub refs/push permissions passed; buyer/provider/operator profiles authenticated through supported operations. npm authentication remains explicitly waived for this private delivery. Fly registry authentication and authenticated recovery-manifest inspection timed out despite working Docker and reachable public registry/control-plane endpoints. Router ruleset protections remain unverified (plan-limited HTTP 403); branch metadata was read independently. Required registry check is pending operator terminal diagnosis before implementation/build/packaging/deployment. Source/runtime and hosted artifacts have not advanced in this continuation. Metadata-only receipt: outputs/adr-replacement-2026-10-04/continuation-preflight.json.
-
-Registry recheck after operator terminal authentication passed: flyctl authentication succeeded and authenticated recovery-manifest digest matched. Continuation source implementation is now in progress; npm waiver remains unchanged.
+Fresh canonical GitHub branch heads match local documentation heads; both implementation checkouts were clean before documentation edits. The retained verifier compared all 51,551 alpha.38 source/installed files and confirmed the tarball SHA-256. Provider profile recovery passed in the prior continuation; future sign-in/lock repair is conditional. No deployment or publishing is planned; renewed npm deferral recorded.
 
 ## Step B: Execution, accounting and lifecycle
 ### Status
@@ -47,7 +47,7 @@ Registry recheck after operator terminal authentication passed: flyctl authentic
 ### Acceptance Criteria
 - [x] Confirmed execution ends independently of liabilities; stale callbacks cannot affect newer runs.
 ### Validation Results
-Not run.
+Retained alpha.38 lifecycle and paired Router PostgreSQL-backed receipt evidence passed. Current task preserves that evidence; no lifecycle code changes or full-suite rerun.
 
 ## Step C: Provider and buyer completion
 ### Status
@@ -62,29 +62,45 @@ Private alpha.38: source check passed 870 tests; installed native adapter matrix
 
 ## Step D: Final verification and cleanup
 ### Status
-`in_progress`
+`done`
+### Objective
+Finish manual-test readiness and remove only verified replaceable storage.
 ### Tasks
-- [x] Run relevant complete suites, inspect diff and remove debugging instrumentation.
-- [x] Build clean paired immutable artifacts, deploy Router and verify exact installed Mac VM/PTY/660-second lifecycle gates.
-- [ ] Clean only authorized failed acceptance resources, then perform fresh independent Flash/Pro and Custom API acceptance with operator guest-key entry.
-- [ ] Record exact artifacts, separate catalog/adapter/live coverage and remaining limitations.
+- [x] Verify clean implementation checkouts, canonical branch heads, alpha.38 launcher and all 51,551 installed package bytes.
+- [x] Recheck deployed Router digest, readiness and unchanged private policy through read-only operations.
+- [x] Synchronize both specs and write outputs/adr-live-test-2026-10-05/live-test-run.md with blank result fields and three disposable four-file fixtures.
+- [x] Inventory absolute paths/Docker IDs, resolve dependencies and active use, then remove eligible candidates with recovery evidence.
+- [x] Reverify alpha.36/.37/.38 hashes, retained runtime, source, profiles/saved work metadata and Docker volumes; measure savings and write cleanup receipt.
+### Relevant Files
+- docs/provider-api-model-account-management-spec.md in designated client and original client checkout.
+- outputs/adr-live-test-2026-10-05/{live-test-run.md,cleanup-manifest.json,cleanup-receipt.md}.
+### Expected Changes
+Documentation and disposable fixtures only; removal of explicit eligible replaceable payloads.
+### Do Not Modify
+Runtime/API/dependencies, deployed artifacts, financial state, spending limits, credentials, saved work, volumes and ownership-unverified guests. Preserve dirty historical checkouts.
+### Commands
+Use retained byte verifier before documentation edits, tar member comparison afterward, deterministic local fixture tests, git diff --check, safe metadata inventory and read-only Router checks. Do not repeat the full 660-second suite or package/build for documentation changes.
 ### Acceptance Criteria
-- [ ] Every definition-of-done gate in the supplied specification has evidence.
+- [x] Ready for the operator’s independent live test, with all live results blank.
+- [x] Both spec copies agree and menu/command references match shipped source.
+- [x] Cleanup savings measured; retained recovery material and persistent data preserved.
 ### Validation Results
-Router product 10bc3c4ac5d2125093d9f16db48e807967267a2d deployed to sole Machine d8d2d26c057308 in place after relay drain/zero-lease proof. Serving platform digest 2fbcdc5cf157a7bb5014faf20fe30c3668de3bc802e09ef078e466a6d11aafb6; 11 compiled modules match; fixed HIGH/CRITICAL scan findings zero. Relay ownership (one lease) and unchanged private policy/resources/services verified. Pages deployment abfaca46-e61c-4487-9360-8d6364e734f8 and all 28 comparisons preserved; no hosted migration. Verified alpha.38 launcher selected; existing terminal processes were not restarted. All task-owned synthetic VMs/volumes removed. Live Ghostty acceptance is blocked by computer-use tooling; provider profile requires native Safari recovery after refresh_outcome_unknown_reenroll_required. Two pre-existing VMs were not removed because ownership inspection returned sandbox_not_owned. Unknown liabilities remain preserved. Metadata-only receipt: outputs/adr-replacement-2026-10-04/private-delivery-receipt.json.
+Before edits, installed/source comparison passed 51,551 files; SHA-256 8b674967848c4afdbafcca83fadb9353e800fac6e6ae203a07e86572b7e56a22. Both designated implementation checkouts were clean; fresh canonical GitHub feature heads matched. Prior native matrix, provider console, selected Apply and full 660-second lifecycle evidence is retained in outputs/adr-replacement-2026-10-04/private-delivery-receipt.json. No live inference dispatched.
+### Findings / Notes
+Implementation verified and ready-for-manual-test are distinct from live acceptance passed. Native Safari recovery succeeded in the previous continuation; recovery is conditional on a future sign-in failure. Ghostty automation restrictions do not block an independent manual test. Two old VMs remain ownership-unverified and preserved.
 
-Current continuation source checks: 870 client tests passed; coding runtime rebuilt from retained be7c53dc0b63fb90b70bd6cb7cad4d5713cc0d1a with retained upstream suites and 23,473-file provenance verification. Provider runtime rebuilt with pinned Pi 1.0.2 and SDK inventories (28,005 files). Router authoritative inputs committed before generation; generator drift check passed against Router 513e75b0f6d91d68671a2e403b5c395138b0542f. Shared budget policy, both unavailable-model setup paths and explicit SDK serialization/rejection have regressions. Actual installed gates remain pending. Local reconnect acceptance is explicit opt-in and uses a run-targeted SIGURG signal only while idle; it never interrupts inference or the guest.
-
-Installed alpha.37 native matrix passed 644 cases and actual no-key loopback/tunnel/binding/redirect/teardown acceptance passed. Fresh keyed provider-console startup failed on credentialFields temporal initialization order, which no-key short-circuiting had masked. Fix the source ordering, rebuild the provider payload, retain alpha.37 unchanged and deliver alpha.38 from a new clean commit. Required native gates must bind alpha.38; no live/provider/deployment completion is claimed.
+Final local readiness/cleanup validation on 5 October: 73 explicit paths and 41 unused Docker image identities removed; selected builder cache zero. Workspace allocation reduced 12.33 GiB; Docker allocation reduced 23.87 GiB; host free space increased 36.62 GiB at measurement. Alpha.13 active-use installation, unique ignored parity data/captures, 19 Docker volumes/history container and two ownership-unverified stopped VMs retained. Full 51,551-file source/installed comparison, alpha.36/.37 hashes, runtime hashes, profile/saved-work metadata and prior dirty statuses preserved. Three fixtures passed all nine local behavior stages; runbook shell/AppleScript syntax and links pass, with blank live results. Final authenticated Fly/readiness check passed after transient metadata/read failures; exact product digest, policy hash, relay and resources match. No paid inference, deployment, packaging or npm authentication occurred. Receipt: outputs/adr-live-test-2026-10-05/cleanup-receipt.md.
 
 ## Follow-up Work
-Implementation and installed/hosted verification are complete. Operator recovery command: adr-cli --profile provider login --recover, followed by native Safari approval. Ghostty computer-use is currently denied by the tool for safety reasons, so full Flash/Pro/Custom API TUI acceptance requires an allowed surface or operator operation. Reopen dedicated role terminals to load alpha.38. Keys remain guest-only; preserve old VMs until supported ownership verification is available. Live success is not inferred from synthetic tests.
+The operator performs and fills in the independent runbook. Flash, Pro and Custom API live acceptance remain NOT RUN until observed. Any actual runtime defect requires a new immutable version and affected release gates. Broader provider completion is deferred.
 
 ## Decision Log
 | Date | Decision | Rationale | Impact |
 | --- | --- | --- | --- |
 | 2026-10-04 | Skip npm authentication under explicit operator approval | Private delivery; current E401 acknowledged | Continue implementation; public publication remains out of scope |
 | 2026-10-04 | Preserve prior plans below | Historical evidence and existing decisions | New replacement specification controls current work |
+| 2026-10-05 | Manual test is operator-run; defer npm auth under renewed explicit approval | Documentation/storage task; no deployment/publication | No paid inference or computer use; retain live results blank |
+| 2026-10-05 | Current catalog is sufficient | Flash and Pro are selectable in installed catalog | Broader coverage and incomplete catalog entries deferred |
 
 ---
 

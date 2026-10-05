@@ -1,3 +1,5 @@
+import { diagnoseProvider, diagnosisLines, retryProviderReports, retryProviderCleanup, providerEvidence } from './provider-diagnose.mjs';
+import { modelStatusLines, providerRow, visibleModelStatus } from './model-status.mjs';
 import { connectionCapabilities } from './provider-models.mjs';
 import {providerRequiresBudget} from './generated/provider-budget.mjs';
 import { providerCanLaunch, providerDiagnostic, providerDiagnosticLines } from './provider-diagnostics.mjs';
@@ -37,7 +39,7 @@ export function catalogModelsForConnection(provider,connection) {
   });
   return [...new Map(matches.map(m=>[m.id,m])).values()];
 }
-const item = (value, label, detail = '', disabled = false) => ({ value, label, detail:Array.isArray(detail)?detail.join(' '):detail, details:Array.isArray(detail)?detail:undefined, disabled });
+const item = (value, label, detail = '', disabled = false) => ({ value, label, action:['status','diagnose','retryReport','cleanup','pause','stop','delete','setup','refresh','new','filters','next','back'].includes(value), detail:Array.isArray(detail)?detail.join(' '):detail, details:Array.isArray(detail)?detail:undefined, disabled });
 const required = value => value.trim() ? '' : 'Please enter a value.';
 const integer = (min, max) => value => /^(0|[1-9][0-9]*)$/.test(value) && Number.isSafeInteger(Number(value)) && Number(value) >= min && Number(value) <= max ? '' : `Enter a whole number from ${min} to ${max}.`;
 const date = value => typeof value === 'number' ? new Date(value).toLocaleString() : '—';
@@ -112,11 +114,12 @@ export const errorLines = error => {
   return [problems[code] ?? `Unable to complete this operation: ${words(code)}.`, '', `Reference: ${code}`];
 };
 export function listingLines(l) {
-  return [l.name, `Model: ${l.model}`, `Supply: ${words(l.supplyClass)} · ${l.availability}`, `Availability: ${l.ready ? 'Hot · ready' : l.controlOnline && l.availability === 'cold' ? 'Cold · control online · 120 seconds to activate' : 'Offline'}`, `Input: ${l.inputRate} test credits / 1M tokens`, `Output: ${l.outputRate} test credits / 1M tokens`, 'Test credits have no cash value.', l.nativeQualified ? 'Compatibility: streaming, tools and final usage verified' : l.evaluation ? `Evaluation: ${l.evaluation.passed ? 'qualified' : 'provisional'} · ${l.evaluation.sampleCount} samples · ${l.evaluation.elapsedMs} ms` : 'Evaluation: not available', `Published: ${date(l.publishedAt)}`];
+  return [...modelStatusLines(l.modelStatus?[l.modelStatus]:[]),l.name, `Model: ${l.model}`, `Supply: ${words(l.supplyClass)} · ${l.availability}`, `Availability: ${l.ready ? 'Hot · ready' : l.controlOnline && l.availability === 'cold' ? 'Cold · control online · 120 seconds to activate' : 'Offline'}`, `Input: ${l.inputRate} test credits / 1M tokens`, `Output: ${l.outputRate} test credits / 1M tokens`, 'Test credits have no cash value.', l.nativeQualified ? 'Setup probe: passed; buyer tool round trip awaits acceptance' : l.evaluation ? `Evaluation: ${l.evaluation.passed ? 'qualified' : 'provisional'} · ${l.evaluation.sampleCount} samples · ${l.evaluation.elapsedMs} ms` : 'Evaluation: not available', `Published: ${date(l.publishedAt)}`];
 }
 export function quoteAccess(config,listing) {
   if(!config)return {disabled:true,code:'network_policy_unavailable',detail:problems.network_policy_unavailable};
   if(!config.admissions&&!config.privateRehearsal)return {disabled:true,code:'private_rehearsal_disabled',detail:problems.private_rehearsal_disabled};
+  if(listing.modelStatus&&visibleModelStatus(listing.modelStatus).availability!=='Available')return {disabled:true,code:'model_unavailable',detail:visibleModelStatus(listing.modelStatus).reason};
   if(listing.ready)return {disabled:false,detail:'Review exact limits before reserving.'};
   if(listing.availability==='cold'&&config.privateRehearsal&&!config.admissions)return {disabled:true,code:'cold_private_rehearsal_unavailable',detail:problems.cold_private_rehearsal_unavailable};
   if(config.admissions&&listing.availability==='cold'&&listing.controlOnline)return {disabled:false,detail:'Review activation and session limits before reserving.'};
@@ -137,6 +140,21 @@ export const providerFields = [
 export async function runTui(options = {}, dependencies = {}) {
   const ui = dependencies.ui ?? new TerminalUI(); let store = dependencies.store ?? new AuthStore(undefined, options.profile ?? 'default');
   let network = dependencies.network; let config; let runtimeConfig; const providersRunning = new Map(); const setupDrafts = new Map(); const limitDrafts = new Map(); const deletionKeys = new Map(); let currentProviderId;let verifiedIdentity,identityAt=0,identityError,authState='signed_out',identityGeneration=0;
+  let interruptRequested=false;
+  ui.onInterrupt=()=>{interruptRequested=true;ui.pending?.resolve(null);};
+  const requestExit=async()=>{
+    if(![...providersRunning.values()].some(p=>!p.status.stopped))return true;
+    const choice=await ui.menu('Provider is running',[item('keep','Keep running'),item('stopExit','Stop and exit')],{fixedActions:true,lines:['This terminal owns a provider. Stop is explicit.']});
+    return choice==='stopExit';
+  };
+  const pollingMenu=async(title,load,choices,options={})=>{
+    const selectedNetwork=network,selectedProfile=store.profile;let value=await load(),stale=false,pending=false,stopped=false;
+    const entries=choices(value);
+    const poll=async()=>{if(pending||stopped)return;pending=true;try{const next=await load();if(stopped||network!==selectedNetwork||store.profile!==selectedProfile)return;value=next;stale=false;entries.splice(0,entries.length,...choices(value));}catch{stale=true;}finally{pending=false;if(!stopped)ui.pending?.redraw?.();}};
+    const timer=setInterval(()=>void poll(),5000);
+    try{return await ui.menu(title,entries,{...options,explicitFilter:true,tick:true,lines:()=>[...(stale?['Status refresh failed: availability Unknown.']:[]),...(typeof options.lines==='function'?options.lines():options.lines??[])]});}
+    finally{stopped=true;clearInterval(timer);}
+  };
   const pruneProviders = () => { for (const [id,controller] of providersRunning) if (providerCanLaunch(controller)) providersRunning.delete(id); };
   const trackProvider = (id,controller) => {
     providersRunning.set(id,controller);
@@ -242,7 +260,7 @@ export async function runTui(options = {}, dependencies = {}) {
       if (ui.screen?.title?.startsWith('Provider operation')) ui.pending?.redraw?.();
     } }));
     trackProvider(node.id,result);
-    await ui.page(() => result.status.cleanupRequired ? 'Provider operation needs cleanup' : result.status.stopped ? 'Provider operation stopped' : 'Provider operation started', () => providerStatusLines(result.status),{footer:'Enter Continue · Esc / Ctrl+C Stop provider VM',onCancel:()=>result.status.stopped?undefined:result.stop()});
+    await ui.page(() => result.status.cleanupRequired ? 'Provider operation needs cleanup' : result.status.stopped ? 'Provider operation stopped' : 'Provider operation started', () => providerStatusLines(result.status),{footer:'Enter / Esc Back · Use Stop to close the provider',onCancel:()=>undefined});
   }
   async function createListing() {
     actor('provider');
@@ -291,29 +309,37 @@ export async function runTui(options = {}, dependencies = {}) {
     if(!config?.capabilities?.includes('pi_native_v3'))throw new ClientError('pi_native_client_required');
     const draftKey='native:'+store.profile+':'+network.origin;
     const state=setupDrafts.get(draftKey)??{provider:existing?.provider,models:existing?.models??[],discoveredModels:existing?.discoveredModels??[],connection:structuredClone(existing?.connection??{kind:'builtin',modelDefinitions:[],headerNames:[]}),limits:existing?{...existing,...existing.fields,maxOutputTokens:String(existing.maxOutputTokens)}:{}};setupDrafts.set(draftKey,state);
-    if(!state.provider){const kind=supplyClass==='self_hosted'?'custom':await ui.menu('Connection type',[item('builtin','Built-in provider'),item('custom','Custom API','Use a supported Pi protocol with your endpoint and model IDs.'),item('back','Back')]);if(!kind||kind==='back')return;state.connection.kind=kind;
-      if(kind==='builtin'){state.provider=await ui.menu('Choose provider',[...piCatalog.providers.map(p=>item(p.id,p.name)),item('back','Back')]);if(!state.provider||state.provider==='back'){state.provider=undefined;return;}}
+    if(!state.provider){let kind='custom';
+      if(supplyClass!=='self_hosted'){
+        const eligible=piCatalog.providers.filter(p=>p.models.some(m=>!m.unavailableReason&&!m.api?.startsWith('sdk:')));
+        const api=await ui.menu('API · 1 of 4',[...eligible.map(p=>item(p.id,p.name)),item('advanced','Advanced connection setup','Additional adapters and Custom API'),item('back','Back')]);
+        if(!api||api==='back')return;
+        if(api==='advanced'){kind=await ui.menu('Advanced connection setup',[item('builtin','Additional provider adapters'),item('custom','Custom API'),item('back','Back')]);if(!kind||kind==='back')return;}
+        else{kind='builtin';state.provider=api;}
+      }
+      state.connection.kind=kind;
+      if(kind==='builtin'){if(!state.provider)state.provider=await ui.menu('Additional provider adapters',[...piCatalog.providers.map(p=>item(p.id,p.name)),item('back','Back')]);if(!state.provider||state.provider==='back'){state.provider=undefined;return;}}
       else {const value=await ui.form('Custom API',[{name:'provider',label:'Connection provider ID',validate:v=>/^[a-z][a-z0-9-]{0,63}$/.test(v)?'':'Use a lowercase identifier.'},{name:'baseUrl',label:supplyClass==='self_hosted'?'API base URL (HTTPS or loopback HTTP)':'HTTPS API base URL',maxLength:2048,validate:v=>{try{const u=new URL(v);return (u.protocol==='https:'||supplyClass==='self_hosted'&&u.protocol==='http:'&&['127.0.0.1','[::1]'].includes(u.hostname)&&Number(u.port)>=1024)&&!u.username&&!u.password&&!u.search&&!u.hash?'':'Use HTTPS, or an explicit loopback HTTP port for your self-hosted engine.';}catch{return 'Enter an HTTPS base URL.';}}},{name:'api',label:'Inference adapter',choices:['openai-completions','openai-responses','anthropic-messages','google-generative-ai','mistral-conversations','azure-openai-responses','pi-messages',...Object.entries(piCatalog.adapters).filter(([,a])=>!a.piApi).map(([id])=>'sdk:'+id)],default:'openai-completions'}]);if(!value)return;state.provider=value.provider;Object.assign(state.connection,{baseUrl:value.baseUrl,api:value.api});if(supplyClass==='self_hosted'){const authentication=await ui.menu('Self-hosted authentication',[item('none','No API key'),item('api_key','API key entered inside guest'),item('back','Back')]);if(!authentication||authentication==='back')return;state.connection.authentication=authentication;}}
     }
-    const baseProvider=piCatalog.providers.find(p=>p.id===state.provider)??{name:state.provider,models:[],fields:[]},provider={...baseProvider,models:catalogModelsForConnection(state.provider,state.connection),fields:state.connection.kind==='custom'?(piCatalog.adapters[state.connection.api?.slice(4)]?.fields??[]).map(name=>({name,label:name.replaceAll('_',' '),pattern:name.endsWith('BASE_URL')?'^https://[^\\s?#@]+$':'^[a-zA-Z0-9][a-zA-Z0-9_.-]{0,127}$'})):baseProvider.fields},selected=new Set(state.models),deferSelection=!existing&&(state.connection.kind==='builtin'||provider.models.some(m=>!m.unavailableReason));
+    const baseProvider=piCatalog.providers.find(p=>p.id===state.provider)??{name:state.provider,models:[],fields:[]},provider={...baseProvider,models:catalogModelsForConnection(state.provider,state.connection),fields:state.connection.kind==='custom'?(piCatalog.adapters[state.connection.api?.slice(4)]?.fields??[]).map(name=>({name,label:name.replaceAll('_',' '),pattern:name.endsWith('BASE_URL')?'^https://[^\\s?#@]+$':'^[a-zA-Z0-9][a-zA-Z0-9_.-]{0,127}$'})):baseProvider.fields},selected=new Set(state.models),deferSelection=false;
     if(deferSelection&&!selected.size){const initial=provider.models.find(m=>!m.unavailableReason);if(!initial)throw new ClientError('provider_model_metadata_required');selected.add(initial.id);}
+    const values=await ui.form('Limits · 2 of 4',[{name:'name',label:'Connection name',default:provider.name,validate:required},...provider.fields.map(f=>({...f,validate:v=>new RegExp(f.pattern).test(v)?'':'Enter the provider identifier.'})),{name:'totalTokens',label:'Total tokens across offered models',default:'1000000',validate:integer(1,999999999999)},{name:'testCredits',label:'Total AdRouter credits',default:'10000',validate:integer(1,999999999)},{name:'maxOutputTokens',label:'Maximum output per request',default:'4096',validate:integer(128,8192)}],state.limits,'Limits are cumulative. Consumed usage and unresolved reservations survive restarts.');if(!values)return;Object.assign(state.limits,values);
     for(;!deferSelection;){
       const known=[...provider.models,...state.connection.modelDefinitions.filter(m=>!provider.models.some(x=>x.id===m.id)).map(m=>({...m,name:m.name??m.id,api:m.api??state.connection.api}))];
-      const action=await ui.menu('Choose offered models',[item('continue',`Continue with ${selected.size} models`,'Only selected models can be published.',!selected.size||known.some(m=>selected.has(m.id)&&m.unavailableReason)),item('manual','Add model by ID','Use this when discovery is unavailable or the model is absent.'),...state.discoveredModels.filter(id=>!known.some(m=>m.id===id)).map(id=>item('discovered:'+id,id,'Discovered model; define verified metadata before offering.')),...known.map(m=>item(m.id,`${selected.has(m.id)?'[x]':'[ ]'} ${m.name}`,m.unavailableReason??`${m.id} · ${m.api}`,!!m.unavailableReason&&!selected.has(m.id))),item('back','Back')]);
+      const action=await ui.menu('Models · 3 of 4',[item('continue',`Continue with ${selected.size} models`,'Only selected models can be published.',!selected.size||known.some(m=>selected.has(m.id)&&m.unavailableReason)),item('manual','Add model by ID','Use this when discovery is unavailable or the model is absent.'),...state.discoveredModels.filter(id=>!known.some(m=>m.id===id)).map(id=>item('discovered:'+id,id,'Discovered model; define verified metadata before offering.')),...known.map(m=>item(m.id,`${selected.has(m.id)?'[x]':'[ ]'} ${m.name}`,m.unavailableReason??`${m.id} · ${m.api}`,!!m.unavailableReason&&!selected.has(m.id))),item('back','Back')]);
       if(!action||action==='back')return;if(action==='continue'){if(!selected.size||known.some(m=>selected.has(m.id)&&m.unavailableReason))continue;break;}
       if(action==='manual'||action.startsWith('discovered:')){
         const values=await ui.form('Manual model definition',[{name:'id',label:'Exact model ID',default:action.startsWith('discovered:')?action.slice(11):'',maxLength:256,validate:required},{name:'contextWindow',label:'Context tokens',default:'32768',validate:integer(4096,131072)},{name:'maxTokens',label:'Maximum output tokens',default:'4096',validate:integer(128,8192)},...['input','output','cacheRead','cacheWrite'].map(name=>({name,label:`${name} USD per million tokens`,validate:v=>v.trim()!==''&&Number.isFinite(Number(v))&&Number(v)>=0?'':'Enter the verified rate; unknown is not zero.'}))]);if(!values)continue;
         state.connection.modelDefinitions=state.connection.modelDefinitions.filter(m=>m.id!==values.id);state.connection.modelDefinitions.push({id:values.id,contextWindow:Number(values.contextWindow),maxTokens:Number(values.maxTokens),cost:Object.fromEntries(['input','output','cacheRead','cacheWrite'].map(k=>[k,Number(values[k])])),thinking:'none'});selected.add(values.id);
       }else if(selected.has(action))selected.delete(action);else if(selected.size<16)selected.add(action);state.models=[...selected];
     }
-    const values=await ui.form('Shared provider limits',[{name:'name',label:'Connection name',default:provider.name,validate:required},...provider.fields.map(f=>({...f,validate:v=>new RegExp(f.pattern).test(v)?'':'Enter the provider identifier.'})),{name:'totalTokens',label:'Total tokens across offered models',default:'1000000',validate:integer(1,999999999999)},{name:'testCredits',label:'Total AdRouter credits',default:'10000',validate:integer(1,999999999)},{name:'maxOutputTokens',label:'Maximum output per request',default:'4096',validate:integer(128,8192)}],state.limits,'Limits are cumulative. Consumed usage and unresolved reservations survive restarts.');if(!values)return;Object.assign(state.limits,values);
     state.limits.inputRate??='1000';state.limits.outputRate??='3000';
     const choice=await ui.menu('Review connection',[item('save','Save connection','Saving performs no inference.'),item('advanced','Advanced settings','Endpoint, adapter, header names and compatibility.'),item('back','Back')]);if(!choice||choice==='back')return;
     if(choice==='advanced'){
       const advanced=await ui.form('Advanced connection settings',[{name:'baseUrl',label:'Base URL (blank uses built-in default)',maxLength:2048},{name:'api',label:'API protocol (blank uses model default)'},{name:'headers',label:'Secret header names, comma separated',help:'Values are entered only inside the provider guest.'},{name:'compat',label:'Pi compatibility settings JSON',default:'{}',maxLength:4096,validate:v=>{try{return typeof JSON.parse(v)==='object'&&!Array.isArray(JSON.parse(v))?'':'Enter a JSON object.';}catch{return 'Enter a JSON object.';}}}],{baseUrl:state.connection.baseUrl??'',api:state.connection.api??'',headers:state.connection.headerNames.join(','),compat:JSON.stringify(state.connection.compat??{}),inputRate:state.limits.inputRate,outputRate:state.limits.outputRate});if(!advanced)return;Object.assign(state.connection,{...(advanced.baseUrl?{baseUrl:advanced.baseUrl}:{}),...(advanced.api?{api:advanced.api}:{}),headerNames:advanced.headers.split(',').map(v=>v.trim()).filter(Boolean),compat:JSON.parse(advanced.compat)});if(!await confirm('Save connection?',['No inference will run until you choose Start.'],'Save'))return;
     }
     const fields=Object.fromEntries(provider.fields.map(f=>[f.name,values[f.name]]));
-    const payload={connectorProtocol:'pi_native_v3',supplyClass,modelsConfirmed:existing?.modelsConfirmed??false,name:values.name,provider:state.provider,models:[...selected],fields,connection:connectionCapabilities(state.provider,state.connection),totalTokens:values.totalTokens,testCredits:values.testCredits,maxOutputTokens:Number(values.maxOutputTokens),inputRate:state.limits.inputRate,outputRate:state.limits.outputRate};
+    const payload={connectorProtocol:'pi_native_v3',supplyClass,modelsConfirmed:true,name:values.name,provider:state.provider,models:[...selected],fields,connection:connectionCapabilities(state.provider,state.connection),totalTokens:values.totalTokens,testCredits:values.testCredits,maxOutputTokens:Number(values.maxOutputTokens),inputRate:state.limits.inputRate,outputRate:state.limits.outputRate};
     if(existing&&!await confirm('Save provider changes?',[`Shared limit: ${payload.totalTokens} tokens / ${payload.testCredits} AdRouter credits`,'Usage and liabilities remain. Changes require qualification again.'],'Save changes'))return;
     const node=await post(existing?`/providers/nodes/${existing.id}/native`:'/providers/nodes',existing?{...payload,expectedRevision:existing.nativeRevision??0,confirmIncrease:true}:payload);setupDrafts.delete(draftKey);const next=await ui.menu('Connection saved',[item('continue','Continue setup','Prepare the guest; Start provider separately authorizes bounded qualification and publication.'),item('back','Back')],{lines:['No inference has run. Your connection is saved.']});if(next==='continue')await guidedProvider(node);if(!existing)await manageNode(node.id,true);
   }
@@ -342,7 +368,7 @@ export async function runTui(options = {}, dependencies = {}) {
         configuration.models=[...selected];configuration.modelsConfirmed=true;
         await controller.configure(configuration);node=await get(`/providers/nodes/${node.id}`);
       }
-      const action=await ui.menu('Start provider',[item('start','Start provider','Run bounded streaming and tool checks, publish selected models, then connect.'),item('back','Back')],{lines:[node.name,node.endpoint,...node.models.map(m=>'• '+m),...(node.nativeModels??[]).map(m=>`Reasoning ${m.model}: ${m.defaultSettings?.reasoning??'off'} · Effective output ${m.maxOutputTokens}; native ${m.nativeLimits?.maxOutputTokens??'unknown'}`),`Shared allowance: ${node.sharedAllowance.totalTokens} tokens · ${node.sharedAllowance.testCredits} AdRouter credits`,`Output per request: ${node.maxOutputTokens}`,...(node.qualificationAllowance?[`Qualification allowance: up to ${node.qualificationAllowance.requests} requests, ${node.qualificationAllowance.maxTokens} tokens and ${node.qualificationAllowance.maxTestCredits} test credits`]:[]),`Provider ID: ${node.id}`,node.connection?.authentication==='none'?'No API key is required for this self-hosted connection.':'API key is saved only in the isolated provider guest vault and survives Stop.','Compatibility checks consume shared limits and upstream spending authority.']});
+      const action=await ui.menu('Test and start',[item('start','Start provider','One setup probe per model. Stop on first failure. Publish only if all pass.'),item('back','Back')],{lines:[`Test ${node.models.length} selected models. At most ${node.models.length} model requests. Stop on the first failure. Publish only if all models pass.`, 'Request deadline: 120 seconds, bounded by current authority.',node.name,node.endpoint,...node.models.map(m=>'• '+m),...(node.nativeModels??[]).map(m=>`Reasoning ${m.model}: ${m.defaultSettings?.reasoning??'off'} · Effective output ${m.maxOutputTokens}; native ${m.nativeLimits?.maxOutputTokens??'unknown'}`),`Shared allowance: ${node.sharedAllowance.totalTokens} tokens · ${node.sharedAllowance.testCredits} AdRouter credits`,`Output per request: ${node.maxOutputTokens}`,...(node.qualificationAllowance?[`Qualification allowance: up to ${node.qualificationAllowance.requests} requests, ${node.qualificationAllowance.maxTokens} tokens and ${node.qualificationAllowance.maxTestCredits} test credits`]:[]),`Provider ID: ${node.id}`,node.connection?.authentication==='none'?'No API key is required for this self-hosted connection.':'API key is saved only in the isolated provider guest vault and survives Stop.','Compatibility checks consume shared limits and upstream spending authority.']});
       if(action!=='start'){await controller.stop({trigger:'setup_cancelled'});return;}
       await ui.task('Checking selected models',async(signal,update)=>{
         updateProgress=update;const cancel=()=>void controller.stop({trigger:'setup_cancelled',error:new ClientError('cancelled')});
@@ -353,7 +379,7 @@ export async function runTui(options = {}, dependencies = {}) {
     }catch(error){
       controller??=error.controller;if(controller)trackProvider(node.id,controller);
       await controller?.stop({trigger:'setup_failed',error});
-      await ui.page('Provider setup needs correction',[...errorLines(error),...providerDiagnosticLines(controller?.status.setupFailure??providerDiagnostic('preparing',error)),...(controller?providerStatusLines(controller.status):[]),'Your configuration is saved. Unknown checks retain their spending reservations.']);
+      await ui.page('Setup failed',[...errorLines(error),...providerDiagnosticLines(controller?.status.setupFailure??providerDiagnostic('preparing',error)),...(controller?providerStatusLines(controller.status):[]),controller?.status.qualification?.some(q=>q.requestId)?'Current check accounting is shown separately from earlier holds.':'No model request sent. Your configuration is saved.']);
     }
   }
   async function guidedProvider(node) {
@@ -397,13 +423,14 @@ export async function runTui(options = {}, dependencies = {}) {
     }
     const decision=await ui.menu('Review provider setup',[
       ...(node.status!=='published'?[item('publish','Publish and Start')]:[item('start','Start provider')]),item('back','Back'),
-    ],{lines:[node.name,node.endpoint,node.model,`Requests: ${bounds.maxCalls} · Output tokens: ${bounds.maxOutputTokens}`,`Thinking: ${node.capabilities?.includes('thinking_v1')?'supported · buyer starts off':'provider disabled'}`,`Tariff: ${node.tariffQualified?'qualified':'manual qualification required'}`,`Qualification expires: ${node.tariffQualification?.qualifiedUntil?date(node.tariffQualification.qualifiedUntil):'unknown'}`,`Session coverage: ${node.tariffQualification?.coversDurationSeconds??'unknown'} seconds`,'Provider keys are entered only in the guest.']});
+    ],{lines:[`Test ${node.models.length} selected models. At most ${node.models.length} model requests. Stop on the first failure. Publish only if all models pass.`, 'Request deadline: 120 seconds, bounded by current authority.',node.name,node.endpoint,node.model,`Requests: ${bounds.maxCalls} · Output tokens: ${bounds.maxOutputTokens}`,`Thinking: ${node.capabilities?.includes('thinking_v1')?'supported · buyer starts off':'provider disabled'}`,`Tariff: ${node.tariffQualified?'qualified':'manual qualification required'}`,`Qualification expires: ${node.tariffQualification?.qualifiedUntil?date(node.tariffQualification.qualifiedUntil):'unknown'}`,`Session coverage: ${node.tariffQualification?.coversDurationSeconds??'unknown'} seconds`,'Provider keys are entered only in the guest.']});
     if(decision==='publish'){await post(`/providers/nodes/${node.id}/publish`);node=await get(`/providers/nodes/${node.id}`);}
     if(['publish','start'].includes(decision))await launch(node,bounds,true);
   }
   async function manageNode(id, created = false) {
     for (;;) {
       const node = await get(`/providers/nodes/${id}`);
+      const exactReports=(await providerEvidence(node,store.profile,{origin:network.origin})).reduce((sum,e)=>sum+e.pending.length,0);
       const busy = !providerCanLaunch(providersRunning.get(node.id));
       const native = ['pi_native_v1','pi_native_v2','pi_native_v3'].includes(node.connectorProtocol);
       currentProviderId = node.id;
@@ -411,8 +438,9 @@ export async function runTui(options = {}, dependencies = {}) {
       const monitor=new ProviderActivityMonitor(network,node.id,()=>ui.pending?.redraw?.());await monitor.start();
       let selection;try{selection = await ui.menu(created ? 'Your listing is drafted' : node.name, [
         ...(['pi_native_v1','pi_native_v2','pi_native_v3'].includes(node.connectorProtocol)?[item('editNative','Edit provider configuration','Pause and stop serving before changing models or limits.',!['draft','paused'].includes(node.status)||busy)]:[]),
-        item('setup', 'Continue setup', 'Guest → bounded checks → publication → relay → backend confirmation', busy),
-        ...(providersRunning.has(node.id)?[item('status','Provider status'),...(providersRunning.get(node.id).status.cleanupRequired?[item('cleanup','Retry cleanup','Verify owned guest teardown and run-scoped backend Stop.')]:[])]:[]),
+        item('status','Provider status'),item('diagnose','Diagnose','Read owned run/check metadata; no model request.'),item('retryReport','Retry result report',exactReports?'Deliver only saved exact reports; no VM or inference.':'No exact completion report saved.',!exactReports),
+        item('setup', 'Test and start', 'Guest → bounded checks → publication → relay → backend confirmation', busy),
+        ...(node.cleanupState==='failed'||node.cleanupState==='pending'||providersRunning.get(node.id)?.status.cleanupRequired?[item('cleanup','Retry cleanup','Verify creation evidence and current run before teardown.')]:[]),
         ...(!native?[item('launch', node.availability === 'cold' ? 'Start cold control' : 'Launch hot VM', 'Keep this TUI open while providing.', busy)]:[]),
         ...(providersRunning.get(node.id)?.status.activation?.length ? [item('activate', 'Activate reserved buyer session', 'Launch the VM and enter the key before the 120-second deadline.')] : []),
         ...(!native?[item('publish', 'Publish listing', 'Exposes listing metadata as a new immutable revision.', node.suspended)]:[]),
@@ -423,12 +451,13 @@ export async function runTui(options = {}, dependencies = {}) {
         item('delete',node.status==='paused'?'Delete paused listing':'Delete listing','Stop execution and retire the listing. Credentials and outstanding liabilities remain.'),
         ...(['pi_native_v2','pi_native_v3'].includes(node.connectorProtocol)?[item('discover','Discover endpoint models','Uses saved guest authentication; no inference or automatic publication.',busy),item('rebind','Reclaim paused connection','Authorize this installation without resetting usage.'),item('disconnect','Disconnect API','Remove the saved guest credential and disable serving.')]:[]),
         item('refresh', 'Refresh status'), item('back', 'Back'),
-      ], { tick:true,lines:()=>[...providerActivityLines(monitor.view()),...(providersRunning.has(node.id)?providerStatusLines(providersRunning.get(node.id).status):[]),`Models: ${node.models?.join(', ')??node.model}`, `Suspended: ${node.suspended ? 'yes' : 'no'} · Listing: ${node.status}`, `VM: ${providersRunning.get(node.id)?.status.guestReady ? 'ready' : 'not running'}`, `Backend connection: ${providerConnectionLabel(monitor.view())}`, `Activity: ${providersRunning.get(node.id)?.status.calls??0} dispatched requests`, ...(node.sharedAllowance?[`Shared tokens: ${node.sharedAllowance.consumedTokens} consumed · ${node.sharedAllowance.outstandingTokens} held / ${node.sharedAllowance.totalTokens}`,`AdRouter credits: ${node.sharedAllowance.consumedCredits} consumed · ${node.sharedAllowance.outstandingCredits} reserved/unresolved / ${node.sharedAllowance.testCredits}`,`Remaining: ${node.allowanceSummary?.remainingTokens??'unknown'} tokens · ${node.allowanceSummary?.remainingCredits??'unknown'} AdRouter credits`,...(node.allowanceSummary?.exhaustionReason?[node.allowanceSummary.exhaustionReason]:[])]:[]),`Remaining upstream authority: ${formatUsd(exposure.remainingMicrousd)}`, `Outstanding exposure: ${formatUsd(exposure.outstandingMicrousd)}`, `Provider: ${node.id}`,`Listing: ${node.listingId??'not published'}`,`Thinking: ${node.capabilities?.includes('thinking_v1')?'supported':'off'}`],footer:providersRunning.has(node.id)?'↑↓ Move  Enter Choose  Esc / Ctrl+C Stop provider VM':'↑↓ Move  Enter Choose  Esc Back' });}finally{monitor.stop();}
+      ], { tick:true,lines:()=>[...providerActivityLines(monitor.view()),...(providersRunning.has(node.id)?providerStatusLines(providersRunning.get(node.id).status):[]),`Models: ${node.models?.join(', ')??node.model}`, `Suspended: ${node.suspended ? 'yes' : 'no'} · Listing: ${node.status}`, providersRunning.has(node.id)?`VM: ${providersRunning.get(node.id).status.guestReady?'ready':providersRunning.get(node.id).status.teardownVerified?'removed':'unconfirmed'}`:'No controller attached in this terminal', `Backend connection: ${providerConnectionLabel(monitor.view())}`, `Activity: ${providersRunning.get(node.id)?.status.calls??0} dispatched requests`, ...(node.sharedAllowance?[`Shared tokens: ${node.sharedAllowance.consumedTokens} consumed · ${node.sharedAllowance.outstandingTokens} held / ${node.sharedAllowance.totalTokens}`,`AdRouter credits: ${node.sharedAllowance.consumedCredits} consumed · ${node.sharedAllowance.outstandingCredits} reserved/unresolved / ${node.sharedAllowance.testCredits}`,`Remaining: ${node.allowanceSummary?.remainingTokens??'unknown'} tokens · ${node.allowanceSummary?.remainingCredits??'unknown'} AdRouter credits`,...(node.allowanceSummary?.exhaustionReason?[node.allowanceSummary.exhaustionReason]:[])]:[]),`Remaining upstream authority: ${formatUsd(exposure.remainingMicrousd)}`, `Outstanding exposure: ${formatUsd(exposure.outstandingMicrousd)}`, `Provider: ${node.id}`,`Listing: ${node.listingId??'not published'}`,`Thinking: ${node.capabilities?.includes('thinking_v1')?'supported':'off'}`],footer:'↑↓ Move  Enter Choose  Esc Back · Stop is a separate action' });}finally{monitor.stop();}
       currentProviderId = undefined; created = false;
-      if(!selection&&busy){await stopProvider(node.id);continue;}
-      if (!selection || selection === 'back') return;
-      if(selection==='status'){await ui.page('Provider operation',()=>providerStatusLines(providersRunning.get(node.id).status));continue;}
-      if(selection==='cleanup'){await stopProvider(node.id);continue;}
+            if (!selection || selection === 'back') return;
+      if(selection==='status'){await ui.page('Provider status',()=>[...modelStatusLines(monitor.view().modelStatuses??node.modelStatuses,{stale:monitor.view().stale}),...(providersRunning.has(node.id)?providerStatusLines(providersRunning.get(node.id).status):['No controller attached in this terminal'])]);continue;}
+      if(selection==='diagnose'){await ui.page('Provider diagnosis',diagnosisLines(await diagnoseProvider(network,node.id,store.profile)));continue;}
+      if(selection==='retryReport'){await attempt(()=>providersRunning.get(node.id)?.retryResultReports?providersRunning.get(node.id).retryResultReports():retryProviderReports(network,node.id,store.profile));continue;}
+      if(selection==='cleanup'){await attempt(()=>providersRunning.has(node.id)?stopProvider(node.id):retryProviderCleanup(network,node.id,store.profile));continue;}
       if(selection==='discover'){await attempt(async()=>{const {startProvider}=await import('./provider.mjs');let controller;try{controller=await ui.suspend(()=>startProvider(network,node.id,{prepareOnly:true,runtimeConfig,maxOutputTokens:node.maxOutputTokens}));trackProvider(node.id,controller);const result=await ui.task('Discovering endpoint models',()=>controller.discover());await controller.stop();if(!providerCanLaunch(controller))throw new ClientError('provider_cleanup_required');await createNativeListing({...node,discoveredModels:result.models});}catch(error){controller??=error.controller;if(controller)trackProvider(node.id,controller);throw error;}finally{await controller?.stop();}});continue;}
       if(selection==='rebind'){await attempt(()=>post(`/providers/nodes/${node.id}/rebind`,{expectedInstallationId:node.installationId}));continue;}
       if(selection==='disconnect'){if(await confirm('Disconnect API?',['This removes the saved guest credential and disables serving. It does not revoke the upstream key.'],'Disconnect'))await attempt(async()=>{if(providersRunning.has(node.id)){await stopProvider(node.id);if(!providerCanLaunch(providersRunning.get(node.id)))return;}const {disconnectProviderApi}=await import('./provider.mjs');await ui.task('Removing guest credential',()=>disconnectProviderApi(network,node.id,{runtimeConfig}));});continue;}
@@ -475,9 +504,9 @@ export async function runTui(options = {}, dependencies = {}) {
     actor('provider');
     for (;;) {
       const nodes = await get('/providers/nodes');
-      const selected = await ui.menu('My provider listings', [...nodes.map(n => item(n.id, `${n.name} · ${n.suspended ? 'suspended · ' : ''}${n.status}`,[`Provider: ${n.id}`,`Listing: ${n.listingId??'not published'}`,`Session: ${n.activeSessionId??'none'}`,`${n.model} · Thinking ${n.capabilities?.includes('thinking_v1')?'supported':'off'}`,`Input ${n.inputRate} / output ${n.outputRate} test credits per 1M tokens`])), item('new', '+ List new compute'), item('back', 'Back')], { subtitle: nodes.length ? 'Select a listing to launch, publish, pause or stop.' : 'You have no listings yet.' });
+      const selected=await pollingMenu('My provider listings',()=>get('/providers/nodes'),values=>[...values.map(n=>item(n.id,providerRow(n),modelStatusLines(n.modelStatuses))),item('new','+ List new compute'),item('refresh','Refresh'),item('back','Back')],{subtitle:'Select a connection. / filters rows; actions stay visible.'});
       if (!selected || selected === 'back') return;
-      await attempt(() => selected === 'new' ? createListing() : manageNode(selected));
+      await attempt(() => selected === 'new' ? createListing() : selected==='refresh'?undefined:manageNode(selected));
     }
   }
   async function buy(listing) {
@@ -513,7 +542,7 @@ export async function runTui(options = {}, dependencies = {}) {
       for (const [key, value] of Object.entries(filters)) if (value && value !== 'any') query.set(key, value);
       if (cursor) query.set('after', cursor);
       const result = await get(`/listings?${query}`, true);
-      const selection = await ui.menu('Browse available compute', [item('filters', 'Search and filters'), ...result.listings.map(l => item(l.id, `${l.name} · ${l.ready ? 'ready' : 'offline'}`, [`Listing: ${l.id}`,`Provider: ${l.nodeId}`,`${l.model} · ${l.inputRate}/${l.outputRate} test credits per 1M tokens`,`Thinking: ${l.capabilities?.includes('thinking_v1')?'supported':'off'}`])), ...(result.nextCursor ? [item('next', 'Next page')] : []), item('refresh', 'Refresh from first page'), item('back', 'Back')], { subtitle: result.listings.length ? 'Select compute to inspect its price and reserve access.' : 'No published listings match. Try changing filters or return after a provider publishes.' });
+      const selection = await pollingMenu('Browse available compute',()=>get(`/listings?${query}`,true),result=>[item('filters', 'Search and filters'), ...result.listings.map(l => item(l.id, `${l.name} · ${l.model} · ${visibleModelStatus(l.modelStatus).availability}`, [`Listing: ${l.id}`,`Provider: ${l.nodeId}`,`${l.model} · ${l.inputRate}/${l.outputRate} test credits per 1M tokens`,...modelStatusLines(l.modelStatus?[l.modelStatus]:[]),`Thinking: ${l.capabilities?.includes('thinking_v1')?'supported':'off'}`])), ...(result.nextCursor ? [item('next', 'Next page')] : []), item('refresh', 'Refresh from first page'), item('back', 'Back')], { subtitle: result.listings.length ? 'Select compute to inspect its price and reserve access.' : 'No published listings match. Try changing filters or return after a provider publishes.' });
       if (!selection || selection === 'back') return;
       if (selection === 'filters') { const edited = await ui.form('Compute filters', [{ name: 'model', label: 'Model contains', help: 'Leave blank for every model.' }, { name: 'supplyClass', label: 'Supply', choices: ['any', 'authorized_api', 'self_hosted'] }, { name: 'availability', label: 'Availability', choices: ['any', 'hot', 'cold'] }], filters); if (edited) filters = edited; cursor = undefined; }
       else if (selection === 'next') cursor = result.nextCursor;
@@ -680,7 +709,7 @@ export async function runTui(options = {}, dependencies = {}) {
     const choice = await ui.menu('Marketplace operator', [item('sessions','Provider sessions and cleanup'),item('suspension', 'Manage listing suspension'), item('cancellationReview', 'Review evaluation cancellation'), ...(network.local ? [item('grant', 'Grant local test credits')] : []), item('allowance','Manage marketplace allowances'), item('evaluation', 'Evaluation queue'), item('evaluationSessions', 'Evaluation sessions'), item('tariff', 'Qualify upstream tariff'), item('capacity','Release stopped execution capacity'), item('reconcile', 'Reconcile uncertain requests'), item('back', 'Back')], { subtitle: network.local ? 'Local fixtures only.' : 'Requires a separately approved marketplace operator installation.' });
     if(choice==='sessions') {
       const nodes=await get('/admin/nodes');
-      const id=await ui.menu('Provider groups',[...nodes.filter(n=>n.status!=='deleted').map(n=>item(n.id,`${n.name} · ${n.id}`,`Run ${n.providerRunId??'none'} · ${words(n.status)}`)),item('back','Back')]);if(!id||id==='back')return;
+      const id=await pollingMenu('Provider groups',()=>get('/admin/nodes'),nodes=>[...nodes.filter(n=>n.status!=='deleted').map(n=>item(n.id,`${n.name} · ${n.id}`,modelStatusLines(n.modelStatuses))),item('back','Back')]);if(!id||id==='back')return;
       const node=nodes.find(n=>n.id===id),sessions=(await get('/admin/sessions')).filter(s=>s.nodeId===id);
       const action=await ui.menu('Provider execution',[item('halt','Halt provider'),item('delete','Delete listing'),...sessions.map(s=>item(s.id,`${words(s.executionState)} · ${s.id}`,`Cleanup ${words(s.cleanupState)} · Accounting ${words(s.accountingState)} · Held ${s.reserved}`)),item('back','Back')],{lines:[`Provider: ${node.ownerId}`,`Run: ${node.providerRunId??'none'}`,`Last heartbeat: ${date(node.connectionUpdatedAt)}`,'Unresolved accounting is retained after execution cleanup.']});
       if(!action||action==='back')return;
@@ -798,9 +827,10 @@ export async function runTui(options = {}, dependencies = {}) {
     config = await attempt(() => get('/network/config', true));display.start();
     for (;;) {
       if (terminating) return;
+      if(interruptRequested){interruptRequested=false;if(await requestExit())return;continue;}
       if (!network.local && !(await readAuth())) {clearIdentity();
         const selection = await ui.menu('Sign in to AdRouter', [item('login', store.profile === 'operator' ? 'Approve operator in browser' : 'Continue in browser', 'Approve this profile with the comparison code.'), ...(store.profile === 'operator' ? [] : [item('operatorLogin', 'Sign in as operator', 'Separate approval; current owner/operator role required.')]), item('account','Account and sign-in'), item('installations','Manage installations'), item('profiles', 'Choose profile'), item('diagnostics', 'Network status'), item('exit', 'Exit')], { subtitle: config?.admissions === false ? (config.privateOwnerEvaluation ? config.privateRehearsal ? 'Private two-account rehearsal and owner evaluation. Ordinary purchases are disabled.' : 'Private owner evaluation only. Ordinary purchases are disabled.' : 'This network has marketplace admissions disabled.') : 'Your installation is separate from other AdRouter clients.' });
-        if (!selection || selection === 'exit') return;
+        if (!selection || selection === 'exit') {if(await requestExit())return;continue;}
         if(selection==='account')await attempt(accountControls);
         else if(selection==='installations')await attempt(manageInstallations);
         else if (selection === 'profiles') await attempt(selectProfile);
@@ -819,7 +849,7 @@ export async function runTui(options = {}, dependencies = {}) {
           item('account','Account and sign-in'),item('installations','Manage installations'),item('logout','Sign out'),...(providersRunning.size?[item('stopProviders','Stop running providers')]:[]),
           item('profiles', 'Choose profile'), item('saved', 'Saved coding work'), item('exit', 'Exit'),
         ], { lines: [code, loginHint(code) || 'The network or account is unavailable. Retry after connectivity or access is restored.', 'Your saved work and provider records are preserved.'] });
-        if (!selection || selection === 'exit') return;
+        if (!selection || selection === 'exit') {if(await requestExit())return;continue;}
         await attempt(async () => {
           if (selection === 'recover') await signIn(scope.includes('marketplace:operator'), true);
           else if(selection==='account')await accountControls();
@@ -837,7 +867,7 @@ export async function runTui(options = {}, dependencies = {}) {
         ...(scope.includes('marketplace:buyer') ? [item('sessions', 'My sessions'),item('saved','Saved coding work'), item('receipts', 'Receipts')] : []), item('account', 'Account and sign-in'), item('profiles', 'Choose profile'), item('runtime', 'Runtime setup'), item('status', 'Network and diagnostics'),
         ...(scope.includes('marketplace:operator') ? [item('admin', network.local ? 'Local test operator' : 'Marketplace operator')] : []), item('exit', 'Exit'),
       ], { subtitle: `${network.local ? 'Local development identity · ' : ''}Test credits have no cash value.` });
-      if (!selection || selection === 'exit') return;
+      if (!selection || selection === 'exit') {if(await requestExit())return;continue;}
       await attempt(async () => {
         if (selection === 'profiles') await selectProfile();
         else if (selection === 'budget') await spendingBudget();

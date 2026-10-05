@@ -1,3 +1,4 @@
+import { ProviderReports, SETUP_POLICY } from './provider-reports.mjs';
 import {providerCatalog} from './generated/provider-catalog.mjs';
 import {providerRequiresBudget} from './generated/provider-budget.mjs';
 import { verifiedThinking } from './provider-models.mjs';
@@ -52,6 +53,7 @@ async function createProviderController(networkInput, nodeId, { prepareOnly = fa
   if(native&&node.supplyClass==='self_hosted'&&node.connection?.authentication==='none')noKey=true;
   const connector=native?{authentication:'native'}:resolveConnector(node);
   const listingBound=(id,revision)=>native?node.listingIds?.includes(id)&&(revision===undefined||revision===node.listingRevision):id===node.listingId&&(revision===undefined||revision===node.listingRevision);
+  if(native){const config=await network.request('/v2/network/config',{public:true});if(!config.capabilities?.includes(SETUP_POLICY))throw new ClientError('setup_policy_upgrade_required');}
   if (native && !prepareOnly) throw new ClientError('pi_setup_required');
   let prepared=prepareOnly&&native;
   if(connector.authentication==='none')noKey=true;
@@ -65,6 +67,7 @@ async function createProviderController(networkInput, nodeId, { prepareOnly = fa
   const runtime = providedRuntime ?? (runtimeConfig ? new SandboxRuntime(runtimeConfig) : await configuredRuntime()); await runtime.verify();
   const providerRunId = randomUUID();
   const lifecycle = new ProviderLifecycle({ nodeId, providerRunId, profile: network.store?.profile ?? 'provider', directory: diagnosticsDirectory, now });
+  const reports = new ProviderReports(lifecycle);
   const capability = randomBytes(32).toString('base64url');
   let vault, guest, copied, socket, deadline, pending, guestReady = false, relayReady = false, stopped = false, starting = false, calls = 0;
   let claimed = false, allocation, closing, statusPoll, renewal, keepalive, touchRetry, reconnectTimer, authenticationTimer, leaseTimer;
@@ -193,6 +196,7 @@ async function createProviderController(networkInput, nodeId, { prepareOnly = fa
       await writeFile(join(copied, 'config.json'), JSON.stringify({ control: `http://host.microsandbox.internal:${broker.address().port}`, capability, noKey, persistentCredentials:!!vault, node: !native&&binding.loopback ? {...node,localEngine:true,endpoint:node.endpoint.replace(binding.url.hostname,'host.microsandbox.internal')} : {...node,providerRunId,tunnel:{port:broker.address().port,capability}}, maxCalls, maxOutputTokens, continuous }), { mode: 0o600 });
       allocation = createGuest(runtime, [broker.address().port, ...(!native&&enginePort ? [enginePort] : [])], copied, undefined, { signal: warmSignal, continuous, vault });
       guest = await allocation;
+      lifecycle.ownership={nodeId,providerRunId,installationId:node.installationId,guestName:guest,origin:network.origin,createdAt:now()};lifecycle.persist();await lifecycle.pending;if(lifecycle.saveFailed)throw new ClientError('provider_ownership_save_failed');
       if(native)await runtime.run(guest,['node','-e',"const [a,b]=process.versions.node.split('.').map(Number);if(a<22||(a===22&&b<19))throw Error('pi_node_22_19_required');"],{signal:warmSignal});
       warmSignal.throwIfAborted();
       if(noKey) await runtime.run(guest,['node','/workspace/provider-console.mjs'],{signal:warmSignal,timeoutSeconds:20});
@@ -320,7 +324,7 @@ async function createProviderController(networkInput, nodeId, { prepareOnly = fa
   }
   async function inspectChecks() {
     recoveryPending = true;
-    const observed = await network.request(`/v2/providers/nodes/${nodeId}`, { signal: AbortSignal.timeout(10000) });
+    const observed = await network.request(`/v2/providers/nodes/${nodeId}?view=diagnostics`, { signal: AbortSignal.timeout(10000) });
     // Inspect metadata only: never infer a zero charge or repeat a lost mutation.
     for (const check of Object.values(observed.nativeChecks ?? {})) {
       if (check.providerRunId !== providerRunId) continue;
@@ -335,27 +339,29 @@ async function createProviderController(networkInput, nodeId, { prepareOnly = fa
   async function startNative() {
     if(!native||!prepared||stopped||!guestReady||startAttempted)throw new ClientError('pi_provider_not_prepared');
     startAttempted = true; state = 'qualifying';
-    let phase = 'qualification', currentModel, currentCheck;
-    const probe={type:'function',function:{name:'adr_probe',description:'Return the supplied value unchanged.',parameters:{type:'object',properties:{value:{type:'string'}},required:['value'],additionalProperties:false}}};
-    for (const model of node.nativeModels) for (const checkPhase of ['tool','roundtrip']) qualification.push({model:model.model,api:model.api,phase:checkPhase,status:'pending'});
+    let phase = 'qualification', currentModel, currentCheck, responseReceived=false;
+    const probe={type:'function',function:{name:'adr_setup_probe',description:'Return the supplied value unchanged.',parameters:{type:'object',properties:{value:{type:'string'}},required:['value'],additionalProperties:false}}};
+    for (const model of node.nativeModels) for (const checkPhase of ['setup_probe']) qualification.push({model:model.model,api:model.api,phase:checkPhase,status:'pending'});
     try {
       for(const model of node.nativeModels){
         currentModel = model; let previous;
-        for(const checkPhase of ['tool','roundtrip']){
-          currentCheck = undefined;
+        for(const checkPhase of ['setup_probe']){
+          currentCheck = undefined;responseReceived=false;
           const progress = qualification.find(q=>q.model===model.model && q.phase===checkPhase);
           phase = 'qualification_' + checkPhase; progress.status = 'reserving'; announce({status:state});
           if(now()-lastGuestPoll>15000)throw new ClientError('provider_worker_unresponsive');
           const check=await network.request(`/v2/providers/nodes/${nodeId}/pi-checks`,{method:'POST',body:{providerRunId,model:model.model,phase:checkPhase},key:randomUUID(),signal:bounded(10000)});
           currentCheck = check; nativeCheckIds.push(check.id); abort.signal.throwIfAborted(); Object.assign(progress,{requestId:check.id,status:'running'}); announce({status:state});
-          const messages=checkPhase==='tool'?[{role:'user',content:'Call adr_probe with value "ready" exactly once.',timestamp:0}]:[{role:'user',content:'Call adr_probe with value "ready" exactly once.',timestamp:0},previous.nativeMessage,{role:'toolResult',toolCallId:previous.toolCalls[0].id,toolName:'adr_probe',content:[{type:'text',text:'ready'}],isError:false,timestamp:0},{role:'user',content:'Reply ready without calling a tool.',timestamp:0}];
+          const messages=[{role:'user',content:'Call adr_setup_probe with value "ready" exactly once.',timestamp:0}];
           const frame={type:'qualification',requestId:check.id,model:model.model,provider:node.provider,api:model.api,...(['pi_native_v2','pi_native_v3'].includes(node.connectorProtocol)?{nativeRevision:node.nativeRevision,endpoint:model.endpoint}:{}),messageFormat:'pi_context_v1',qualification:checkPhase,messages,tools:[probe],maxOutputTokens:check.outputBound,deadlineUnixMs:check.deadline,modelSettings:model.defaultSettings,thinking:!!model.defaultSettings&&model.defaultSettings.reasoning!=='off',upstreamBudget:{inputBound:check.inputBound,reservedMicrousd:check.upstreamReserved,...check.rates}};
           const result=await new Promise((resolve,reject)=>{const timer=setTimeout(()=>{const statusCode=pending?.upstreamStatus;if(pending?.id===check.id)pending=undefined;reject(Object.assign(new ClientError('upstream_timeout'),{statusCode}));},Math.max(1,check.deadline-now()));pending={id:check.id,qualification:true,binding:frame,frame,resolve:r=>{clearTimeout(timer);resolve(r);},reject:e=>{clearTimeout(timer);reject(e);}};});
-          const tools=checkPhase==='tool'?result.toolCalls?.length===1&&result.toolCalls[0].function.name==='adr_probe':result.toolCalls?.length===0&&result.text.trim().length>0;
+          responseReceived=true;
+          const tools=result.toolCalls?.length===1&&result.toolCalls[0].function.name==='adr_setup_probe'&&(()=>{try{const args=JSON.parse(result.toolCalls[0].function.arguments);return Object.keys(args).length===1&&args.value==='ready';}catch{return false;}})();
           phase = 'qualification_complete';
-          const completed=await network.request(`/v2/providers/nodes/${nodeId}/pi-checks/complete`,{method:'POST',body:{id:check.id,usage:result.nativeUsage,streaming:true,tools,completed:result.nativeMessage?.stopReason!=='length'},signal:bounded(10000)});
+          const record=await reports.save({nodeId,providerRunId,installationId:node.installationId,nativeRevision:node.nativeRevision},{id:check.id,usage:result.nativeUsage,streaming:true,tools,completed:result.nativeMessage?.stopReason!=='length'});
+          const completed=await reports.deliver(network,record,{signal:abort.signal,now});
           abort.signal.throwIfAborted();
-          progress.status=completed.passed?'passed':'failed';progress.checks={configuration:'passed',credentials:'passed',streaming:'passed',usage:'passed',...(checkPhase==='tool'?{toolGeneration:tools?'passed':'failed'}:{toolRoundtrip:tools?'passed':'failed'})}; announce({status:state});
+          progress.status=completed.passed?'passed':'failed';progress.checks={configuration:'passed',credentials:'passed',streaming:'passed',usage:'passed',setupProbe:tools?'passed':'failed'}; announce({status:state});
           if(!completed.passed)throw new ClientError('pi_compatibility_check_failed');previous=result;
         }
       }
@@ -368,7 +374,7 @@ async function createProviderController(networkInput, nodeId, { prepareOnly = fa
       control.push({type:'bind',listingIds:node.listingIds,listingRevision:node.listingRevision});
       prepared=false;state='connecting';await renewal.run();await statusPoll.run();return snapshot();
     } catch(error) {
-      setupFailure = providerDiagnostic(phase,abort.signal.aborted && lifecycle.stopTrigger?.trigger==='setup_cancelled' ? {code:'cancelled'} : error,{provider:node.provider,model:currentModel?.model,api:currentModel?.api,providerRunId,requestId:currentCheck?.id,maxOutputTokens:currentCheck?.outputBound},now);
+      setupFailure = providerDiagnostic(phase,abort.signal.aborted && lifecycle.stopTrigger?.trigger==='setup_cancelled' ? {code:'cancelled'} : error,{provider:node.provider,model:currentModel?.model,api:currentModel?.api,providerRunId,requestId:currentCheck?.id,requestEvidence:responseReceived?'response_received':currentCheck?'outcome_unknown':'not_sent',maxOutputTokens:currentCheck?.outputBound},now);
       lifecycle.event(phase,setupFailure);
       if (currentModel) {const progress=qualification.find(q=>q.model===currentModel.model&&['reserving','running'].includes(q.status));if(progress)progress.status='unknown';}
       try { await inspectChecks(); } catch(inspectError) { failure('check_inspection',inspectError,'check_inspection_failed'); }
@@ -390,7 +396,7 @@ async function createProviderController(networkInput, nodeId, { prepareOnly = fa
       const outcomes = [];
       const outcome = async (phase, work) => { try { await work(); outcomes.push({phase,status:'succeeded'});lifecycle.event(phase,{status:'succeeded'}); } catch(e){outcomes.push({phase,status:'failed',code:providerDiagnostic(phase,e).code});lifecycle.event(phase,{status:'failed',code:providerDiagnostic(phase,e).code});} };
       if (remote && claimed) {
-        try { await network.request(`/v2/providers/nodes/${nodeId}/stop`, { method: 'POST', body: { scope: 'run', providerRunId, trigger }, signal: AbortSignal.timeout(30000) }); outcomes.push({phase:'remote_stop',status:'succeeded'});lifecycle.event('remote_stop',{status:'succeeded'}); }
+        try { await network.request(`/v2/providers/nodes/${nodeId}/stop`, { method: 'POST', body: { scope: 'run', providerRunId, trigger, ...(setupFailure?{failure:{operation:setupFailure.phase,code:setupFailure.code,...(setupFailure.requestId?{checkId:setupFailure.requestId}:{}),statusCode:setupFailure.statusCode,requestEvidence:setupFailure.requestEvidence}}:{}) }, signal: AbortSignal.timeout(30000) }); outcomes.push({phase:'remote_stop',status:'succeeded'});lifecycle.event('remote_stop',{status:'succeeded'}); }
         catch(e){const superseded=['provider_run_superseded','not_found'].includes(e.code);outcomes.push({phase:'remote_stop',status:superseded?'superseded':'failed',code:providerDiagnostic('remote_stop',e).code});lifecycle.event('remote_stop',{status:superseded?'superseded':'failed',...(!superseded?{code:providerDiagnostic('remote_stop',e).code}:{})});}
       } else outcomes.push({phase:'remote_stop',status:'not_requested'});
       await allocation?.catch(()=>{});
@@ -408,15 +414,17 @@ async function createProviderController(networkInput, nodeId, { prepareOnly = fa
     })();
     return closing;
   }
-  const controller = { done, stop, warm, start: startNative, discover:async()=>{if(!prepared||!guestReady||pending)throw new ClientError('provider_stop_required');const requestId=randomUUID();return new Promise((resolve,reject)=>{const timer=setTimeout(()=>{if(pending?.id===requestId)pending=undefined;reject(new ClientError('model_discovery_unavailable'));},20000);pending={id:requestId,discovery:true,binding:{type:'discover'},frame:{type:'discover',requestId},resolve:r=>{clearTimeout(timer);resolve(r);},reject:e=>{clearTimeout(timer);reject(e);}};});}, lifecycle, get status() { return snapshot(); } };
+  const controller = { done, stop, retryResultReports:async()=>{for(const record of await reports.pending())await reports.deliver(network,record);await inspectChecks();return snapshot();}, warm, start: startNative, discover:async()=>{if(!prepared||!guestReady||pending)throw new ClientError('provider_stop_required');const requestId=randomUUID();return new Promise((resolve,reject)=>{const timer=setTimeout(()=>{if(pending?.id===requestId)pending=undefined;reject(new ClientError('model_discovery_unavailable'));},20000);pending={id:requestId,discovery:true,binding:{type:'discover'},frame:{type:'discover',requestId},resolve:r=>{clearTimeout(timer);resolve(r);},reject:e=>{clearTimeout(timer);reject(e);}};});}, lifecycle, get status() { return snapshot(); } };
   controller.configure = async configuration => {
     if(!prepared||!guestReady||pending||startAttempted)throw new ClientError('provider_configuration_locked');
+    try {
     const updated=await network.request(`/v2/providers/nodes/${nodeId}/native`,{method:'POST',body:{...configuration,expectedRevision:node.nativeRevision??0,confirmIncrease:false,providerRunId},key:randomUUID(),signal:bounded(10000)});
     node=updated;maxOutputTokens=Number(node.maxOutputTokens);
     const requestId=randomUUID();return new Promise((resolve,reject)=>{
       const timer=setTimeout(()=>{reject(new ClientError('guest_configuration_unconfirmed'));void stop({trigger:'configuration_failed'});},15000);
       pending={id:requestId,configuration:true,binding:{type:'configure'},frame:{type:'configure',requestId,node,maxOutputTokens},resolve:value=>{clearTimeout(timer);resolve(value);},reject:error=>{clearTimeout(timer);reject(error);}};
     });
+    }catch(error){setupFailure=providerDiagnostic('configure_models',error,{providerRunId,requestEvidence:'not_sent'},now);lifecycle.event('configure_models',setupFailure);await stop({trigger:'configuration_failed'});throw error;}
   };
   controller.retryCleanup = async () => {
     if (!stopped || !cleanupRequired) return closing;

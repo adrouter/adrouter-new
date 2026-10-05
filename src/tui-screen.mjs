@@ -79,7 +79,7 @@ export class TerminalUI {
     this.input = input; this.output = output; this.color = color && process.env.TERM !== 'dumb'; this.context = '';this.sidebar=[];this.reducedMotion=reducedMotion;
     this.resize = () => this.pending?.redraw?this.pending.redraw():this.draw();
     this.onKey = (text, key = {}) => {
-      if (key.ctrl && key.name === 'c') { this.pending?.resolve(null); return; }
+      if (key.ctrl && key.name === 'c') { if(this.onInterrupt)this.onInterrupt();else this.pending?.resolve(null); return; }
       this.pending?.key(text, key);
     };
   }
@@ -120,14 +120,15 @@ export class TerminalUI {
       draw();
     });
   }
-  async menu(title, options, { subtitle = '', lines = [], fixedActions=false, compact=false, tick=false, footer='↑↓ Move  Enter Choose  Type to filter  Esc Back  Ctrl+C Cancel' } = {}) {
-    let selected = 0; let search = '',previewFocus=0,detailFocus=0,fullDetails=false;
-    const items = options.map((item, index) => typeof item === 'string' ? { label: item, value: index } : item);
+  async menu(title, options, { subtitle = '', lines = [], fixedActions=false, compact=false, tick=false, explicitFilter=false, footer='↑↓ Move  Enter Choose  / Filter  Esc Back  Ctrl+C Cancel' } = {}) {
+    let selected = 0; let search = '',filtering=false,previewFocus=0,detailFocus=0,fullDetails=false;
+    let items = options.map((item, index) => typeof item === 'string' ? { label: item, value: index } : item);
     const isBack=item=>item.value==='back'||item.label==='Back';
-    const visible = () => fixedActions?items:[...fuzzyFilter(items.filter(item=>!isBack(item)), search, item => clean(`${item.label} ${item.detail ?? ''}`)),...items.filter(isBack)];
+    const visible = () => fixedActions?items:[...fuzzyFilter(items.filter(item=>!isBack(item)&&!item.action), search, item => clean(`${item.label} ${item.detail ?? ''}`)),...items.filter(item=>isBack(item)||item.action)];
     // Confirmation menus keep their default cancellation even with Back last.
     if(items[0]?.value===false&&isBack(items[0]))selected=visible().indexOf(items[0]);
     const draw = () => {
+      const previous=visible()[selected]?.value;items=options.map((item,index)=>typeof item==='string'?{label:item,value:index}:item);const position=visible().findIndex(item=>item.value===previous);if(position>=0)selected=position;
       const choices = visible(); selected = Math.min(selected, Math.max(0, choices.length - 1));
       const bodyWidth=Math.max(1,(this.output.columns||80)-2-(this.sidebar.length&&(this.output.columns||80)>=112&&!fixedActions?33:0));
       const body = (typeof lines==='function'?lines():lines).flatMap(line => typeof line==='object'&&line.styled?styledWrap(line,bodyWidth):wrapText(typeof line==='object'?line.text:line,bodyWidth).map(text=>typeof line==='object'?{...line,text}:text));
@@ -142,7 +143,7 @@ export class TerminalUI {
     const interaction=this.interact((text, key, finish) => {
       const choices = visible();
       if(fullDetails){if(['escape','return'].includes(key.name)||text==='F')fullDetails=false;else if(['up','pageup'].includes(key.name))detailFocus=Math.max(0,detailFocus-(key.name==='up'?1:5));else if(['down','pagedown'].includes(key.name))detailFocus+=key.name==='down'?1:5;draw();return;}
-      if (key.name === 'escape') { finish(null); return; }
+      if (key.name === 'escape') { if(explicitFilter&&(search||filtering)){search='';filtering=false;draw();return;}finish(null); return; }
       if(key.name==='pageup'||key.name==='pagedown'){const delta=key.name==='pageup'?-5:5;if(fixedActions)previewFocus=Math.max(0,previewFocus+delta);else detailFocus=Math.max(0,detailFocus+delta);}
       else if(text==='F'&&!fixedActions&&(choices[selected]?.details?.length||choices[selected]?.detail)){fullDetails=!fullDetails;detailFocus=0;}
       else if (key.name === 'up') selected = (selected + choices.length - 1) % Math.max(1, choices.length);
@@ -151,7 +152,8 @@ export class TerminalUI {
         if (!choices[selected].disabled) { finish(choices[selected].value); return; }
       } else if (key.name === 'backspace') { search = search.slice(0, -1); selected = 0; }
       else if (key.ctrl && key.name === 'u') { search = ''; selected = 0; }
-      else if (!fixedActions && text && !key.ctrl && !key.meta && /^[\x20-\x7e]+$/.test(text)) { search = (search + text).slice(0, 80); selected = 0; }
+      else if(explicitFilter&&text==='/'&&!filtering){filtering=true;}
+      else if (!fixedActions && (!explicitFilter||filtering) && text && !key.ctrl && !key.meta && /^[\x20-\x7e]+$/.test(text)) { search = (search + text).slice(0, 80); selected = 0; }
       draw();
     }, draw);
     if(this.pending)this.pending.redraw=draw;const timer=tick?setInterval(draw,1000):undefined;

@@ -1,3 +1,4 @@
+import { reportDigest } from '../src/provider-reports.mjs';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { randomUUID } from 'node:crypto';
@@ -17,7 +18,7 @@ async function until(check,timeout=1500){const end=Date.now()+timeout;while(!che
 async function fixture(options={}){
  const directory=await mkdtemp(join(tmpdir(),'adr-provider-lifecycle-'));
  const state={created:0,touches:0,removes:0,stops:[],sockets:[],requests:[],configuration:null,run:null,rejectClaim:false,touchFail:0,touchFailures:0,touchRecoveries:0,removeFail:false,leaseMs:25000,renewFailure:null,statusGate:null,activeStatus:0,maximumStatus:0};
- const node={id:randomUUID(),name:'Synthetic provider',model:'synthetic',endpoint:'http://127.0.0.1:9999/inference',supplyClass:'self_hosted',availability:'hot',status:'published',listingId:randomUUID(),listingRevision:1,installationId:'synthetic-provider'};
+ const node={id:randomUUID(),name:'Synthetic provider',model:'synthetic',endpoint:'http://127.0.0.1:9999/inference',supplyClass:'self_hosted',availability:'hot',status:'published',listingId:randomUUID(),listingRevision:1,installationId:randomUUID()};
  if(options.native){const models=piCatalog.providers.find(p=>p.id==='deepseek').models.filter(m=>['deepseek-flash','deepseek-v4-pro'].includes(m.id));Object.assign(node,{connectorProtocol:'pi_native_v1',provider:'deepseek',fields:{},endpoint:models[0].baseUrl,model:models[0].id,models:models.map(m=>m.id),nativeModels:models.map(m=>({model:m.id,api:m.api,endpoint:m.baseUrl})),maxOutputTokens:512,nativeChecks:{},status:'draft'});}
  const control=async(path,body)=>{const url=new URL(path,state.configuration.control);url.hostname='127.0.0.1';const response=await fetch(url,{method:body===undefined?'GET':'POST',headers:{authorization:'Bearer '+state.configuration.capability},body:body===undefined?undefined:JSON.stringify(body)});assert.equal(response.status,200);return response.json();};
  const runtime={owned:new Set(),verify:async()=>{},create:async function(o){state.created++;state.configuration=JSON.parse(await readFile(join(o.copyDirectory,'config.json'),'utf8'));const name='adrnew-'+randomUUID();runtime.owned.add(name);return name;},inspect:async()=>({config:{manifest_digest:images.node['linux-'+process.arch],mounts:[],network:{policy:{default_egress:'deny'}}}}),run:async()=>control('/ready',{ready:true}),touch:async()=>{state.touches++;if(state.touches>1&&state.touchFail){state.touchFail--;state.touchFailures++;throw Object.assign(Error('synthetic private marker'),{code:'runtime_command_failed',exitCode:9});}if(state.touchFailures)state.touchRecoveries++;},remove:async name=>{state.removes++;if(state.removeFail)throw Object.assign(Error('synthetic private marker'),{code:'runtime_cleanup_failed'});runtime.owned.delete(name);}};
@@ -30,10 +31,12 @@ async function fixture(options={}){
  }
  const network={origin:'http://127.0.0.1:8790',request:async(path,o={})=>{
   state.requests.push({path,body:o.body});
+  if(path==='/v2/network/config')return {capabilities:['single_request_setup_v1']};
+  if(path.endsWith('?view=diagnostics'))return node;
   const lost=()=>{throw Object.assign(Error('private body'),{code:'network_unavailable_outcome_unknown'});};
   if(path.endsWith('/prepare')){state.run=o.body.providerRunId;node.providerRunId=state.run;return {providerRunId:state.run};}
   if(path.endsWith('/pi-checks')){const check={...o.body,id:randomUUID(),state:'dispatched',deadline:Date.now()+(state.checkTimeout??3000),outputBound:512,inputBound:8192,upstreamReserved:'1000000',rates:{inputMicrousdPerMillion:'1',outputMicrousdPerMillion:'1'}};node.nativeChecks[check.id]=check;if(state.lose==='reserve')lost();return check;}
-  if(path.endsWith('/pi-checks/complete')){Object.assign(node.nativeChecks[o.body.id],{state:'settled',passed:true});if(state.lose==='complete')lost();return {passed:true};}
+  if(path.endsWith('/pi-checks/complete')){Object.assign(node.nativeChecks[o.body.id],{state:'settled',passed:true,reportDigest:reportDigest(o.body),installationId:node.installationId,providerRunId:state.run});if(state.lose==='complete')lost();return {passed:true};}
   if(path.endsWith('/publish')){node.status='published';node.listingIds=[node.listingId];if(state.lose==='publish')lost();return node;}
   if(path.endsWith('/pi-checks/teardown')){for(const id of o.body.attemptIds)node.nativeChecks[id].executionReleasedAt=Date.now();return {financialLiabilities:'preserved'};}
   if(path.endsWith('/'+node.id)&&state.pollFailure)throw Object.assign(Error('private body'),{code:'network_unavailable_outcome_unknown'});
@@ -135,18 +138,18 @@ test('provider correlates validated timing and failure only for the pending requ
 });
 
 async function completeCheck(f,frame) {
- const toolCalls=frame.qualification==='tool'?[{id:'probe',function:{name:'adr_probe',arguments:'{"value":"ready"}'}}]:[];
+ const toolCalls=['tool','setup_probe'].includes(frame.qualification)?[{id:'probe',function:{name:'adr_setup_probe',arguments:'{"value":"ready"}'}}]:[];
  await f.control('/result',{type:'result',requestId:frame.requestId,text:'ready',toolCalls,nativeUsage:{input:10,output:2,cacheRead:0,cacheWrite:0,reasoning:null},nativeMessage:{role:'assistant',content:[],stopReason:toolCalls.length?'toolUse':'stop',timestamp:0}});
 }
 async function nextCheck(f) {let frame;await until(()=>!!(frame=f.state.requests.findLast(r=>r.path.endsWith('/pi-checks'))));let work;for(let i=0;i<100;i++){work=await f.control('/work');if(work?.type==='qualification')return work;await delay(5);}throw Error('qualification_not_dispatched');}
-for(const lost of ['reserve','complete','publish'])test(`lost ${lost} response inspects checks and never repeats inference or releases liability`,async()=>{
+for(const lost of ['reserve','publish'])test(`lost ${lost} response inspects checks and never repeats inference or releases liability`,async()=>{
  const f=await fixture({native:true});try{
   f.state.lose=lost;const c=await f.start();assert.equal(f.state.requests.filter(r=>r.path.endsWith('/pi-checks')).length,0);
   const start=c.start();const rejected=assert.rejects(start,{code:'network_unavailable_outcome_unknown'});
-  if(lost!=='reserve')for(let i=0;i<(lost==='complete'?1:4);i++)await completeCheck(f,await nextCheck(f));
+  if(lost!=='reserve')for(let i=0;i<(lost==='complete'?1:2);i++)await completeCheck(f,await nextCheck(f));
   await rejected;const q=c.status.qualification;
   assert.equal(c.status.stopped,true);assert.equal(c.status.teardownVerified,true);assert.equal(c.status.recoveryPending,false);
-  assert.equal(f.state.requests.filter(r=>r.path.endsWith('/pi-checks')).length,lost==='publish'?4:1);
+  assert.equal(f.state.requests.filter(r=>r.path.endsWith('/pi-checks')).length,lost==='publish'?2:1);
   assert.equal(q[0].status,lost==='reserve'?'unknown':'passed');
   await assert.rejects(c.start(),{code:'pi_provider_not_prepared'});
   assert.ok(f.state.requests.some(r=>r.path.endsWith('/pi-checks/teardown')));
@@ -157,14 +160,14 @@ for(const lost of ['reserve','complete','publish'])test(`lost ${lost} response i
 test('Pro failure survives cleanup with HTTP, phase, model and run/check identifiers',async()=>{
  const f=await fixture({native:true});try{
   const c=await f.start(),start=c.start(),rejected=assert.rejects(start,{code:'upstream_parameter_rejected'});
-  for(let i=0;i<2;i++)await completeCheck(f,await nextCheck(f));
+  for(let i=0;i<1;i++)await completeCheck(f,await nextCheck(f));
   const frame=await nextCheck(f);assert.equal(frame.model,'deepseek-v4-pro');
   f.state.removeFail=true;
   await f.control('/failed',{scope:'request',requestId:frame.requestId,code:'upstream_parameter_rejected',statusCode:400,body:'private body'});
   await rejected;const d=c.status.setupFailure;
-  assert.equal(d.model,'deepseek-v4-pro');assert.equal(d.statusCode,400);assert.equal(d.phase,'qualification_tool');assert.equal(d.requestId,frame.requestId);assert.equal(d.providerRunId,c.status.providerRunId);
+  assert.equal(d.model,'deepseek-v4-pro');assert.equal(d.statusCode,400);assert.equal(d.phase,'qualification_setup_probe');assert.equal(d.requestId,frame.requestId);assert.equal(d.providerRunId,c.status.providerRunId);
   assert.equal(c.status.state,'cleanup_required');assert.equal(providerCanLaunch(c),false);
-  assert.equal(c.status.qualification.filter(q=>q.status==='passed').length,2);
+  assert.equal(c.status.qualification.filter(q=>q.status==='passed').length,1);
   const persisted=JSON.parse(await readFile(c.lifecycle.path,'utf8'));assert.equal(persisted.firstFailure.statusCode,400);assert.equal(persisted.firstFailure.model,d.model);
   f.state.removeFail=false;await c.retryCleanup();assert.equal(providerCanLaunch(c),true);assert.equal(f.state.created,1);
   assert.equal(f.node.nativeChecks[frame.requestId].state,'dispatched');
@@ -178,5 +181,9 @@ test('relay acknowledgement needs fresh backend confirmation; failed poll clears
 });
 
 test('cancelling qualification records cancellation and cannot dispatch a later model',async()=>{
- const f=await fixture({native:true});try{const c=await f.start(),start=c.start();const rejected=assert.rejects(start,{code:'cancelled'});await nextCheck(f);await c.stop({trigger:'setup_cancelled'});await rejected;assert.equal(c.status.setupFailure.kind,'cancelled');assert.equal(f.state.requests.filter(r=>r.path.endsWith('/pi-checks')).length,1);assert.equal(c.status.qualification.filter(q=>q.status==='pending').length,3);}finally{await f.close();}
+ const f=await fixture({native:true});try{const c=await f.start(),start=c.start();const rejected=assert.rejects(start,{code:'cancelled'});await nextCheck(f);await c.stop({trigger:'setup_cancelled'});await rejected;assert.equal(c.status.setupFailure.kind,'cancelled');assert.equal(f.state.requests.filter(r=>r.path.endsWith('/pi-checks')).length,1);assert.equal(c.status.qualification.filter(q=>q.status==='pending').length,1);}finally{await f.close();}
+});
+
+test('lost completion acknowledgement confirms the saved report without another model request',async()=>{
+ const f=await fixture({native:true});try{f.state.lose='complete';const c=await f.start(),started=c.start();for(let i=0;i<2;i++)await completeCheck(f,await nextCheck(f));await started;assert.equal(f.state.requests.filter(r=>r.path.endsWith('/pi-checks')).length,2);assert.equal(f.state.requests.filter(r=>r.path.endsWith('/pi-checks/complete')).length,2);assert.equal(c.status.publication,'published');assert.equal(c.status.qualification.every(q=>q.status==='passed'),true);await c.stop();}finally{await f.close();}
 });

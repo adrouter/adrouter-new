@@ -3,7 +3,7 @@ export function summaryLines(summary, stale = false) {
   if (!summary) return ['Marketplace availability','Unavailable'];
   const t=summary.totals;
   return ['Marketplace availability',stale?'STALE · last confirmed data':`Updated ${new Date(summary.at).toLocaleTimeString()}`,
-    `Published: ${t.published}`,`Hot / cold: ${t.hot} / ${t.cold}`,`Hot available now: ${t.immediateHot}`,`Cold control ready: ${t.coldControlReady}`,`Serving: ${t.activeServing}`,`Occupied: ${t.occupied}`,`Unresolved holds: ${t.capacityHeld}`,`Qualified: ${t.qualified}`,'',
+    `Published: ${t.published}`,`Hot / cold: ${t.hot} / ${t.cold}`,`Hot available now: ${t.immediateHot}`,`Cold control ready: ${t.coldControlReady}`,`Serving: ${t.activeServing}`,`Occupied: ${t.occupied}`,`Cleanup capacity held: ${t.capacityHeld}`,`Qualified: ${t.qualified}`,'',
     ...summary.listings.map(l=>`${l.name.slice(0,16)} · ${l.capacityHeld?'held':l.activeServing?'serving':l.immediateHot?'hot ready':l.coldControlReady?'cold control':'offline'}`),
     '', 'Cold control requires activation.', 'Qualification is separate.'];
 }

@@ -5,24 +5,25 @@ import { runTui, providerStatusLines } from '../src/tui.mjs';
 import {providerCatalog} from '../src/generated/provider-catalog.mjs';
 import { providerCanLaunch, providerDiagnostic } from '../src/provider-diagnostics.mjs';
 import { ProviderActivityMonitor, providerActivityLines } from '../src/provider-activity.mjs';
-const config={protocol:'2.0.0',product:'adr-v2',settlement:'test_credits',cashValue:false,admissions:false,privateRehearsal:false,privateOwnerEvaluation:true,supplyClasses:['authorized_api','self_hosted'],connectorProfile:'inference_connector_v1',maxNodeSessions:1,relay:'wss_single_instance',agentExecution:'buyer_vm_v1',capabilities:['allowance_v1','provider_budget_v1','cold_activation_v1','pi_native_v1','pi_native_v2','pi_native_v3'],activationDeadlineSeconds:120};
+const config={protocol:'2.0.0',product:'adr-v2',settlement:'test_credits',cashValue:false,admissions:false,privateRehearsal:false,privateOwnerEvaluation:true,supplyClasses:['authorized_api','self_hosted'],connectorProfile:'inference_connector_v1',maxNodeSessions:1,relay:'wss_single_instance',agentExecution:'buyer_vm_v1',capabilities:['allowance_v1','provider_budget_v1','cold_activation_v1','pi_native_v1','pi_native_v2','pi_native_v3','single_request_setup_v1','model_status_v1'],activationDeadlineSeconds:120};
 async function flow(mode) {
  let homes=0,picks=0,prepared=0,starts=0,stops=0,management=0,redraws=0;const errors=[],controllers=[];
  const node={id:randomUUID(),name:'Synthetic connection',connectorProtocol:'pi_native_v3',provider:'deepseek',fields:{},connection:{kind:'builtin',headerNames:[],modelDefinitions:[]},nativeRevision:0,modelsConfirmed:false,totalTokens:'1000000',testCredits:'10000',inputRate:'1000',outputRate:'3000',status:'draft',availability:'hot',models:['deepseek-v4-pro'],maxOutputTokens:512,sharedAllowance:{totalTokens:'1000000',testCredits:'10000'}};
  const unavailable=mode==='unavailable'?providerCatalog.providers.find(p=>p.models.some(m=>m.unavailableReason)&&p.models.some(m=>!m.unavailableReason)):undefined;
  let unavailableStep=0;if(unavailable){node.provider=unavailable.id;node.models=[unavailable.models.find(m=>m.unavailableReason).id];}
- const ui={start(){},stop(){},pending:{redraw(){redraws++;}},task:(_t,fn)=>fn(new AbortController().signal,()=>{}),suspend:fn=>fn(),page:async(title,lines)=>{if(title==='Provider setup needs correction'||title==='Something needs attention')errors.push({title,lines});},
+ const ui={start(){},stop(){},pending:{redraw(){redraws++;}},task:(_t,fn)=>fn(new AbortController().signal,()=>{}),suspend:fn=>fn(),page:async(title,lines)=>{if(title==='Setup failed'||title==='Something needs attention')errors.push({title,lines});},
  menu:async(title,items)=>{
+  if(title==='Provider is running')return 'stopExit';
   if(title==='What would you like to do?')return ++homes===1?'create':'exit';
-  if(title==='List compute · 1 of 3')return 'authorized_api';if(title==='Connection type')return 'builtin';if(title==='Choose provider')return node.provider;
-  if(title==='Choose offered models')return picks++===0?'manual':'continue';
+  if(title==='List compute · 1 of 3')return 'authorized_api';if(title==='Connection type')return 'builtin';if(title==='API · 1 of 4')return node.provider;
+  if(title==='Models · 3 of 4')return picks++===0?'manual':'continue';
   if(title==='Choose models from prepared guest'){
    if(unavailable){const bad=items.find(i=>i.value===node.models[0]);if(unavailableStep++===0){assert.equal(bad.disabled,false);assert.equal(items.find(i=>i.value==='continue').disabled,true);return 'continue';}if(unavailableStep===2){assert.equal(starts,0);return bad.value;}if(unavailableStep===3)return unavailable.models.find(m=>!m.unavailableReason).id;return 'continue';}
    return items.find(i=>i.value==='deepseek-v4-pro')?.label.startsWith('[x]')?'continue':'deepseek-v4-pro';
   }
   if(title==='Review connection')return 'save';
   if(title==='Connection saved'){assert.equal(prepared,0);assert.equal(starts,0);assert.ok(items.some(i=>i.value==='continue'));return 'continue';}
-  if(title==='Start provider')return mode==='back'||mode==='unavailable'?'back':'start';
+  if(title==='Test and start')return mode==='back'||mode==='unavailable'?'back':'start';
   if(title==='Your listing is drafted'||title===node.name){
    management++;assert.ok(!items.some(i=>['thinking','launch','publish'].includes(i.value)));
    if(mode==='back'||mode==='unavailable'){assert.equal(starts,0);assert.equal(items.find(i=>i.value==='setup').disabled,false);return 'back';}
@@ -40,7 +41,7 @@ async function flow(mode) {
  }};
  const network={local:true,origin:'http://127.0.0.1:8790',request:async(path,options={})=>{
   if(path.endsWith('/network/config'))return config;
-  if(path==='/v2/providers/nodes'&&options.method==='POST'){assert.equal(options.body.modelsConfirmed,false);return node;}
+  if(path==='/v2/providers/nodes'&&options.method==='POST'){assert.equal(options.body.modelsConfirmed,true);return node;}
   if(path.endsWith('/budget'))return {remainingMicrousd:'1000000',outstandingMicrousd:'0'};
   if(path.endsWith('/activity'))throw Object.assign(Error('private error'),{code:'network_unavailable_outcome_unknown'});
   if(path.endsWith('/'+node.id))return node;throw Error('unexpected route '+path);
@@ -59,9 +60,10 @@ test('saved connection editing removes unavailable selection before submitting r
  const node={id:randomUUID(),name:'Saved fixture',provider:provider.id,connectorProtocol:'pi_native_v3',status:'paused',models:[unavailable.id],fields:{},nativeRevision:3,modelsConfirmed:true,connection:{kind:'builtin',headerNames:[],modelDefinitions:[]},inputRate:'1000',outputRate:'3000',totalTokens:'1000000',testCredits:'10000',maxOutputTokens:4096};
  let homes=0,lists=0,management=0,step=0,saved;
  const ui={start(){},stop(){},task:(_title,fn)=>fn(new AbortController().signal),page:async title=>assert.notEqual(title,'Something needs attention'),form:async(_title,fields,draft)=>Object.fromEntries(fields.map(f=>[f.name,String(draft?.[f.name]??f.default??'')])),menu:async(title,items)=>{
+  if(title==='Provider is running')return 'stopExit';
   if(title==='What would you like to do?')return ++homes===1?'providers':'exit';
   if(title==='My provider listings')return ++lists===1?node.id:'back';if(title===node.name)return ++management===1?'editNative':'back';
-  if(title==='Choose offered models'){step++;if(step===1){assert.equal(items.find(i=>i.value===unavailable.id).disabled,false);assert.equal(items.find(i=>i.value==='continue').disabled,true);return 'continue';}if(step===2){assert.equal(saved,undefined);return unavailable.id;}if(step===3)return available.id;return 'continue';}
+  if(title==='Models · 3 of 4'){step++;if(step===1){assert.equal(items.find(i=>i.value===unavailable.id).disabled,false);assert.equal(items.find(i=>i.value==='continue').disabled,true);return 'continue';}if(step===2){assert.equal(saved,undefined);return unavailable.id;}if(step===3)return available.id;return 'continue';}
   if(title==='Review connection')return 'save';if(title==='Save provider changes?')return true;if(title==='Connection saved')return 'back';return null;
  }};
  const network={local:true,origin:'http://127.0.0.1:8790',request:async(path,options={})=>{

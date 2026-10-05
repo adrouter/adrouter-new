@@ -24,6 +24,7 @@ export class ProviderLifecycle {
       signal: identifier(value.signal), exitCode: Number.isInteger(value.exitCode) ? value.exitCode : null,
       relayGeneration: Number.isSafeInteger(value.relayGeneration) ? value.relayGeneration : null,
       leaseUntil: Number.isSafeInteger(value.leaseUntil) ? value.leaseUntil : null };
+    if(!entry.code)delete entry.kind;
     if (entry.code && !this.firstFailure) this.firstFailure = entry;
     this.events.push(entry); if (this.events.length > 256) this.events.shift();
     this.persist(); return entry;
@@ -49,7 +50,7 @@ export class ProviderLifecycle {
   }
   persist() {
     const value = JSON.stringify({ schemaVersion: 1, nodeId: this.nodeId, providerRunId: this.providerRunId, pid: process.pid, clientVersion: version,
-      firstFailure: this.firstFailure, stopTrigger: this.stopTrigger, events: this.events.slice(), outcomes: this.outcomes });
+      ownership:this.ownership??null, firstFailure: this.firstFailure, stopTrigger: this.stopTrigger, events: this.events.slice(), outcomes: this.outcomes });
     this.pending = this.pending.catch(() => {}).then(async () => {
       await this.prepare(); const temporary = this.path + '.' + randomUUID() + '.tmp';
       try { await writeFile(temporary, value, { flag: 'wx', mode: 0o600 }); await rename(temporary, this.path); this.saveFailed = false; }

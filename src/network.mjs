@@ -147,7 +147,7 @@ export class Network {
     const bytes = body === undefined ? undefined : JSON.stringify(body);
     let nonce;
     for (let attempt = 0; attempt < 2; attempt++) {
-      const headers = { 'X-Adr-Coding-Protocol':'coding_v1','X-Adr-Connector-Protocol':'pi_native_v3', accept: onEvent ? 'application/x-ndjson' : 'application/json', ...(bytes === undefined ? {} : { 'Content-Type': 'application/json' }), ...(this.local ? { 'X-Adr-Local-Actor': this.actor } : {}), ...(key ? { 'Idempotency-Key': key } : {}) };
+      const headers = { 'X-Adr-Setup-Policy':'single_request_setup_v1','X-Adr-Model-Status':'1','X-Adr-Coding-Protocol':'coding_v1','X-Adr-Connector-Protocol':'pi_native_v3', accept: onEvent ? 'application/x-ndjson' : 'application/json', ...(bytes === undefined ? {} : { 'Content-Type': 'application/json' }), ...(this.local ? { 'X-Adr-Local-Actor': this.actor } : {}), ...(key ? { 'Idempotency-Key': key } : {}) };
       if (identity) {
         headers.DPoP = proof(identity, method, this.origin + path, bytes, nonce, token);
         if (bytes !== undefined) headers['Content-Digest'] = `sha-256=:${digest(bytes).toString('base64')}:`;
@@ -157,7 +157,7 @@ export class Network {
       const requestSignal = signal ? AbortSignal.any([signal, AbortSignal.timeout(135000)]) : AbortSignal.timeout(135000);
       const transportFailure = () => Object.assign(new ClientError(requestSignal.reason?.name === 'TimeoutError' ? 'network_unavailable_outcome_unknown' : signal?.aborted ? 'cancelled' : 'network_unavailable_outcome_unknown'), { ...(requestSignal.reason?.name === 'TimeoutError' ? {name:'TimeoutError'} : {}), ...(response ? {status:response.status} : {}) });
       try { response = await this.fetcher(this.origin + path, { method, headers, body: bytes, redirect: 'error', signal: requestSignal }); }
-      catch { throw transportFailure(); }
+      catch(error) { const cause=error?.cause?.code;throw Object.assign(transportFailure(),{transportCause:['ENOTFOUND','EAI_AGAIN','ECONNRESET','ECONNREFUSED','ETIMEDOUT','CERT_HAS_EXPIRED','UNABLE_TO_VERIFY_LEAF_SIGNATURE'].includes(cause)?cause:null}); }
       if(response.ok&&onEvent){try{return await readCodingStream(response,onEvent);}catch(e){if(typeof e.code==='string'&&/^[a-z0-9_]{1,80}$/.test(e.code))throw e;throw transportFailure();}}
       const reader = response.body?.getReader(); let size = 0; const chunks = [];
       try { if (reader) for (;;) { const { value, done } = await reader.read(); if (done) break; size += value.length; if (size > (path==='/v2/network/provider-catalog'?16:1) * 1024 * 1024) { await reader.cancel(); throw new ClientError('response_too_large'); } chunks.push(Buffer.from(value)); } }
@@ -165,7 +165,7 @@ export class Network {
       finally { reader?.releaseLock(); }
       let result; try { result = JSON.parse(Buffer.concat(chunks).toString('utf8')); } catch { throw Object.assign(new ClientError(response.ok?'invalid_network_response':'network_request_rejected'),{status:response.status}); }
       if (response.status === 401 && result.code === 'use_dpop_nonce' && identity && attempt === 0) { nonce = response.headers.get('DPoP-Nonce'); if (nonce) continue; }
-      if(!response.ok)throw Object.assign(new ClientError(typeof result.code==='string'&&/^[a-z0-9_]{1,80}$/.test(result.code)?result.code:'network_request_rejected'),{status:response.status});
+      if(!response.ok)throw Object.assign(new ClientError(typeof result.code==='string'&&/^[a-z0-9_]{1,80}$/.test(result.code)?result.code:'network_request_rejected'),{status:response.status,...(result.operation==='configure_models'?{operation:result.operation,changedFields:Array.isArray(result.changedFields)?result.changedFields.filter(v=>/^(provider|connectorProtocol|supplyClass|fields|connection\.[a-zA-Z]+)$/.test(v)):[]}:{})});
       return result;
     }
     throw new ClientError('proof_challenge_failed');

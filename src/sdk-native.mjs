@@ -128,7 +128,7 @@ export async function sdkInference(node,auth,frame,signal,onTiming=()=>{},onEven
   const addsThinkingBudget=thinking&&(id.includes('anthropic')||id==='@ai-sdk/amazon-bedrock'&&descriptor.model.includes('anthropic'));
   if(addsThinkingBudget&&budgetTokens<1024)throw fail('provider_output_bound_exceeded');
   const sdkOutputCeiling=frame.maxOutputTokens-(addsThinkingBudget?budgetTokens:0);
-  const result=await model.doStream({prompt:sdkPrompt(frame.messages),maxOutputTokens:sdkOutputCeiling,abortSignal:signal,tools:frame.tools.map(t=>({type:'function',name:t.function.name,description:t.function.description,inputSchema:t.function.parameters})),toolChoice:{type:frame.qualification==='tool'?'required':frame.qualification==='roundtrip'?'none':'auto'},providerOptions});
+  const result=await model.doStream({prompt:sdkPrompt(frame.messages),maxOutputTokens:sdkOutputCeiling,abortSignal:signal,tools:frame.tools.map(t=>({type:'function',name:t.function.name,description:t.function.description,inputSchema:t.function.parameters})),toolChoice:{type:['tool','setup_probe'].includes(frame.qualification)?'required':frame.qualification==='roundtrip'?'none':'auto'},providerOptions});
   let finish;
   for await(const event of result.stream){
    if(event.type==='response-metadata'){if(typeof event.id==='string')responseId=event.id;if(typeof event.modelId==='string'){responseModel=event.modelId;if(responseModel!==frame.model&&!descriptor.responseAliases?.includes(responseModel))throw fail('pi_model_fallback_rejected');}}

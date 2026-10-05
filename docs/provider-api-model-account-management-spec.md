@@ -1,457 +1,383 @@
-# ADRv2 replacement specification: reliable API hosting and buyer coding
+# ADRv2 detailed specification: strict setup, model status and failure recovery
 
-## 1. Required outcome and scope
+Revision: **5 October 2026**. Status: **implemented in designated source; integrated installed and hosted verification pending**.
 
-**A provider connects an authorized API, offers selected models from one local VM, and serves a buyer running Pi in a separate temporary coding VM. The buyer completes useful work, reviews the changes, applies selected files, and ends the session cleanly.**
+This replaces earlier setup, qualification, provider/listing UI, diagnostics and failure-cleanup requirements. The existing alpha.38 product is the baseline; its earlier synthetic acceptance does not establish that the changes below exist or that live acceptance passed. The current setup blocker must be fixed before another live setup attempt is recommended.
 
-Confirmed decisions:
+## 1. Non-negotiable user outcome
 
-- Include eligible API providers from **both Pi and OpenCode’s provider catalogs**.
-- Keep **Pi as the buyer’s coding agent**.
-- Use **DeepSeek for the first live acceptance**, testing Flash and Pro independently.
-- Set the default maximum output to **4,096 tokens**, including qualification.
-- Delete the operator’s old failed or abandoned ADRv2 sessions and remove their execution resources. Restoring those sessions is not required.
-- Preserve API credentials, valid login installations, original project files and independently saved work.
-- Keep unresolved financial liabilities separate from execution. They must not falsely occupy a provider VM or appear as an active buyer.
+The provider flow is:
 
-Replace the entire [existing spec sheet](/Users/ahmadzuhri/antigravity/3days/adrouter_release/adrouter-new/docs/provider-api-model-account-management-spec.md) and synchronize its authoritative copy in the designated client checkout. Remove obsolete requirements that contradict this specification.
+1. Choose an authorized API from the installed Pi library.
+2. Enter limits.
+3. Choose the models to offer.
+4. Explicitly authorize **one model request per selected model** during setup.
+5. Publish and become available only when every selected model has returned a valid response and Router has confirmed its result.
+6. On the first failure, stop setup, stop the owned VM and associated execution, withdraw availability, and display a detailed failure report with an actual next action.
 
-Implementation owners:
+There is no Continue anyway, silent model substitution, silent removal of a failed model, partial publication, or automatic paid retry. Untested models stay Not tested. A failed or unconfirmed model cannot be sold to a buyer.
 
-- Client: [designated client repository](/Users/ahmadzuhri/antigravity/3days/.reliability/client-spec), canonical `adrouter/adrouter-new`. Continue from local HEAD `537d31e`, which contains the alpha.36 product changes.
-- Router: [designated Router repository](/Users/ahmadzuhri/antigravity/3days/.reliability/router-spec), canonical `HappyCool121/adrouter-dashboard`, baseline `ef3d80d`.
+The current model range is sufficient. Keep the pinned Pi/OpenCode implementation and existing adapters; broad catalog expansion is deferred. Pi's authorized API providers are the default setup picker. Existing additional adapters and Custom API remain available through Advanced connection setup. Subscription-backed access is excluded.
 
-Both designated checkouts were clean during planning. Fresh GitHub reads confirmed the canonical repositories and access. The launcher selects alpha.36; that does not establish which version an already-running terminal has loaded.
+Pi remains the buyer coding agent in a separate temporary VM. Providers perform inference only. Buyer commands/edits run in the buyer VM; original host files change only through separately reviewed Apply.
 
-### Defects this implementation must resolve
+The operator performs the real live test independently. The agent may implement and run synthetic/local tests, prepare the test file and verify hosted metadata, but must not dispatch real upstream inference, enter keys or walk the operator through the live test.
 
-| Current behavior verified in source | Required correction |
-|---|---|
-| Provider setup and buyer quotes default to 1,024 output tokens. | Default both to 4,096. |
-| Qualification independently caps output at 512 tokens. | Use the model’s effective configured output ceiling; no hidden 512-token qualification cap. |
-| Provider support uses a fixed Pi-only catalog and six protocol families. | Generate the combined eligible catalog and implement its required adapters. |
-| Thinking is reduced to a boolean; some models are rejected because thinking cannot be disabled. | Preserve supported upstream settings and required reasoning modes. |
-| A stopped session with unresolved inference can continue reserving execution capacity. | Release execution automatically after confirmed guest completion or teardown. |
-| A known terminal session becomes a generic “status unavailable” error in the buyer UI. | Display its actual terminal state and cause. |
-| Stop can retain the entire session allowance while only part is unresolved. | Refund known unused allowance; retain the unresolved request hold. |
-| Session deletion only changes visibility. | Complete execution cleanup and retire the session. |
-| Operator controls lack a complete ordinary-session Stop/Delete workflow. | Add scoped inspection, halt, cleanup and retirement controls. |
-| Apply approves the whole proposed change set. | Allow the buyer to select files and approve their exact changes. |
+## 2. Confirmed defects and accurate failure explanations
 
-These findings establish implementation gaps. They do **not** establish the original live Pro rejection’s cause.
+### 2.1 HTTP 409 connection_restart_required: confirmed configuration-comparison defect
 
-## 2. Provider product specification
+The reported run `a4815984-dd5f-42d3-96df-aee6fee78533` belonged to node `e721ed92-40db-44f1-b22f-df0b080cbb0a`. Its metadata records guest readiness, then HTTP 409 `connection_restart_required`, followed by successful remote Stop, guest removal, broker cleanup and execution release. No qualification checks were created for this attempt. The node was subsequently observed as deleted.
 
-### Provider catalog and adapters
+Router's prepared-connection guard currently compares public configuration objects using `JSON.stringify`. The saved connection's key order was:
 
-“Supported provider” means an eligible API connection can be configured and executed through an implemented adapter. Showing its name in a menu is insufficient.
+```text
+kind, compat, headerNames, modelDefinitions
+```
 
-- Generate the catalog from pinned upstream Pi provider definitions and OpenCode’s provider configuration/catalog sources.
-- Record upstream versions, source revisions, dependency integrity and catalog digest.
-- At planning time, the latest releases resolve to [Pi 1.0.2](https://github.com/earendil-works/pi/releases/tag/v1.0.2) and [OpenCode 1.18.34](https://github.com/anomalyco/opencode/releases/tag/v1.18.34). Recheck once when implementation begins, then freeze the selected versions for the artifact.
-- Include metered API access and authorized self-hosted inference endpoints. Exclude subscription-backed coding plans and consumer-session credentials.
-- Treat providers offering both subscriptions and metered APIs as separate authentication/endpoint configurations; exclude the subscription path without excluding the legitimate API path.
-- Include cloud API authentication, such as supported Bedrock and Vertex credentials. A single printable API-key field cannot represent every supported API.
-- Restrict the coding marketplace to models with the necessary text and tool capabilities. Image-only, embedding-only and other non-coding models must not be advertised as coding offers.
+The same connection passed through Router's schema has this order:
 
-Use Pi’s adapter where it supports the exact connection. For additional OpenCode providers, use the corresponding pinned SDK adapter behind the same ADRv2 inference interface. OpenCode itself is not installed as another buyer agent. OpenCode documents SDK-backed providers and configurable custom endpoints. [OpenCode provider documentation](https://opencode.ai/docs/providers/)
+```text
+kind, headerNames, modelDefinitions, compat
+```
 
-The adapter interface must cover:
+An offline check against the actual schema returned semantic equality but unequal serialized strings. Consequently, saving model selection can be rejected even when the underlying API settings have not changed. The existing in-memory happy-path test does not cover this persisted-order case.
 
-- Connection configuration and credential requirements.
-- Model discovery where available.
-- Supported model settings and serialization.
-- Streaming text and tool calls.
-- Native conversation metadata needed for subsequent requests.
-- Usage normalization and cancellation.
-- Safe error classification.
+Required repair:
 
-Bundle adapters with the immutable runtime. Do not download arbitrary provider packages during a live session.
+- Compare schema-normalized public configuration by semantic value, independent of object-key insertion order, including nested objects.
+- Preserve meaningful array ordering unless that field is explicitly defined as a set.
+- Keep the restart guard for actual changes to the API provider, supply class, endpoint, authentication method or required public connection fields while a VM is prepared.
+- Permit model selection/confirmation within the same prepared VM when the connection is unchanged.
+- Return the exact changed public field names for a genuine conflict; never expose secret values.
+- Use failure phase `configure_models`, not generic `failure`.
+- Add a PostgreSQL JSONB round-trip regression as well as a local semantic-comparison regression.
 
-Catalog generation must fail when an eligible provider lacks an adapter mapping. Produce a coverage report with separate columns for catalog inclusion, adapter tests and live verification.
+The current incident must be explained as:
 
-### Custom APIs
+> AdRouter rejected saving the selected models because its configuration comparison treated a different JSON key order as a settings change. No model request was sent. The provider VM was removed. Repeating the unchanged setup does not repair this bug.
 
-Provide **Custom API** alongside the generated provider list.
+Do not describe this error as a DeepSeek rejection, an invalid key, a token-limit problem or a generic instruction to restart.
 
-- Accept an explicit endpoint and supported protocol/adapter.
-- Support required public fields such as region, resource, deployment and project identifiers.
-- Collect secret values, including secret headers and service credentials, inside the provider guest.
-- Use discovery when available; permit exact model IDs when discovery is unavailable.
-- Resolve model capabilities, limits and pricing from upstream metadata or a maintained, source-backed catalog supplement.
-- Keep endpoint-specific compatibility settings attached to that connection. A familiar vendor name must not override an explicitly configured endpoint.
+### 2.2 Earlier Flash result-reporting failure: separate incident
 
-Custom APIs speaking an implemented protocol must work without adding a vendor allowlist entry. A genuinely new protocol requires an adapter implementation.
+The earlier alpha.38 run `07e1dfe2-4578-4115-829f-b883d40f9316` recorded Router renewal and status failures, followed by `qualification_complete / network_unavailable_outcome_unknown` for Flash. Its guest and execution were cleaned up, while check `bd811af7-78a7-4a08-b105-e0cc29ac7084` remained unconfirmed.
 
-Missing metadata must produce a precise setup diagnosis. Unknown usage or pricing must never become fabricated zero usage or zero cost.
+This identifies the failed network operation, not the underlying DNS/TLS/connection cause. The old client did not retain that lower-level cause or an exact durable completion report. Do not claim a confirmed upstream rejection or reconstruct usage that was not retained.
 
-### Provider setup flow
+Treat these two incidents separately in the UI, tests and documentation.
 
-1. Sign in using the existing provider profile.
-2. Select an API provider or Custom API.
-3. Enter the required public connection fields.
-4. Prepare the single local provider VM.
-5. Enter or reuse credentials inside the guest.
-6. Discover or select models and choose the subset to offer.
-7. Set cumulative token and AdRouter-credit limits and the per-request output ceiling.
-8. Review the prepared VM, selected models, effective limits and qualification allowance.
-9. Set the marketplace display name; show the persistent unique provider ID.
-10. Select **Start provider**, explicitly authorizing bounded qualification and publication.
-11. Qualify each selected model independently, connect the authenticated relay and obtain fresh backend readiness confirmation.
+## 3. Exact provider setup and publication gate
 
-Saving or continuing setup does not authorize inference. Cancelled setup leaves an editable connection and completes owned-VM cleanup.
+### 3.1 Configuration before a model request
 
-The provider’s operating controls are model selection, limits, naming, Start and Stop. Model capabilities and reasoning behavior come from upstream metadata. Existing test-credit pricing policy remains system-controlled and visible; remove provider-facing capability and price-policy switches from the ordinary setup flow.
+The ordinary wizard has four stages: **API**, **Limits**, **Models**, **Test and start**.
 
-### Model settings and output limits
+- API: select a supported authorized API and its necessary public fields. Custom API accepts its explicit endpoint and adapter.
+- Limits: show cumulative token allowance, AdRouter-credit allowance, separate upstream spending authority and per-request output ceiling.
+- Models: explicitly select one or more coding-capable models; unavailable selected models can always be deselected.
+- Test and start: review the exact models, effective settings, number of model requests and maximum test exposure before authorizing any request.
 
-- Default output ceiling: **4,096 tokens**.
-- The effective ceiling is the minimum of the selected provider limit, supported model limit and advertised platform limit.
-- Display any platform restriction separately from the model’s native limit.
-- Respect an explicitly chosen lower limit.
-- Qualification must use the same adapter configuration and effective output setting that buyers will use.
-- Do not increase token or monetary limits automatically to make a test pass.
+Default output is **4,096 tokens**. A lower explicit limit remains respected. Effective limits are bounded by provider, model and platform policy. Display native limits separately. Unknown prices remain unknown; never create zero-price metadata to make setup pass.
 
-Replace boolean-only thinking handling with supported model settings:
+Saving a connection, opening a screen, selecting models, discovery and refreshing status perform no model inference.
 
-- Buyers see only settings supported by the accepted model.
-- Start with thinking off where supported.
-- For reasoning-required models, use and disclose the supported native mode before acceptance.
-- Preserve reasoning effort levels rather than mapping every enabled setting to `medium`.
-- Preserve required native reasoning/tool metadata across turns.
-- Do not silently change the model, endpoint or reasoning setting.
+A temporary provider VM is necessary for guest-only credential entry and the authorized setup request. It is an unpublished setup environment until the gate passes. Preparing that VM must not advertise the connection as working.
 
-DeepSeek requires reasoning history to be retained in relevant tool conversations; the adapter and round-trip tests must exercise that requirement. [DeepSeek thinking and tool-call documentation](https://api-docs.deepseek.com/guides/thinking_mode/)
+Enter credentials only inside the provider guest. Ordinary Stop retains protected guest credentials. Disconnect API remains a separate credential-removal operation.
 
-### Qualification and readiness
+### 3.2 One request per selected model
 
-For every selected model, show distinct results for:
+The authorization screen must say:
 
-- Configuration and credentials.
-- Streaming response.
-- Tool-call generation.
-- Tool-result round trip.
-- Final usage evidence.
-- Publication.
-- Relay authentication.
-- Backend readiness.
+> Test N selected models. At most N model requests. Stop on the first failure. Publish only if all models pass.
 
-Flash passing never qualifies Pro.
+Tests execute sequentially in the displayed selection order. A failed first model means later models are not called. SDK retries and model fallbacks are disabled.
 
-A failed model must not be silently substituted or removed. Offer an explicit action to correct its configuration or exclude it from the proposed offering. Reuse valid qualification evidence only when its exact binding remains valid.
+Each selected coding model receives one bounded streaming request containing a fixed harmless setup probe. The probe requests one deterministic function call, such as `adr_setup_probe` with `{value: "ready"}`, through the adapter's supported tool-choice mechanism. Validate the returned structured response locally; do not execute arbitrary provider-side tools. A valid tool response counts as a model response even when its text field is empty.
 
-An unknown qualification outcome is inspected by its existing check ID. It is never automatically repeated.
+A passing probe requires:
 
-A provider becomes available only after guest readiness, relay authentication and fresh backend confirmation agree on the current run.
+- Exact accepted provider, endpoint, model and settings, including only documented aliases.
+- A completed, well-formed response within the declared deadline and output bound.
+- The requested valid probe response/tool call; an empty response or unsupported tool behavior is a failure for a coding offer.
+- Valid authoritative usage sufficient for accounting.
+- Router acknowledgement of this exact check's outcome.
 
-### VM ownership and provider controls
+Use the existing 120-second request ceiling, additionally bounded by current authority. Show elapsed time and deadline while waiting. Output truncation that prevents a valid probe is a specific failure, not a successful qualification.
 
-- Each provider terminal owns at most **one provider VM**, including during setup, discovery, reconnect and cleanup.
-- One VM can offer multiple selected models.
-- Retain one active buyer session and one inference execution slot per provider VM.
-- Starting another connection in the same terminal requires completing the current VM’s teardown.
-- Different terminals cannot claim the same provider run or credential volume concurrently.
-- Reconnect reuses the same VM and run when healthy.
-- Restart requires confirmed teardown of the previous owned VM.
-- Ordinary Stop preserves the protected credential volume.
-- **Disconnect API** remains a separate credential-removal action.
+**Remove the automatic second model request for a tool-result round trip from setup.** A tool-result round trip is tested later in the operator's buyer coding acceptance. Do not label a one-request setup probe as proof of a completed multi-turn conversation.
 
-Expose three distinct controls:
+Add a negotiated `single_request_setup_v1` qualification policy. New client setup previews and Router publication validation use one `setup_probe` per selected model for this policy. Old-client check formats retain their existing interpretation. Do not weaken an old two-stage record into a new-policy success or claim unperformed round-trip evidence.
 
-| Action | Effect |
-|---|---|
-| End buyer session | Stop that buyer’s execution; keep a healthy provider VM available for another buyer. |
-| Stop provider | Withdraw availability, stop current work, close relay and remove the owned VM. |
-| Delete listing | Stop its execution and retire the offering from the marketplace. |
+The current check/run/configuration binding and result must be explicit. New changes to connection identity invalidate relevant evidence. Tests from an old configuration must not qualify the new one.
 
-Reaching a provider limit stops new admission, cancels work that can no longer remain authorized, and completes provider shutdown. The UI identifies the exhausted limit.
+### 3.3 Hard publication gate
 
-## 3. Buyer, lifecycle and operator specification
+Publication is blocked unless every currently selected model has an acknowledged passing setup probe under the accepted policy and configuration. Missing, failed, timed-out, cancelled or unconfirmed checks fail the gate.
 
-### Buyer workflow
+After all probes pass, publish the exact offered models, authenticate the relay and obtain fresh backend readiness. Only then display Available or permit a buyer to reserve the offer.
 
-1. Browse current offers with provider name/ID, model, availability, capabilities, rates and effective limits.
-2. Select an offer.
-3. Review and accept session duration, request allowance, output ceiling and maximum charge.
-4. Choose a host workspace directory.
-5. Review the import manifest.
-6. Copy the approved workspace into a temporary buyer VM.
-7. Run Pi in that VM, routing inference through Router to the selected provider VM.
-8. Render tool permissions in the coding terminal while the host retains approval authority.
-9. Perform edits and commands inside the VM workspace.
-10. Return to workspace review when coding ends or pauses.
-11. Select which files to apply, inspect their changes and explicitly approve application.
-12. Finish the session and verify cleanup.
+A failed model is never silently deselected. The user may edit the stopped connection and explicitly authorize another bounded attempt. That is a new paid attempt, not an automatic retry.
 
-The buyer never receives upstream credentials. The provider VM never runs buyer tools or receives authority over the buyer’s original project.
+## 4. Model status on every provider and listing screen
 
-Preserve the existing workspace exclusions and path protections. Do not copy secrets, ignored private files or unrelated host directories into the VM.
+### 4.1 Status dimensions
 
-### Review and Apply
+| Dimension | States | Meaning |
+|---|---|---|
+| Qualification | Not tested; Testing; Passed; Failed; Result unconfirmed; Recheck required | Outcome of the applicable setup probe for this model/configuration. |
+| Model availability | Available; Busy; Offline; Blocked; Unknown | Whether this provider can currently offer this model to a new buyer. |
+| Provider runtime | Preparing; Testing; Connecting; Available; Busy; Reconnecting; Stopping; Stopped; Cleanup required | Current execution lifecycle, independent of accounting. |
+| Cleanup | Not required; Pending; Succeeded; Failed | Confirmed resource cleanup, not inferred from a closed socket. |
+| Accounting | Open; Pending reconciliation; Settled | Known charges/refunds and unresolved reservations. |
 
-- Display added, modified and deleted files with content diffs.
-- Provide file-level selection, initially with no files selected.
-- Approve exactly the selected paths and contents.
-- Bind approval to workspace identity, snapshot revision and content digest.
-- Rejecting Apply leaves all originals unchanged.
-- Recheck original-file hashes immediately before applying.
-- A changed original produces a conflict requiring a fresh review.
-- Preserve the existing recoverable application journal.
-- Applying selected files leaves unselected VM changes available for later review or export.
+A passed model can be Offline. A published listing can be Offline. A stopped session can have pending accounting. These combinations must be rendered honestly.
 
-Review, Apply and Export remain available from saved work after compute ends. They must not require a live provider, an active marketplace session or completed financial settlement.
+### 4.2 Authoritative derivation
 
-### Separate execution, cleanup and accounting
+Router computes model availability using the same current listing, qualification, lease, suspension, capacity and provider-limit conditions used for admission. Buyer-specific funding is separately checked at quote/acceptance.
 
-Expose independent status for:
+- One accepted buyer occupies the shared VM slot, including between requests. Other models on that VM cannot appear available to another buyer during that reservation.
+- Financial holds whose execution was released do not make a model Busy.
+- Unreleased legacy execution is labelled Cleanup required, not falsely described as current inference.
+- Unconfirmed completion is not Testing after execution ended.
+- Historical successful checks remain historical; they do not override current configuration/run requirements.
+- Runtime failures remain distinct from historical qualification results.
 
-| Dimension | States |
-|---|---|
-| Provider runtime | Preparing, qualifying, connecting, available, busy, reconnecting, stopping, stopped, cleanup required |
-| Buyer execution | Preparing, active, paused, stopping, stopped |
-| Cleanup | Pending, succeeded, failed |
-| Accounting | Open, pending reconciliation, settled |
+Visible operational views poll every five seconds, with one outstanding poll per view. Cancel or ignore replies for a previous node, network or profile. Positive readiness becomes stale after fifteen seconds or earlier lease expiry. On a failed poll, show Unknown and the last confirmed state/time instead of retaining a green Available claim. Preserve confirmed terminal facts while labelling freshness separately.
 
-Transport unavailability is a freshness condition, not a replacement for the last known state.
+Status reads must never create a VM, test a model, reserve money or publish.
 
-A session that is authoritatively stopped must show **Stopped**, its reason and available work-recovery actions. “Status unavailable” is reserved for a failed status read.
+### 4.3 My provider listings
 
-Do not count financially unresolved requests as currently executing after their execution has ended.
+Every row shows name, short node ID, runtime state and available/selected model count. Opening or expanding it displays every selected model, not just the first.
 
-### Stop and automatic capacity release
+```text
+DeepSeek [short ID]          Failed — stopped       0/2 available
 
-Use one idempotent stop mechanism for buyer Finish, provider halt, operator halt, expiry, exhaustion and cancellation:
+MODEL                 QUALIFICATION        AVAILABILITY
+DeepSeek Flash        Result unconfirmed   Offline
+DeepSeek Pro          Not tested           Offline
 
-1. Revoke further dispatch and tool authority for the affected session.
-2. Record the stop reason.
-3. Cancel any active provider request.
-4. Wait for the current provider guest to confirm its execution handler has finished.
-5. Release execution capacity transactionally.
-6. Complete buyer VM cleanup and preserve the reviewed/saved workspace outcome.
-7. Return known unused funding while retaining unresolved request reservations.
+Reason: Flash's result could not be confirmed by AdRouter.
+Cleanup: VM removed; relay closed; execution released.
+Next action: Diagnose.
+```
 
-The execution-completion acknowledgement must be bound to the provider run, relay generation, session, request and dispatch sequence.
+Use a visible ID to distinguish duplicate connection names. Fully retired connections disappear from ordinary provider views. Pending retirements belong to a distinct Cleanup required section with a count and recovery action.
 
-If acknowledgement is unavailable:
+### 4.4 Provider status and listing details
 
-- Keep the provider unavailable for another dispatch.
-- Attempt bounded local cancellation and owned-guest teardown.
-- Release capacity after verified teardown.
-- Retain a cleanup controller and a clear recovery action if teardown fails.
-- Never claim cleanup succeeded solely because a socket closed or a timer expired.
+**Provider status must always exist**, including after reopening the client and when there is no in-memory controller.
 
-A late acknowledgement from an old run must not stop or release a newer run.
+Combine authoritative backend data, matching local lifecycle evidence and pending report state. If no controller is attached, say **No controller attached in this terminal**. Do not infer **VM not running** solely from a missing local object.
 
-### Accounting behavior
+Owner details show each model's exact ID, adapter, output ceiling, reasoning setting, current check, last result/failure, freshness and relevant run/check IDs. Technical identifiers follow the explanation instead of replacing it.
 
-At Stop, calculate:
+Buyer marketplace rows and listing details show exact model, qualification, availability, safe reason and freshness. Refresh before quote/acceptance; disable unavailable actions with an explanation. Public listings must not expose private checks, liabilities, installation details or runtime paths.
 
-`refundable = funded − charged − unresolved_reserved − already_refunded`
+Operator screens use the same status calculation and group sessions beneath their provider, with safe execution ownership, heartbeat, cleanup and accounting details.
 
-Return that known unused amount exactly once. Do not release the unresolved reservation.
+## 5. Operational UI and navigation
 
-For the reported shape—100 funded, 0 charged and 14 unresolved—the intended result is **86 refunded, 14 held**, with execution stopped after cleanup confirmation.
+Use compact headers showing role, network, loaded client version and connection identity. Do not allow a large banner to displace the model table, primary failure or actions at 80x24. Use stacked cards on narrow terminals. Status must remain understandable without color.
 
-When authoritative usage later arrives:
+Order information as follows:
 
-- Settle the request once.
-- Refund any remaining unused portion of its reservation.
-- Append accounting entries.
-- Never overwrite an immutable receipt or ledger entry.
+1. Current outcome: Available, Stopped after failure, or Cleanup required.
+2. Exact failing operation/model and a plain-language reason.
+3. Supported next action.
+4. Per-model status.
+5. Cleanup and accounting separately.
+6. Technical details on demand.
 
-Consumed usage and outstanding holds continue counting against their applicable budgets. Creating another session, connection or installation must not erase them.
+Controls:
 
-### Error handling and recovery
+- Arrows navigate; Enter selects; Tab changes focus between content and actions.
+- `/` activates filtering on operational provider/marketplace lists. Show the active filter; filter rows only.
+- Status, Diagnose, Refresh, Stop, Retry cleanup, Delete and Back must not vanish because a filter is active.
+- Esc while filtering clears/exits the filter. Otherwise Esc goes Back.
+- Back must not stop a healthy provider.
+- Stop is a distinct action. Exit/Ctrl+C while this terminal owns a provider offers Keep running and Stop and exit; default to Keep running.
+- External termination signals attempt bounded cleanup and record the actual result without an interactive confirmation dependency.
+- Refresh preserves focus, scroll, selections and drafts. No redraw selects Start, Delete or an approval automatically.
 
-Every failure must identify:
+The user must never be sent to a control that is absent. Disabled actions must state their prerequisite. No generic unavailable label without a reason.
 
-- Phase and safe error code.
-- Whether dispatch occurred.
-- Known result versus unknown outcome.
-- HTTP status where available.
-- Model, adapter, session/request and run/check identifiers.
-- Last successful status time.
-- Execution and cleanup outcome.
-- Available next action.
+## 6. Exact failure report and recovery actions
 
-Distinguish:
+### 6.1 Required report format
 
-- Local validation and budget rejection before dispatch.
-- Authentication or model-entitlement failure.
-- Unsupported request parameters.
-- Rate limiting.
-- Output/context limit exhaustion.
-- Malformed tool output with known usage.
-- Interrupted streams or missing final usage.
-- User cancellation.
-- Request timeout.
-- Authentication refresh failure.
-- Provider/Router connectivity loss.
-- Guest teardown failure.
+Every terminal failure presents:
 
-Valid usage evidence must still be accounted for when the response fails a tool-format check. A formatting failure must not automatically become an unknown billing outcome.
+```text
+SETUP FAILED — <precise operation>
+Model: <exact model or 'No model request sent'>
+Cause: <known cause; say when the cause was not captured>
+Operation: <saving model selection / calling API / recording result / ...>
+HTTP / transport: <safe status/category, if known>
+Model request: Not sent / Response received / Outcome unknown
+Cleanup: <each step and actual outcome>
+Accounting: <known charge/refund/hold, independently>
+Next action: <an available action with a clear effect>
+Details: <node/run/check IDs and timestamp>
+```
 
-Safe status reads may retry. Inference and tool execution must not automatically replay after an uncertain outcome. An explicit new request receives a new ID and retains the earlier liability.
+Do not use `Failure phase: failure` or `setup needs correction` as the whole explanation. Distinguish an internal AdRouter defect from user configuration, an upstream rejection and a Router transport failure.
 
-### Authentication
+Do not display the generic unknown-reservation warning for a run that created no check/reservation. Display actual accounting state.
 
-Retain the working three-role login implementation.
+### 6.2 Error/action mapping
 
-- Refresh credentials without losing the active connection or conversation.
-- Serialize refresh across processes sharing a profile.
-- Keep sign-in repair and sign-out accessible when a normal profile request fails.
-- Preserve role/account isolation.
-- Stop dispatch under a departing profile.
-- Never restart serving automatically after sign-in.
-- Use native Safari for any required Google authentication; the operator completes authentication.
+| Failure | Explain | Supported next action |
+|---|---|---|
+| Internal configuration-comparison defect | AdRouter rejected unchanged settings; no model request sent | Install verified repair; do not recommend blind restart |
+| Genuine prepared-connection change | Identify changed public fields and why the prepared guest cannot use them | Stop and explicitly prepare the saved new configuration |
+| Upstream authentication rejection | The API rejected the credential, with safe status/code | Update credential inside guest; explicit new test |
+| Invalid model or endpoint | Identify exact model/endpoint configuration mismatch | Edit configuration |
+| No/empty/malformed response | Explain which response requirement failed | Diagnose; edit configuration or explicitly start a new attempt |
+| Timeout | Identify whether it occurred during API inference, Router reporting or cleanup | Diagnose; no automatic inference retry |
+| Rate limit | Identify upstream or Router rate limiting and known retry timing | Wait; explicit new inference only when appropriate |
+| Spending limit | Show existing consumed/held/remaining allowance and required bound | Review limits; no automatic increase or reset |
+| Result report unconfirmed | Model responded but Router did not confirm the report | Retry result report if exact metadata was saved |
+| Old installation binding | Current installation cannot perform that bound operation | Supported owner/operator cleanup or explicit reclaim |
+| Failed cleanup | Identify guest, relay or backend step not confirmed | Retry cleanup with verified ownership |
 
-### Operator controls and old-session cleanup
+Only capture allowlisted transport causes, such as DNS, connection reset/refused, TLS failure, timeout, HTTP rejection or interrupted response. If unavailable, state **Transport cause not captured** rather than inventing one. Capture elapsed time and whether an HTTP response was received.
 
-The operator interface must provide:
+### 6.3 Diagnose command
 
-- Provider-grouped listings and sessions.
-- Current execution owner and run.
-- Last heartbeat and relay freshness.
-- Active request versus unresolved accounting.
-- Safe failure and cleanup metadata.
-- Halt session.
-- Halt provider.
-- Delete listing.
-- Complete or retry failed cleanup.
+Add `adr-cli --profile provider provider diagnose NODE_ID`, including `--json` output. It is read-only and must work without a live controller.
 
-A halted listing remains paused until explicitly started again. Clearing suspension does not publish it.
+Correlate exact node/run/check identities across backend status, safe local lifecycle metadata and saved report metadata. Show current state, first causal failure, later cleanup failures, installation-binding status, and actions actually supported by this installation/role.
 
-For this task, cleanup authorization covers the operator’s pre-existing failed or abandoned ADRv2 acceptance sessions, including the reported failures:
+No secret values, arbitrary exception messages, headers, raw responses, prompts or tool arguments may enter diagnostics. A diagnostic export is an allowlisted metadata report, never a raw terminal capture.
 
-- Inventory identifiers and execution state without reading private workload contents.
-- Stop and fence their execution.
-- Remove their owned temporary VMs and stale runtime resources.
-- Release confirmed execution capacity.
-- Retire them from normal session and marketplace flows.
-- Preserve only accounting references needed for outstanding liabilities, along with independently saved work and credentials.
+## 7. Stop everything belonging to a failed run
 
-No restoration or migration of broken sessions is required. No blanket database reset, account deletion or deletion of unrelated users’ sessions is included.
+On the first unrecoverable setup/model failure:
 
-## 4. Implementation and contract changes
+1. Block new inference and tool authority immediately.
+2. Stop testing remaining models and mark them Not tested with the reason.
+3. Ensure the failed run has no published/available offers.
+4. Cancel the outstanding upstream operation if one exists.
+5. Stop associated buyer execution and preserve its latest available checkpoint.
+6. Remove the owned provider guest and close relay/broker resources.
+7. Confirm backend withdrawal and release execution capacity after completion/teardown evidence.
+8. Keep the TUI open on the failure report.
 
-### Catalog and inference contract
+A first-model failure cannot proceed to the second model. If a later model fails, previously passed models stay historically Passed but the entire connection remains Offline; no partial publication.
 
-Introduce negotiated `pi_native_v3` for the combined adapter catalog and model settings while retaining `pi_context_v1` as the buyer conversation format.
+Temporary status/report recovery does not authorize new dispatch. Do not extend expired authority. The buyer pauses new actions immediately on authority loss and closes local execution if authority remains unavailable beyond a bounded thirty-second window, preserving work without a model call.
 
-Add:
+If removal fails, show Cleanup required and block relaunch. Retain the cleanup controller and persist safe ownership metadata linking guest, runtime, node and run. Recovery must verify this evidence through supported runtime metadata before removing resources. Do not adopt older unidentified guests by name.
 
-- `GET /v2/network/provider-catalog`.
-- Catalog source revisions and digest.
-- Adapter identity and version.
-- Public connection-field schema and guest credential-method descriptors.
-- Native model limits, supported settings, capabilities and metadata provenance.
-- Accepted model settings in quotes, sessions and inference frames.
+A stopped VM, closed socket or elapsed deadline does not establish an upstream billing outcome. Keep unknown charges separate. Refund known unused funding exactly once:
 
-Keep `inference_connector_v1` as the connector profile. Unsupported client/server combinations must produce an actionable upgrade error before qualification or dispatch.
+`funded - charged - unresolved_reserved - already_refunded`
 
-Generate client catalog/contracts from committed Router definitions. Do not hand-edit generated files.
+Do not erase holds, reset budgets or fabricate zero usage to make the screen look clean.
 
-Transport changes must support each adapter’s required authentication and inference paths while retaining endpoint restrictions, bounded traffic and disabled SDK inference retries.
+## 8. Completion reporting must survive a lost response
 
-### Lifecycle and operator interfaces
+Before sending the model check's completion report, atomically persist only its schema version, node/run/check/model/configuration binding, normalized usage, validation flags, payload digest and delivery state. Use validated owner-only paths and bounded data. Do not store response text or credentials.
 
-Extend session/activity responses with explicit execution, cleanup, status freshness and safe failure fields. Keep accounting fields independently readable.
+On a report transport failure:
 
-Add:
+- Read the existing check's authoritative state.
+- If already settled, use that recorded outcome.
+- Otherwise retry only the identical completion report.
+- Allow at most three delivery attempts within forty-five seconds. This window does not extend execution authority or delay an explicit Stop.
+- Do not replay an uncertain refresh-token exchange or treat authentication rejection as an ordinary transport retry.
+- Retain the report if delivery cannot be confirmed.
 
-- Provider-scoped session Stop.
-- Run-scoped teardown acknowledgement.
-- Relay execution-completion acknowledgements.
-- Operator session listing, inspection and Stop.
-- Operator provider Stop and listing retirement.
+Router settles a check at most once, returns the original result for identical duplicates and rejects conflicting report payloads. Completion reporting for an already authorized check remains possible after Stop/retirement without granting new inference, publication or restart authority.
 
-Use the existing `/sessions/:id/stop` and `/sessions/:id/delete` surfaces for the revised buyer behavior. Deletion completes stop/retirement rather than merely changing visibility.
+A user-triggered **Retry result report** contacts Router only. It does not call the provider API, launch a guest, continue tests or publish. After recovery of a stopped run, another paid attempt still requires explicit Start.
 
-Reuse existing JSONB records and execution-release fields. The planned changes do not require a database reset or a schema migration. Populate the existing required execution-release evidence fields from validated lifecycle acknowledgements.
+If no exact saved report exists, say so and disable report recovery. The earlier Flash attempt's missing usage must not be reconstructed.
 
-Update PostgreSQL transaction loading and activity predicates alongside service logic. In-memory tests alone cannot verify capacity release or accounting correctness.
+## 9. Backend status interfaces and compatibility
 
-### Ordered implementation
+Router owns one model-status projection used by provider, activity, listing and operator views.
 
-1. **Replace the specification and establish reproducible inputs.** Preserve unrelated checkout changes; freeze upstream catalog/adapters; record implementation work in the owning plans without replacing the cumulative workspace plan.
-2. **Repair execution and accounting.** Implement stop acknowledgements, automatic capacity release, partial unused-credit refunds, truthful status and operator cleanup. Cover races in PostgreSQL-backed tests.
-3. **Complete provider configuration.** Generate the combined catalog, implement missing adapter/auth paths, propagate native settings and apply the 4,096 default consistently.
-4. **Complete the buyer flow.** Preserve Pi/tool metadata, improve actionable failures and add selected-file Apply.
-5. **Build and deploy paired immutable artifacts.** Verify the installed client and hosted Router before handing over the real-key step.
-6. **Clean up old failed sessions and run fresh DeepSeek acceptance.** Fix any remaining failure and repeat only the affected validation plus the unfinished acceptance steps.
+Negotiate additive status fields with `X-Adr-Model-Status: 1`. Existing clients receive their existing response shape. Add `modelStatuses` to provider projections and `modelStatus` to individual listings, with:
 
-Before deployment implementation, run the required Fly, Pages, Supabase, GitHub and npm checks in the execution context and collect failures into one handoff. The previous npm and registry exceptions are not assumed to cover this delivery.
+- Exact model and configuration identity.
+- Qualification policy/state and last applicable check time.
+- Availability state, reason code and observation/validity timestamps.
+- Owner/operator-only progress, safe failure references and cleanup detail.
 
-Use the standing deployment authority. Preserve private access/spending policies, Pages, and the sole-relay drain/in-place replacement procedure. Deliver the next unused immutable private client version; public npm publication and promotion are outside this task.
+Public responses exclude private check IDs, installation bindings, liabilities and runtime paths. Current status and admission use the same capacity/readiness conditions. New screens must not maintain a separate readiness policy.
 
-## 5. Verification and completion gates
+Add the single-request setup policy to authoritative contracts and publication checks. One successful new-policy probe is not re-labelled as legacy two-call/round-trip verification. Generate client validators after committing Router contract inputs and update OpenAPI. Preserve role separation and existing request-proof/body-digest enforcement.
 
-### Automated verification
+Use existing JSONB records for new status/report metadata; no database reset or schema migration is planned for this work.
 
-Run the relevant client checks, Router typecheck/build, marketplace/auth/contract suites and PostgreSQL-backed lifecycle/accounting tests.
+## 10. Buyer and operator behavior retained
 
-Required regression coverage:
+Buyer flow remains: select exact offer, accept its bounds, choose/review the workspace, run Pi in the buyer VM, approve intended commands/edits, return through `/workspace`, review changes and apply explicitly selected files.
 
-- 4,096 defaults reach setup, qualification, quotes, relay and guest serialization.
-- No implicit 512-token qualification ceiling remains.
-- Every eligible catalog provider maps to a bundled adapter.
-- Subscription authentication paths are excluded without excluding metered APIs.
-- Cloud and multi-field credentials remain guest-only.
-- Native settings, reasoning history, tool IDs and usage survive round trips.
-- Exact model binding permits only documented aliases and rejects substitution.
-- Stop, expiry, limits, provider halt and operator halt all revoke execution.
-- Confirmed cleanup releases capacity while unresolved money remains held.
-- Partial refunds and later reconciliation are idempotent.
-- Stale callbacks cannot affect a new run.
-- Failed cleanup remains visible and recoverable.
-- Known terminal status is not rendered as failed polling.
-- Reconnect never replays inference or tools.
-- Selected-file Apply, denial, conflicts and interrupted application behave correctly.
-- Scope checks prevent cross-account inspection or mutation.
+Rejecting Apply changes no host file. Selecting one file applies only that file. Recheck original hashes and retain application journals and unselected changes. Review/Apply/Export remain available from saved work after compute or financial settlement stops. No automatic application to host originals is permitted during failure cleanup.
 
-Use actual installed Mac VM/PTY gates for provider setup, retained credentials, coding permissions, Apply, reconnect and teardown. Repeat the full eleven-minute lifecycle gate for the changed lifecycle implementation.
+Operator views expose exact model/session/run, freshness, execution, cleanup and accounting. Supported controls are Halt buyer session, Halt provider, complete verified cleanup and retire listing. Controls for a connection bound to an older installation must offer the correct operator/owner path, not a menu that predictably produces an unexplained not_found.
 
-### Fresh live DeepSeek acceptance
+Ordinary Stop preserves credentials. Delete retires a connection after verified cleanup while retaining necessary financial evidence and saved work. Disconnect API is separate and never a troubleshooting shortcut.
 
-Use the final installed artifact and verified hosted Router.
+## 11. Remove the obsolete provider entries
 
-1. Confirm buyer, provider and operator profiles work.
-2. Create a fresh DeepSeek connection and enter the key only inside its guest.
-3. Select Flash and Pro explicitly; verify the exact upstream model IDs.
-4. Confirm 4,096 output tokens and existing spending authority.
-5. Start once and record separate qualification results for both models.
-6. For each model, complete at least five sequential buyer turns, including at least two tool-result round trips.
-7. Make a real VM workspace edit and run a command through the coding permission UI.
-8. Reject Apply and verify original files are unchanged.
-9. Select and approve a subset of changes; verify only those files change.
-10. Finish the buyer session and start another buyer on the same healthy provider VM.
-11. Leave the provider idle for eleven minutes, then complete another request.
-12. Interrupt and restore the relay while idle; verify same-VM reconnect and no replay.
-13. Verify natural authentication refresh during continued operation.
-14. Halt an active request; confirm execution cleanup, accurate liability status and eventual capacity availability.
-15. Stop the provider; verify guest removal and backend withdrawal separately.
-16. Restart with retained credentials, explicitly Start again, complete another buyer session and Stop.
-17. Exercise operator halt and deletion on task-owned acceptance records.
-18. Confirm no abandoned task VM or stale execution owner remains.
+The user authorized removal of obsolete provider entries. Requery the account and build an explicit removal manifest immediately before mutation; do not infer the target from a duplicate name.
 
-Also test the Custom API configuration path against the same authorized DeepSeek endpoint using explicit adapter/model configuration. This verifies that path without requiring another provider’s key.
+The previously identified working-test connection was `bdabdac3-82e0-4ca7-a82b-6b77c9c90872`. Preserve it if it still exists and remains the intended current connection. The subsequently reported node `e721ed92-40db-44f1-b22f-df0b080cbb0a` was observed as deleted; do not instruct the operator to restart that ID. Never select an arbitrary replacement or start a new paid connection automatically.
 
-If a live case fails, retain its safe diagnostic evidence, correct the failure and continue from a new explicit test action. Never silently repeat an uncertain request.
+For the ten previously inventoried obsolete entries, verify owner/run, use the operator Stop path, match recorded guest-removal or authoritative execution-release evidence, complete supported teardown, retire the listing and verify removal from ordinary views. Do not erase associated financial holds.
 
-### Definition of done
+If new entries appeared after the authorized inventory, leave them unchanged until their intended role is established. Preserve credentials, saved work and the two older ownership-unverified VMs. The normal provider screen must not accumulate retired entries; genuine pending cleanup remains in a separate labelled section.
 
-Completion requires:
+## 12. Required verification
 
-- The replacement spec is saved in place and its copies agree.
-- The eligible combined provider catalog has implemented adapter coverage.
-- Fresh Flash **and** Pro buyer coding pass.
-- Follow-ups, permissions and selected-file application work.
-- Buyer Finish allows a subsequent buyer.
-- Reconnect works without replay.
-- Stop and operator halt end execution reliably.
-- Old failed sessions no longer occupy runtime capacity or clutter normal flows.
-- Credentials survive ordinary provider restart.
-- Outstanding liabilities remain accurate and separate.
-- Evidence identifies the exact client artifact and deployed Router tested.
+### Configuration and one-request gate
 
-Report catalog coverage, adapter-test coverage and live-provider coverage separately. DeepSeek is the first live proof; other providers become live-qualified when tested with their own authorized connections.
+- Reproduce the actual unchanged `{kind, compat, headerNames, modelDefinitions}` ordering case through schema validation and a PostgreSQL JSONB round trip.
+- Object-key order changes pass; real endpoint/provider/authentication changes still reject with exact field names.
+- Confirm model selection in the same prepared VM does not launch another VM.
+- N selected models cause at most N upstream model requests, one each, in sequence.
+- First failure prevents later requests and all publication.
+- Valid structured tool response is accepted as the requested response; empty, malformed, truncated, substituted or unusable response fails explicitly.
+- No hidden round-trip request, SDK retry, fallback model or automatic new attempt.
+- Backend independently enforces the qualification policy and gate.
+
+### Status and UI
+
+- Mixed model states; passed but offline; published but busy; expired/stale evidence.
+- Lost polling, reopened terminal, no local controller and late callbacks.
+- Consistent rows/details/quotes and safe public/private projections.
+- Operational actions survive filtering; Back does not stop healthy execution; explicit Exit/Stop behavior.
+- 80x24, narrow and wide terminal layouts, monochrome output and stable focus/scroll.
+
+### Recovery, cleanup and accounting
+
+- Lost completion request and lost completion response; identical/conflicting duplicate reports.
+- Exactly one upstream request despite reporting retries.
+- Stop/process interruption after report persistence; recovery after Stop/retirement.
+- Missing historical report, authentication failure and uncertain refresh.
+- Guest-removal failure, verified retry and stale teardown unable to affect a newer run.
+- Partial refunds, held liabilities, late settlement and retirement with preserved accounting, including disposable PostgreSQL races.
+- Buyer checkpoint preservation, rejected/selected Apply and changed-original conflict behavior.
+
+Run actual installed Mac VM/PTY gates for changed setup, reporting and lifecycle behavior using synthetic transport. Use real-provider credentials only in the operator's independent test.
+
+## 13. Delivery and acceptance boundary
+
+Implement in the designated canonical client and Router checkouts. Preserve unrelated source/documentation work. Complete required platform preflight before deployment/private delivery, carrying forward the explicit npm-authentication deferral and existing deployment authority.
+
+Fix the confirmed setup comparison defect before polishing status presentation. Then implement the one-request gate, statuses/failure reports, report recovery and scoped old-entry cleanup. Do not expand catalog coverage or change spending/access policies.
+
+Commit authoritative Router inputs before generating client contracts. Build the next unused immutable private client; never overwrite alpha.38. Deploy Router changes through the sole-relay drain and in-place replacement procedure. Preserve Pages, database history, existing protected gates and retained recovery artifacts. Verify exact installed and serving identities and run affected release checks.
+
+Update both spec copies and the standalone manual live-test file at `outputs/adr-live-test-2026-10-05/live-test-run.md`. Mark old alpha.38 setup instructions as affected by the confirmed blocker until a fixed version is verified. The revised runbook must describe one request per selected model, the exact new statuses/actions and blank logging fields.
+
+Completion requires a demonstrated synthetic failure that produces a specific diagnosis, no later model request, no publication, confirmed teardown and correct separate accounting; plus a passing multi-model setup with exactly one probe per model and consistent status across screens.
+
+The final handoff is **implementation verified and ready for an independent manual retest**. Real Flash/Pro/Custom API acceptance is not claimed until the operator records it. No agent-run paid inference or interactive live-test walkthrough is authorized.
