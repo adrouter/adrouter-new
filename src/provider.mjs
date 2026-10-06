@@ -1,4 +1,4 @@
-import { safeFailure } from './failure-diagnostics.mjs';
+import { safeFailure, normalizeDiagnosticCode } from './failure-diagnostics.mjs';
 import { transportCode } from './transport-evidence.mjs';
 import { ProviderReports, SETUP_POLICY } from './provider-reports.mjs';
 import {providerCatalog} from './generated/provider-catalog.mjs';
@@ -98,9 +98,10 @@ async function createProviderController(networkInput, nodeId, { prepareOnly = fa
     lifecycle.event('request', { status: 'cancellation_requested' });
   };
   // The broker validated this evidence against the pending qualification binding.
-  const setupRequestError=(check,code,statusCode=null)=>{
+  const setupRequestError=(check,rawCode,statusCode=null)=>{
     const d=safeFailure(check.failureDiagnostic);
-    if(d&&d.code!==code)throw Error('diagnostic_code_binding');
+    if(d&&d.code!==normalizeDiagnosticCode(rawCode))throw Error('diagnostic_code_binding');
+    const code=[...upstreamFailureCodes,...setupResponseCodes].includes(rawCode)?rawCode:'provider_outcome_unknown';
     return Object.assign(new ClientError(code),{provider:node.provider,model:check.binding.model,api:check.binding.api,maxOutputTokens:check.binding.maxOutputTokens,
       operation:setupResponseCodes.includes(code)?'setup_response_validate':'setup_model_request',requestId:check.id,
       statusCode:d?d.statusCode:check.upstreamStatus??(Number.isInteger(statusCode)&&statusCode>=100&&statusCode<=599?statusCode:null),
@@ -135,7 +136,7 @@ async function createProviderController(networkInput, nodeId, { prepareOnly = fa
       } else if (req.method === 'POST' && req.url === '/usage') {
         const data=JSON.parse(bytes),binding=executionBindings.get(data.requestId);
         if(pending?.qualification&&pending.id===data.requestId){
-          if(data.failureCode){const error=setupRequestError(pending,[...upstreamFailureCodes,...setupResponseCodes].includes(data.failureCode)?data.failureCode:'provider_outcome_unknown');setupFailure??=providerDiagnostic('qualification_setup_probe',error,{nodeId,providerRunId,...error},now);lifecycle.fail(setupFailure);}
+          if(data.failureCode){const error=setupRequestError(pending,data.failureCode);setupFailure??=providerDiagnostic('qualification_setup_probe',error,{nodeId,providerRunId,...error},now);lifecycle.fail(setupFailure);}
           let operation='setup_report_save';
           try{const record=await reports.save({nodeId,providerRunId,installationId:node.installationId,nativeRevision:node.nativeRevision},{id:data.requestId,usage:data.nativeUsage,streaming:true,tools:false,completed:false});operation='setup_report_submit';await reports.deliver(network,record);}
           catch(error){lifecycle.fail(providerDiagnostic(operation,error,{nodeId,operation,providerRunId,requestId:data.requestId,requestEvidence:setupFailure?.requestEvidence??'outcome_unknown'},now),{secondary:!!setupFailure});throw error;}
@@ -162,7 +163,7 @@ async function createProviderController(networkInput, nodeId, { prepareOnly = fa
         pending = undefined; lifecycle.event('request', { status: 'cancelled' });
       } else if (req.method === 'POST' && req.url === '/failed') {
         const result = JSON.parse(bytes);
-        if(result.scope==='request'&&pending?.qualification&&result.requestId===pending.id){const check=pending,error=setupRequestError(check,[...upstreamFailureCodes,...setupResponseCodes].includes(result.code)?result.code:'provider_outcome_unknown',result.statusCode);pending=undefined;check.reject(error);res.writeHead(200,{'content-type':'application/json'}).end('{"ok":true}');return;}
+        if(result.scope==='request'&&pending?.qualification&&result.requestId===pending.id){const check=pending,error=setupRequestError(check,result.code,result.statusCode);pending=undefined;check.reject(error);res.writeHead(200,{'content-type':'application/json'}).end('{"ok":true}');return;}
         if (result.scope === 'request' && pending && result.requestId === pending.id) {
           const frame = { type: 'request_failed', requestId: pending.id, sessionId: pending.binding.sessionId, bindingRevision: pending.binding.bindingRevision, sequence: pending.binding.sequence, code: upstreamFailureCodes.includes(result.code)?result.code:'provider_outcome_unknown' };
           if(pending.failureDiagnostic){const d=pending.failureDiagnostic;if(pending.hostTransport){d.transportCode=pending.hostTransport.code;d.transportCategory=pending.hostTransport.category;if(d.responseEvidence==='not_observed')d.phase='tunnel';}d.code=frame.code;frame.failureDiagnostic=safeFailure(d);}if (!ProviderRequestFailure(frame)) throw Error('request_failure_binding');

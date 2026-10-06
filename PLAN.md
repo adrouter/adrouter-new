@@ -1170,3 +1170,83 @@ Alpha.48 fails five detailed provider cases (TLS/DNS/connection and known-usage 
 Alpha.49 product e145c59 is installed/selected: tarball SHA-256 0da0100916eda9e6d2b541128144efb0a37dc4efa2ede102d51227da342a25a1; 52,039 files match. Source CI on macOS/Ubuntu passes 909 tests. Six installed provider and four buyer/legacy/active-view regressions, 40/80/132-column fresh details/export PTY and the full 660-second native lifecycle/terminal gate pass. Existing coding/provider provenance passes. Router 9a2e2e6, its serving digest, policy/resources, Pages abfaca46/28 assets, stored credentials, provider run/qualification, saved work and eight unresolved request fingerprints are unchanged. No Router/Pages redeployment, contract/migration, paid inference, replay or reconciliation.
 
 Both defects are closed for this verified installation. Readiness is for a controlled diagnostic live test; the initiating interruption is unresolved. Provider cleanup/restart and acknowledged qualification/backend Ready remain operator gates. See outputs/adr-diagnostic-gaps-2026-10-06/delivery-receipt.json and manual-acceptance.md. npm waiver carried forward; alpha.48 and prior artifacts retained.
+
+# Plan: Setup error normalization and completion accounting — 6 October 2026
+
+## Goal
+Preserve legitimate SDK setup failures and their known usage, restore completion accounting as display-only data, and deliver an exact verified private client for controlled diagnostic live testing.
+
+## Context
+Continue canonical client branch codex/adrv2-reliability-20261001 from 5f61676. Alpha.49 is immutable recovery material. Review reproduced invalid SDK setup arguments generating different raw/diagnostic codes, rejected usage/failure reports and a false timeout. Its completion screen also lost accounting information.
+
+## Research Summary
+The pinned SDK, guest reporting, provider qualification and buyer close/TUI source establish both defects. Use existing error allowlists and generated diagnostic validators; no dependency upgrade or new public contract is needed.
+
+## Constraints
+Preserve API contracts, Router 9a2e2e6, Pages abfaca46, credentials, saved work and unknown liabilities. No paid inference, retries, deadline increases, model switching, reconciliation or unrelated cleanup. Keep diagnostic exports free of financial/workload data. All five kickoff platforms were checked in the execution context; npm authentication remains explicitly waived for private delivery.
+
+## Out of Scope
+The original live interruption cause is unresolved. No public publication, promotion, schema migration, Router/Pages deployment, dependency change or real-provider restart.
+
+## Reversibility
+Use a new immutable private version and preserve alpha.49 and earlier artifacts. Keep accounting in a separate host-only completion summary. Launcher selection occurs only after exact-install acceptance.
+
+## Step A: Reproduce and repair setup failure handling
+### Status
+`done`
+### Tasks
+- [x] Add a production-shaped malformed SDK setup regression and normalization/mismatch cases.
+- [x] Share canonical diagnostic code normalization between native guest evidence and provider qualification handling; preserve specific local setup causes.
+- [x] Retain known usage reporting, prompt rejection, strict binding and secondary reporting/storage errors.
+### Relevant Files
+src/failure-diagnostics.mjs, src/pi-native.mjs, src/sdk-native.mjs, src/provider.mjs, src/provider-diagnostics.mjs, src/tui.mjs and provider regression helpers.
+### Acceptance Criteria
+- [x] Malformed SDK tool arguments retain their setup cause and diagnostic evidence; usage is reported once without a false timeout or inference replay.
+- [x] All supported diagnostic codes, setup aliases, unknown fallbacks and mismatched identities/codes are covered.
+### Validation Results
+Passed targeted setup/normalization/buyer regressions, actual provider-VM SDK/reporting preparation and nine completion PTY cases. Full client check passes 914 tests.
+
+## Step B: Restore separate completion accounting
+### Status
+`done`
+### Tasks
+- [x] Retain an allowlisted authoritative stop response as a host-only completion summary, outside diagnostics.
+- [x] Restore completion-screen accounting and an explicit unconfirmed fallback on stop failure.
+- [x] Verify settled, pending-reconciliation and failed-stop display; repeated close remains idempotent.
+### Relevant Files
+src/coding-buyer.mjs, src/tui.mjs, test/buyer-outcomes.test.mjs and installed PTY verification.
+### Acceptance Criteria
+- [x] Normal completion shows authoritative amounts and unresolved liability; absent evidence never becomes zero.
+- [x] No completion financial fields reach diagnostics, exports, guest configuration or agent context.
+### Validation Results
+Passed targeted setup/normalization/buyer regressions, actual provider-VM SDK/reporting preparation and nine completion PTY cases. Full client check passes 914 tests.
+
+## Step C: Final verification and cleanup
+### Status
+`in_progress`
+### Tasks
+- [ ] Run targeted regressions, full client checks and runtime generators/provenance; review the final diff.
+- [ ] Commit clean source, pack the next unused private version, verify source CI and exact installed bytes.
+- [ ] Run installed setup/completion regressions, 40/80/132-column PTY checks and the full applicable VM lifecycle gate.
+- [ ] Recheck preserved Router/Pages/provider/liability metadata; select launcher only after acceptance.
+- [ ] Update specification, receipt, manual checklist and this plan with results and limitations.
+### Commands
+`npm run check`; `npm run coding:verify`; `node scripts/verify-private-install.mjs <tarball> <prefix>`; installed diagnostic and lifecycle scripts with task-owned runtime paths.
+### Acceptance Criteria
+- [ ] Both review findings close against the selected installation, with matching source/installed identities and successful CI.
+- [ ] Router/Pages and pre-existing operational/financial state remain unchanged.
+- [ ] Readiness is explicitly limited to controlled diagnostic live testing after operator cleanup/restart and acknowledged qualification/Ready.
+### Validation Results
+Not run for this change.
+
+## Follow-up Work
+Operator-run provider cleanup/restart, qualification and Flash/Pro/Custom API acceptance. No claim that the original interruption is repaired.
+
+## Decision Log
+| Date | Decision | Rationale | Impact |
+| --- | --- | --- | --- |
+| 2026-10-06 | Keep the shared diagnostic schema unchanged; normalize local setup aliases | Explicit implementation plan and reproduced code mismatch | Client-only correction compatible with the existing Router |
+| 2026-10-06 | Return completion accounting separately from sanitized outcomes | Restore user visibility without leaking financial metadata | Normal TUI display only; exports and agent context remain clean |
+
+### Source freeze checkpoint
+914 full client checks pass. Both alpha.49 regressions were demonstrated before repair. Seven setup cases, eight diagnostic/helper cases and seven buyer outcome/display cases pass. Actual task-owned provider VM/SDK/guest reporting preserves malformed-argument failure, reports known usage once and retains reopened/export evidence. Completion PTY passes nine cases at 40/80/132 columns. Preliminary verifier fixes corrected synthetic installation UUID and the pinned SDK reasoning-usage expectation; final frozen-install gates remain required. Runtime builders/provenance pass. No Router or public-contract source change.

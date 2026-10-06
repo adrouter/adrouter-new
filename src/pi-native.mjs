@@ -1,4 +1,4 @@
-import { safeFailure } from './failure-diagnostics.mjs';
+import { normalizeDiagnosticCode } from './failure-diagnostics.mjs';
 import { requestEvidence } from './transport-evidence.mjs';
 import { transportCategory } from './pi-transport.mjs';
 import Ajv from 'ajv';
@@ -145,5 +145,5 @@ async function inferNative(node,auth,frame,signal,onTiming,onEvent,fetchFixture,
 export async function nativeInference(node,auth,frame,signal,onTiming=()=>{},onEvent=()=>{},fetchFixture) {
  const trace=requestEvidence(node,frame);let timing;
  try {const result=await inferNative(node,auth,frame,signal,value=>{timing=value;},onEvent,fetchFixture,trace);if(timing)onTiming(timing);return result;}
- catch(error){const failureDiagnostic=safeFailure(trace.snapshot(error.code))??trace.snapshot(signal?.aborted?'upstream_timeout':'upstream_failed_outcome_unknown');onTiming({...timing,phase:'upstream',outcome:'unknown',statusCode:timing?.statusCode??failureDiagnostic.statusCode,headersMs:timing?.headersMs??null,totalMs:failureDiagnostic.elapsedMs,failureDiagnostic});throw Object.assign(error,{failureDiagnostic});}
+ catch(error){const code=signal?.aborted&&['ABORT_ERR',undefined].includes(error.code)?'upstream_timeout':error.code??'upstream_failed_outcome_unknown';const failureDiagnostic=trace.snapshot(normalizeDiagnosticCode(code));onTiming({...timing,phase:'upstream',outcome:error.nativeUsage?'succeeded':'unknown',statusCode:timing?.statusCode??failureDiagnostic.statusCode,headersMs:timing?.headersMs??null,totalMs:failureDiagnostic.elapsedMs,failureDiagnostic});throw Object.assign(error,{code,failureDiagnostic});}
 }

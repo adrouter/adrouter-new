@@ -145,6 +145,7 @@ export async function sdkInference(node,auth,frame,signal,onTiming=()=>{},onEven
    if(event.type==='tool-call'){if(event.providerExecuted)throw fail('provider_tool_execution_forbidden');let args;try{args=JSON.parse(event.input);}catch{formatError=setup?'setup_probe_invalid_arguments':'upstream_malformed_response';continue;}const block={type:'toolCall',id:event.toolCallId,name:event.toolName,arguments:args,...(metadata(event.providerMetadata)?{providerMetadata:metadata(event.providerMetadata)}:{})};blocks.push(block);calls.set(block.id,block);}
    if(event.type==='finish'){usage=normalizeSDKUsage(event.usage);finish=typeof event.finishReason==='string'?event.finishReason:event.finishReason?.unified;}
   }
+  trace?.stage('validation');
   if(!usage)throw fail('upstream_usage_missing');
   if(!['stop','length','tool-calls'].includes(finish))formatError='upstream_malformed_response';
   const authority=frame.upstreamBudget;if(usage.input+usage.cacheRead+usage.cacheWrite>authority.inputBound||usage.output>frame.maxOutputTokens)throw fail('upstream_usage_invalid');

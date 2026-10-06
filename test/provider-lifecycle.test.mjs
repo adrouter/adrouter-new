@@ -227,6 +227,11 @@ for(const variant of ['tls','dns','connection','legacy','usage_report','usage_sa
   if(variant.startsWith('usage_'))Object.assign(diagnostic,{phase:'validation',code:'upstream_malformed_response',statusCode:200,transportCategory:null,transportCode:null,dispatchEvidence:'dispatched',responseEvidence:'streaming',timeline:[{phase:'headers',elapsedMs:5},{phase:'validation',elapsedMs:22}]});
   for(const mismatch of [{requestId:randomUUID()},{providerRunId:randomUUID()},{model:'wrong-model'},{sessionId:randomUUID()}])if(variant==='tls')await assert.rejects(f.control('/timing',{requestId:frame.requestId,phase:'upstream',outcome:'unknown',statusCode:null,headersMs:null,totalMs:22,failureDiagnostic:{...diagnostic,...mismatch}}));
   await f.control('/timing',{requestId:frame.requestId,phase:'upstream',outcome:'unknown',statusCode:diagnostic.statusCode,headersMs:diagnostic.statusCode===null?null:5,totalMs:22,...(variant==='legacy'?{}:{failureDiagnostic:diagnostic})});
+  if(variant==='tls'){
+   await assert.rejects(f.control('/usage',{requestId:frame.requestId,failureCode:'upstream_authentication_failed',nativeUsage:{input:10,output:2,cacheRead:0,cacheWrite:0,reasoning:null}}));
+   await assert.rejects(f.control('/failed',{scope:'request',requestId:frame.requestId,code:'upstream_timeout'}));
+   assert.equal(f.state.requests.filter(r=>r.path.endsWith('/pi-checks/complete')).length,0);assert.equal(c.status.stopped,false);
+  }
   if(variant==='usage_report')f.state.reportError={code:'report_rejected',status:409};
   if(variant==='usage_save')ProviderReports.prototype.save=async()=>{throw Object.assign(Error('PRIVATE_SENTINEL'),{code:'completion_report_save_failed'});};
   if(variant.startsWith('usage_'))await f.control('/usage',{requestId:frame.requestId,failureCode:diagnostic.code,nativeUsage:{input:10,output:2,cacheRead:0,cacheWrite:0,reasoning:null}}).catch(()=>{});
@@ -240,4 +245,39 @@ for(const variant of ['tls','dns','connection','legacy','usage_report','usage_sa
   const counts=f.state.requests.length,path=await exportFailure(f.directory,reopened.diagnosis.primaryFailure.failureDiagnostic,reopened.diagnosis.cleanupOutcomes);assert.deepEqual(JSON.parse(await readFile(path,'utf8')).failureDiagnostic,diagnostic);assert.equal(f.state.requests.length,counts);
   if(variant.startsWith('usage_'))assert.ok(c.status.secondaryFailures.some(e=>e.operation==='setup_report_save'||e.operation==='setup_report_submit'));
  }finally{ProviderReports.prototype.save=originalSave;await f.close();}
+});
+
+test('malformed SDK setup reports known usage once and retains its specific cause before the deadline',async()=>{
+ const f=await fixture({native:true});
+ const {providerCatalog}=await import(diagnosticEntry('generated/provider-catalog.mjs'));
+ const {nativeInference}=await import(diagnosticEntry('pi-native.mjs'));
+ const p=providerCatalog.providers.find(p=>p.models.some(m=>m.adapter?.id==='@ai-sdk/openai-compatible'&&m.supportedSettings?.reasoning.includes('off')));
+ const m=p.models.find(m=>m.adapter?.id==='@ai-sdk/openai-compatible'&&m.supportedSettings?.reasoning.includes('off'));
+ Object.assign(f.node,{provider:p.id,model:m.id,nativeModels:[{...m,model:m.id,endpoint:'https://synthetic.example.test/v1',capabilities:['coding_v1','streaming_v1','tools_v1']}]});
+ let started,requests=0;
+ try{
+  const c=await f.start();started=c.start().catch(e=>e);const frame=await nextCheck(f),deadline=frame.deadlineUnixMs;
+  // The source fixture supplies the legacy control envelope; the SDK's existing
+  // v3 descriptor binding is explicit. Error codes/evidence come from the real adapter.
+  const sdkNode={...f.node,connectorProtocol:'pi_native_v3',nativeRevision:1,providerRunId:c.status.providerRunId};
+  const sdkFrame={...frame,nativeRevision:1,endpoint:sdkNode.nativeModels[0].endpoint};let timing,failure;
+  const fetcher=async()=>{requests++;return new Response([
+   {id:'fixture',object:'chat.completion.chunk',created:0,model:m.id,choices:[{index:0,delta:{tool_calls:[{index:0,id:'call_1',type:'function',function:{name:'adr_setup_probe',arguments:'{'}}]},finish_reason:null}]},
+   {id:'fixture',object:'chat.completion.chunk',created:0,model:m.id,choices:[{index:0,delta:{},finish_reason:'tool_calls'}],usage:{prompt_tokens:10,completion_tokens:2,total_tokens:12}},'[DONE]'
+  ].map(e=>'data: '+(typeof e==='string'?e:JSON.stringify(e))+'\n\n').join(''),{headers:{'content-type':'text/event-stream'}});};
+  try{await nativeInference(sdkNode,{sdkSecrets:{key:'synthetic'}},sdkFrame,AbortSignal.timeout(2000),v=>timing=v,()=>{},fetcher);}catch(e){failure=e;}
+  assert.equal(failure.code,'setup_probe_invalid_arguments');assert.ok(failure.nativeUsage);
+  // Exactly the guest's failure-report sequence, with no manufactured matching codes.
+  await f.control('/timing',{requestId:frame.requestId,...timing});
+  await f.control('/usage',{requestId:frame.requestId,failureCode:failure.code,nativeUsage:failure.nativeUsage,inputTokens:failure.inputTokens,outputTokens:failure.outputTokens});
+  await f.control('/timing',{requestId:frame.requestId,...timing});
+  await f.control('/failed',{scope:'request',requestId:frame.requestId,code:failure.code,statusCode:timing.statusCode});
+  const error=await started;assert.equal(error.code,'setup_probe_invalid_arguments');assert.ok(Date.now()<deadline);assert.equal(requests,1);
+  const reports=f.state.requests.filter(r=>r.path.endsWith('/pi-checks/complete'));assert.equal(reports.length,1);assert.deepEqual(reports[0].body.usage,failure.nativeUsage);assert.equal(reports[0].body.completed,false);
+  assert.equal(error.failureDiagnostic.code,'upstream_malformed_response');assert.equal(error.failureDiagnostic.phase,'validation');
+  const stored=JSON.parse(await readFile(c.lifecycle.path,'utf8'));assert.equal(stored.terminalFailure.code,error.code);assert.deepEqual(stored.terminalFailure.failureDiagnostic,error.failureDiagnostic);
+  const {diagnoseProvider}=await import(diagnosticEntry('provider-diagnose.mjs')),{providerDiagnosticLines}=await import(diagnosticEntry('provider-diagnostics.mjs'));
+  const reopened=await diagnoseProvider(f.network,f.node.id,'provider',{directory:f.directory});assert.equal(reopened.diagnosis.primaryFailure.code,error.code);assert.match(providerDiagnosticLines(reopened.diagnosis.primaryFailure).join('\n'),/setup_probe_invalid_arguments/);
+  const {exportFailure}=await import(diagnosticEntry('failure-diagnostics.mjs'));const path=await exportFailure(f.directory,error.failureDiagnostic,reopened.diagnosis.cleanupOutcomes,{setupCode:error.code});const exported=JSON.parse(await readFile(path,'utf8'));assert.equal(exported.setupCode,error.code);assert.deepEqual(exported.failureDiagnostic,error.failureDiagnostic);
+ }finally{await f.close();await started;}
 });

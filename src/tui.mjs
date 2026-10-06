@@ -463,7 +463,7 @@ export async function runTui(options = {}, dependencies = {}) {
         const visibleMonitor=new ProviderActivityMonitor(network,node.id,()=>ui.pending?.redraw?.());
         try{await visibleMonitor.start();await ui.page('Provider status',()=>[...(providersRunning.has(node.id)?providerStatusLines(providersRunning.get(node.id).status):['No controller attached in this terminal']),...providerActivityLines(visibleMonitor.view())]);}finally{visibleMonitor.stop();}continue;
       }
-      if(selection==='failureDetails'){const result=await diagnoseProvider(network,node.id,store.profile);const d=result.diagnosis;await failureDetails(async()=>{const latest=await diagnoseProvider(network,node.id,store.profile);return failureSnapshot({failureDiagnostic:latest.diagnosis.primaryFailure?.failureDiagnostic,outcomes:latest.diagnosis.cleanupOutcomes});});continue;}
+      if(selection==='failureDetails'){const result=await diagnoseProvider(network,node.id,store.profile);const d=result.diagnosis;await failureDetails(async()=>{const latest=await diagnoseProvider(network,node.id,store.profile);return failureSnapshot({failureDiagnostic:latest.diagnosis.primaryFailure?.failureDiagnostic,outcomes:latest.diagnosis.cleanupOutcomes,setupCode:latest.diagnosis.primaryFailure?.code});});continue;}
       if(selection==='diagnose'){const result=await diagnoseProvider(network,node.id,store.profile);const controller=providersRunning.get(node.id);await ui.page('Provider diagnosis',diagnosisLines(result,{controllerAttached:!!controller&&controller.status.providerRunId===result.node.providerRunId}));continue;}
       if(selection==='retryReport'){await attempt(()=>providersRunning.get(node.id)?.retryResultReports?providersRunning.get(node.id).retryResultReports():retryProviderReports(network,node.id,store.profile));continue;}
       if(selection==='cleanup'){await attempt(()=>providersRunning.has(node.id)?stopProvider(node.id):retryProviderCleanup(network,node.id,store.profile));continue;}
@@ -670,7 +670,7 @@ export async function runTui(options = {}, dependencies = {}) {
         }
       }
     }finally{
-      if(buyer){if(discard)await buyer.discard();const result=await buyer.close();await ui.page('Session completion',[`Cleanup: ${words(result.status)}`,...result.outcomes.map(o=>`${words(o.phase)}: ${o.status}`)]);}
+      if(buyer){if(discard)await buyer.discard();const result=await buyer.close();await ui.page('Session completion',[`Cleanup: ${words(result.status)}`,...result.outcomes.map(o=>`${words(o.phase)}: ${o.status}`),...accountingLines(result.completionSummary)]);}
     }
   }
 
@@ -693,9 +693,9 @@ export async function runTui(options = {}, dependencies = {}) {
 
   async function failureDetails(evidence,outcomes=[]) {
     const read=typeof evidence==='function'?evidence:()=>failureSnapshot({failureDiagnostic:evidence,outcomes});
-    for(;;){const current=await read();const choice=await ui.menu('Failure details',[item('exportDiagnostic','Export private diagnostic JSON','Metadata only; no model request.',!safeFailure(current.failureDiagnostic)),item('back','Back')],{lines:()=>{return failureLines(current.failureDiagnostic,current.outcomes);}});
+    for(;;){const current=await read();const choice=await ui.menu('Failure details',[item('exportDiagnostic','Export private diagnostic JSON','Metadata only; no model request.',!safeFailure(current.failureDiagnostic)),item('back','Back')],{lines:()=>{return failureLines(current.failureDiagnostic,current.outcomes,current.setupCode);}});
       if(!choice||choice==='back')return;
-      if(choice==='exportDiagnostic')await attempt(async()=>{const {mkdir}=await import('node:fs/promises'),{join}=await import('node:path');const directory=join(await store.directory(),'failure-exports');await mkdir(directory,{mode:0o700}).catch(e=>{if(e.code!=='EEXIST')throw e;});const latest=await read();const path=await exportFailure(directory,latest.failureDiagnostic,latest.outcomes);await ui.page('Private diagnostic export',[path,'Request metadata and cleanup outcomes only.']);});
+      if(choice==='exportDiagnostic')await attempt(async()=>{const {mkdir}=await import('node:fs/promises'),{join}=await import('node:path');const directory=join(await store.directory(),'failure-exports');await mkdir(directory,{mode:0o700}).catch(e=>{if(e.code!=='EEXIST')throw e;});const latest=await read();const path=await exportFailure(directory,latest.failureDiagnostic,latest.outcomes,{setupCode:latest.setupCode});await ui.page('Private diagnostic export',[path,'Request metadata and cleanup outcomes only.']);});
     }
   }
   async function buyerFailure(id,remote) {

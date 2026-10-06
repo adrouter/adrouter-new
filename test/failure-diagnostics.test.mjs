@@ -5,7 +5,8 @@ import { mkdtemp, chmod, readFile, lstat, rm, symlink, mkdir, copyFile, cp } fro
 import { tmpdir } from 'node:os';
 import { execFileSync } from 'node:child_process';
 import { join } from 'node:path';
-import { safeFailure, failureLines, writePrivateDiagnostic, readPrivateDiagnostic, exportFailure } from '../src/failure-diagnostics.mjs';
+import { safeFailure, failureLines, writePrivateDiagnostic, readPrivateDiagnostic, exportFailure, normalizeDiagnosticCode, setupResponseCodes } from '../src/failure-diagnostics.mjs';
+import { upstreamFailureCodes } from '../src/connectors.mjs';
 import { ProviderLifecycle } from '../src/provider-lifecycle.mjs';
 import { providerDiagnostic } from '../src/provider-diagnostics.mjs';
 import { BuyerLifecycle } from '../src/buyer-lifecycle.mjs';
@@ -14,6 +15,12 @@ import { readCodingStream } from '../src/coding-wire.mjs';
 import { Network } from '../src/network.mjs';
 
 const fixture=()=>({schemaVersion:1,requestId:randomUUID(),sessionId:randomUUID(),providerRunId:randomUUID(),model:'deepseek-flash',api:'openai-completions',phase:'tunnel',code:'upstream_failed_outcome_unknown',elapsedMs:27,statusCode:null,transportCategory:'dns',transportCode:'ENOTFOUND',dispatchEvidence:'outcome_unknown',responseEvidence:'not_observed',timeline:[{phase:'preparation',elapsedMs:0},{phase:'tunnel',elapsedMs:20}]});
+test('canonical diagnostic normalization preserves supported codes and maps only local setup aliases',()=>{
+ for(const code of [...upstreamFailureCodes,'request_cancelled','request_deadline_expired','provider_connection_lost','request_authority_lost','request_outcome_unknown']){assert.ok(safeFailure({...fixture(),code}));assert.equal(normalizeDiagnosticCode(code),code);}
+ for(const code of setupResponseCodes)assert.equal(normalizeDiagnosticCode(code),'upstream_malformed_response');
+ for(const code of [undefined,null,{},'PRIVATE_SENTINEL','sdk_compatibility_unsupported','provider_output_bound_exceeded','upstream_response_limit'])assert.equal(normalizeDiagnosticCode(code),'upstream_failed_outcome_unknown');
+ const d={...fixture(),code:'upstream_malformed_response'};assert.match(failureLines(d,[],'setup_probe_invalid_arguments').join('\n'),/setup_probe_invalid_arguments/);assert.doesNotMatch(failureLines(d,[],'PRIVATE_SENTINEL').join('\n'),/PRIVATE_SENTINEL/);
+});
 test('legacy inference guest imports without buyer validators or npm dependencies',async()=>{
  const directory=await mkdtemp(join(process.platform==='darwin'?'/private/tmp':tmpdir(),'adr-legacy-import-'));
  try{

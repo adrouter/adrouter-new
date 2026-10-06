@@ -1,4 +1,5 @@
-import { safeFailure, failureLines } from './failure-diagnostics.mjs';
+import { safeFailure, failureLines, setupResponseCodes, setupExplanations as explanations } from './failure-diagnostics.mjs';
+export { setupResponseCodes };
 // Metadata only. Never use exception messages, bodies, headers or guest output.
 const label = (value, pattern = /^[a-zA-Z0-9_-]{1,80}$/) => typeof value === 'string' && pattern.test(value) ? value : null;
 export const operationSources = Object.freeze({
@@ -35,7 +36,6 @@ export function capturedDiagnostic(value, binding = {}) {
   const d = providerDiagnostic(value.phase ?? value.operation, value, {...value,...binding,requestEvidence:value.requestEvidence??'outcome_unknown',observedAt:value.observedAt ?? value.at}, () => null);
   return d;
 }
-export const setupResponseCodes = ['setup_probe_missing','setup_probe_wrong_tool','setup_probe_invalid_arguments','setup_response_truncated'];
 export function setupProbeFailure(result) {
   if (result.nativeMessage?.stopReason === 'length') return 'setup_response_truncated';
   const calls = result.toolCalls;
@@ -45,10 +45,9 @@ export function setupProbeFailure(result) {
   catch { return 'setup_probe_invalid_arguments'; }
   return null;
 }
-const explanations = Object.freeze({setup_probe_missing:'The model response did not contain the required setup probe.',setup_probe_wrong_tool:'The model called the wrong tool or called more than one tool.',setup_probe_invalid_arguments:'The setup probe arguments did not match the required value.',setup_response_truncated:'The model response ended at its output limit before completing the setup probe.'});
 export function providerDiagnosticLines(d) {
   if (!d) return [];
-  if(safeFailure(d.failureDiagnostic))return failureLines(d.failureDiagnostic);
+  if(safeFailure(d.failureDiagnostic))return failureLines(d.failureDiagnostic,[],d.code);
   return [`${/^(qualification|configure_models)/.test(d.phase??d.operation??'')?'SETUP FAILED':'Operation'} — ${d.operation??d.phase??'operation unavailable'}`,`Cause: ${d.code??'Cause not captured'} · ${d.provenance??'source not captured'}`, ...(explanations[d.code]?[explanations[d.code]]:[]),`Model request: ${d.requestEvidence==='not_sent'?'No model request sent':d.requestEvidence==='response_received'?'Response received':'Outcome unknown'}`,`Transport: ${d.transportCause??'Transport cause not captured'}`, ...(Number.isSafeInteger(d.elapsedMs)?[`Elapsed: ${d.elapsedMs} ms`]:[]), ...(d.changedFields?.length?[`Changed settings: ${d.changedFields.join(', ')}`]:[]), `HTTP ${d.statusCode ?? 'unavailable'} · ${Number.isSafeInteger(d.observedAt??d.at)?new Date(d.observedAt??d.at).toISOString():'time unavailable'}`,
     ...(d.model ? [`Model: ${d.model} · API: ${d.api ?? 'unknown'}`] : []),
     ...(d.providerRunId ? [`Run: ${d.providerRunId}`] : []), ...(d.requestId||d.checkId ? [`Check/request: ${d.requestId??d.checkId}`] : [])];

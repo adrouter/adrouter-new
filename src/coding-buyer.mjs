@@ -17,6 +17,18 @@ import { BuyerLifecycle, backgroundOperation, recoverableStatusFailure, approval
 const canonical=v=>JSON.stringify(v,(key,value)=>value&&typeof value==='object'&&!Array.isArray(value)?Object.fromEntries(Object.entries(value).sort(([a],[b])=>a.localeCompare(b))):value);
 const hash=b=>createHash('sha256').update(b).digest('hex');
 
+// Display-only stop receipt. Never add this object to lifecycle events, guest
+// configuration, snapshots or diagnostic exports.
+function completionAccounting(value) {
+  if(!value||!['settled','refunded','settlement_pending'].includes(value.state))return null;
+  const credit=v=>typeof v==='string'&&/^(0|[1-9][0-9]{0,18})$/.test(v)?v:'unavailable';
+  return Object.freeze({state:value.state,
+    executionState:['preparing','active','stopping','stopped'].includes(value.executionState)?value.executionState:'unknown',
+    cleanupState:['pending','succeeded','failed'].includes(value.cleanupState)?value.cleanupState:'unknown',
+    accountingState:['open','settled','pending_reconciliation'].includes(value.accountingState)?value.accountingState:value.state==='settlement_pending'?'pending_reconciliation':'settled',
+    funded:credit(value.funded),charged:credit(value.charged),refunded:credit(value.refunded),reserved:credit(value.reserved)});
+}
+
 export async function savedCodingContexts(profile,root) {
   if(!/^[a-z][a-z0-9_-]{0,31}$/.test(profile))throw new ClientError('invalid_profile_name');
   const directory=join(homedir(),'.adr-v2','profiles',profile,'coding'),rows=[];
@@ -56,7 +68,7 @@ export async function openCodingBuyer(network,sessionId,{root,files,runtimeConfi
   let authorityDeadline;let guest,workspace,closing,watchdog,statusPoll,expires,checkpoint,saving,snapshot,discarded=false,statusChecking,dependencyApproved=false,dependencyBytes=0;const abort=new AbortController(), queue=new DispatchQueue(),authorities=new Map(),mainCapability=randomBytes(32).toString('base64url');
   const startupSignal=signal?AbortSignal.any([signal,abort.signal]):abort.signal;
   const lifecycle=new BuyerLifecycle(value=>{try{progress({status:value.events.at(-1)?.phase,paused:lifecycle.paused});}catch{}});
-  let diagnosticWrites=Promise.resolve();let runtime,session,display,snapshotExclusions={},privateRoot,storage,storageValidated=false,requestClose,finishStartup;
+  let diagnosticWrites=Promise.resolve(),completionSummary=null;let runtime,session,display,snapshotExclusions={},privateRoot,storage,storageValidated=false,requestClose,finishStartup;
   const startupReady=new Promise(resolve=>{finishStartup=resolve;});
   const earlySignal=name=>{lifecycle.event('signal',{code:'cancelled',signal:name,status:'cancelled'});if(requestClose)void requestClose().catch(()=>{});else abort.abort();};
   const signalHandlers=new Map(['SIGINT','SIGTERM','SIGHUP','SIGTSTP'].map(name=>[name,()=>earlySignal(name)]));
@@ -102,14 +114,14 @@ export async function openCodingBuyer(network,sessionId,{root,files,runtimeConfi
         ['workspace_cleanup',()=>workspace?rm(workspace.copy,{recursive:true,force:true}):undefined],
         ['remote_stop',()=>network.request(`/v2/sessions/${sessionId}/stop`,{method:'POST',body:{},signal:AbortSignal.timeout(30000)})]];
       await Promise.all(operations.map(async([phase,work])=>{
-        try{const value=await work();lifecycle.event(phase,{status:'succeeded'});if(phase==='remote_stop')lifecycle.event('settlement',{status:['settled','refunded'].includes(value?.state)?'succeeded':'pending'});}
+        try{const value=await work();lifecycle.event(phase,{status:'succeeded'});if(phase==='remote_stop'){completionSummary=completionAccounting(value);lifecycle.event('settlement',{status:['settled','refunded'].includes(value?.state)?'succeeded':'pending'});}}
         catch(e){lifecycle.event(phase,{code:e.code??'cleanup_failed',status:'failed'});}
         await persistDiagnostics().catch(()=>{});
       }));
       server.closeAllConnections();if(server.listening)await new Promise(r=>server.close(r));
       await persistDiagnostics().catch(()=>{});
       const outcomes=lifecycle.diagnostics().outcomes;
-      return {status:outcomes.some(o=>o.status==='failed')?'cleanup_required':'closed',outcomes,firstFailure:lifecycle.firstFailure};
+      return {status:outcomes.some(o=>o.status==='failed')?'cleanup_required':'closed',outcomes,firstFailure:lifecycle.firstFailure,completionSummary};
     })();return closing;
   };
   const status=async()=>{
