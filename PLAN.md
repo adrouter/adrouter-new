@@ -1223,21 +1223,21 @@ Passed targeted setup/normalization/buyer regressions, actual provider-VM SDK/re
 
 ## Step C: Final verification and cleanup
 ### Status
-`in_progress`
+`done`
 ### Tasks
-- [ ] Run targeted regressions, full client checks and runtime generators/provenance; review the final diff.
-- [ ] Commit clean source, pack the next unused private version, verify source CI and exact installed bytes.
-- [ ] Run installed setup/completion regressions, 40/80/132-column PTY checks and the full applicable VM lifecycle gate.
-- [ ] Recheck preserved Router/Pages/provider/liability metadata; select launcher only after acceptance.
-- [ ] Update specification, receipt, manual checklist and this plan with results and limitations.
+- [x] Run targeted regressions, full client checks and runtime generators/provenance; review the final diff.
+- [x] Commit clean source, pack the next unused private version, verify source CI and exact installed bytes.
+- [x] Run installed setup/completion regressions, 40/80/132-column PTY checks and the full applicable VM lifecycle gate.
+- [x] Recheck preserved Router/Pages/provider/liability metadata; select launcher only after acceptance.
+- [x] Update specification, receipt, manual checklist and this plan with results and limitations.
 ### Commands
 `npm run check`; `npm run coding:verify`; `node scripts/verify-private-install.mjs <tarball> <prefix>`; installed diagnostic and lifecycle scripts with task-owned runtime paths.
 ### Acceptance Criteria
-- [ ] Both review findings close against the selected installation, with matching source/installed identities and successful CI.
-- [ ] Router/Pages and pre-existing operational/financial state remain unchanged.
-- [ ] Readiness is explicitly limited to controlled diagnostic live testing after operator cleanup/restart and acknowledged qualification/Ready.
+- [x] Both review findings close against the selected installation, with matching source/installed identities and successful CI.
+- [x] Router/Pages and pre-existing operational/financial state remain unchanged.
+- [x] Readiness is explicitly limited to controlled diagnostic live testing after operator cleanup/restart and acknowledged qualification/Ready.
 ### Validation Results
-Not run for this change.
+Passed exact alpha.50 installed provider/buyer regressions, native SDK guest reporting, twelve PTY cases, full 660-second lifecycle, runtime provenance, source CI and hosted preservation checks.
 
 ## Follow-up Work
 Operator-run provider cleanup/restart, qualification and Flash/Pro/Custom API acceptance. No claim that the original interruption is repaired.
@@ -1250,3 +1250,8 @@ Operator-run provider cleanup/restart, qualification and Flash/Pro/Custom API ac
 
 ### Source freeze checkpoint
 914 full client checks pass. Both alpha.49 regressions were demonstrated before repair. Seven setup cases, eight diagnostic/helper cases and seven buyer outcome/display cases pass. Actual task-owned provider VM/SDK/guest reporting preserves malformed-argument failure, reports known usage once and retains reopened/export evidence. Completion PTY passes nine cases at 40/80/132 columns. Preliminary verifier fixes corrected synthetic installation UUID and the pinned SDK reasoning-usage expectation; final frozen-install gates remain required. Runtime builders/provenance pass. No Router or public-contract source change.
+
+### Verified private alpha.50 delivery
+Product commit 9918b65dbd91b0d9d5a2af394a39731493b6dd63 is installed and selected as private 0.1.0-alpha.50. Tarball SHA-256: 01e896600cca7beed2f55315348c555f0f5b11c4408d4ae5b5a50fea6bcdc980. All 52,039 installed files match the frozen source and tarball. Both source CI jobs pass. Verified: 914 full client tests; seven exact-installed provider regressions; seven buyer regressions; actual installed provider guest/SDK/control reporting with one malformed request and one known-usage report; nine completion and three details/export PTY cases; full 660-second native lifecycle and terminal restoration; coding/provider runtime provenance. Router 9a2e2e6 and its 25 serving modules, Pages deployment/assets, private access/resources, stored credentials/provider qualification and eight unresolved request fingerprints remain unchanged. No Router/Pages deployment, public contract/schema change, paid inference, replay, reconciliation or real-provider restart occurred.
+
+Both reviewed defects are closed against this installation. Readiness is for a controlled diagnostic live test after operator cleanup/restart, acknowledged qualification and backend-confirmed Ready. The original live interruption cause remains unresolved. Source CI run: 37403262239. Final receipt and operator checklist: outputs/adr-setup-accounting-2026-10-06/delivery-receipt.json and manual-acceptance.md. Alpha.49 and earlier artifacts remain available.
