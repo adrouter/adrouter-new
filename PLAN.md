@@ -1271,7 +1271,7 @@ Sustain repeated buyer coding requests on one provider VM, and make an existing 
 - A synthetic reproduction using unmodified installed alpha.50 native inference, its pinned adapter and real local broker sockets returned a complete SSE result before HTTP EOF. Two requests succeeded while leaving two connections open; requests three through five failed at the tunnel with `ECONNRESET`, and only two requests reached the synthetic upstream. A fully consumed ordinary HTTP response did not reproduce the leak. This matches the live sequence but does not retrospectively prove the unrecorded live broker rejection reason.
 - Old listing `87fb7693-3462-4a5d-8c85-bccfc0f22f57` still refers to alpha.45 run `2f84c8e5-d5da-4e54-9ac8-0b6a814a8109`. Its controller has exited; its guest remains in inventory as Stopped. Router has no teardown confirmation, records cleanup pending and a previously requested retirement, and rejected three alpha.50 replacement preparations with `provider_teardown_required`.
 - The current TUI can retain a failed replacement controller by node ID. Cleanup selection must compare its run with Router's run instead of treating any controller for that node as authoritative. Existing evidence-based recovery and run-scoped stop/teardown routes already provide the required safety boundary.
-- This section supersedes alpha.50 readiness for sustained coding. Earlier delivery/test results remain historical evidence; neither implementation nor acceptance in this new plan has been completed.
+- This section supersedes alpha.50 readiness for sustained coding. Earlier delivery/test results remain historical evidence; implementation and installed acceptance are now complete, with the real-provider retest pending.
 
 ## Research Summary
 
@@ -1286,7 +1286,7 @@ Sustain repeated buyer coding requests on one provider VM, and make an existing 
 - Preserve the two-tunnel limit, destination restrictions, guest-only credentials, TLS verification, strict response validation, original failure evidence and no inference replay. Do not add delays, increase timeouts or switch models to mask the leak.
 - Execution cleanup remains separate from accounting. Do not clear unknown usage, outstanding liabilities, saved work, credential volumes or previous artifacts. Financial fields stay confined to existing host display/accounting paths.
 - Read-only inspection never launches a guest, runs qualification, deletes a listing or performs cleanup. Cleanup starts only from an explicit recovery/start/delete action, with existing Delete confirmation retained.
-- Before implementation that includes private delivery, run all five platform preflight checks in the actual client toolchain and carry forward the explicit private-delivery npm waiver. Recheck fresh canonical refs/protections before pushing. No preflight/build/deployment work is executed by this planning task.
+- Before implementation that includes private delivery, run all five platform preflight checks in the actual client toolchain and carry forward the explicit private-delivery npm waiver. Recheck fresh canonical refs/protections before pushing. Planning performed no preflight/build/deployment; implementation began only after the recorded kickoff preflight passed.
 - Source work stays in the owning checkout; evidence and installations stay under verified local workspace outputs, and disposable test work uses a verified local temporary directory. Never write to iCloud. Preserve the existing plan sections.
 
 ## Out of Scope
@@ -1354,7 +1354,7 @@ Tests must exercise early stream consumption through real sockets; the previous 
 
 ### Status
 
-`review`
+`done`
 
 ### Objective
 
@@ -1397,7 +1397,7 @@ npm run provider:build
 
 ### Validation Results
 
-Source transport and lifecycle coverage passes, including 12 immediate native calls, HTTP/verified HTTPS, SDK delayed EOF, open native bodies and CONNECT/TLS/body cancellation. The unchanged alpha.50 fails the third native call. Provider payload regenerated. Exact installed gates remain in Step D.
+Source transport and lifecycle coverage passes, including 12 immediate native calls, HTTP/verified HTTPS, SDK delayed EOF, open native bodies and CONNECT/TLS/body cancellation. The unchanged alpha.50 fails the third native call. Provider payload regenerated. Exact installed gates passed in Step D.
 
 ### Findings / Notes
 
@@ -1409,7 +1409,7 @@ Guest-side disposal fixes the leak; host request-bound cleanup is a second deter
 
 ### Status
 
-`review`
+`done`
 
 ### Objective
 
@@ -1452,7 +1452,7 @@ node --test test/provider-diagnose.test.mjs test/provider-deletion.test.mjs test
 
 ### Validation Results
 
-Source recovery, diagnosis, UI and deletion regressions pass. Preliminary actual stopped-guest/controller-exit recovery and confirmed retirement pass while an independent actual provider VM remains alive. Six recovery/delete PTY cases pass at 40/80/132 columns. Exact installed and real target recovery remain in Step D.
+Source recovery, diagnosis, UI and deletion regressions pass. Preliminary actual stopped-guest/controller-exit recovery and confirmed retirement pass while an independent actual provider VM remains alive. Six recovery/delete PTY cases pass at 40/80/132 columns. Exact installed and real target recovery passed in Step D.
 
 ### Findings / Notes
 
@@ -1464,7 +1464,7 @@ Old-run recovery is distinct from clearing accounting holds. The already request
 
 ### Status
 
-`in_progress`
+`done`
 
 ### Objective
 
@@ -1472,14 +1472,14 @@ Deliver verified private bytes and a concrete controlled-live-test handoff for b
 
 ### Tasks
 
-- [ ] Run full client checks plus the existing setup-normalization, buyer accounting, report/save failure and privacy regressions. Rebuild provider and affected coding payloads through their generators; verify pinned provenance and review the complete diff for unrelated edits/debugging code.
-- [ ] Add installed acceptance scripts for repeated native streaming and orphan-run recovery. Exercise actual task-owned provider and buyer VMs, guest reporting and host broker; use local synthetic HTTP/HTTPS upstreams with controlled EOF, pinned native OpenAI-completions and the SDK path sharing the transport. No fetch substitute satisfies this gate.
-- [ ] Verify at least 12 inference turns including repeated tool results, delayed/open response endings and explicit cancellation followed by another accepted request on the same provider VM. Assert exact upstream request counts, prompt socket release, retained usage and cleanup. Reproduce an exited controller/stopped guest, then recovery and confirmed deletion; keep a newer independent synthetic run alive as a negative-control case.
-- [ ] Run recovery/delete/status/failure/completion PTY cases at 40/80/132 columns and the full installed 660-second lifecycle gate, including idle, same-VM reconnect, saved-work resume and terminal restoration. The quick mode is diagnostic only.
-- [ ] From a clean committed input freeze the next unused private version, expected alpha.51 if still unused. Pack once, install in an isolated local prefix, compare all installed/source/tarball bytes and verify source CI for that exact product commit. Re-run acceptance against this frozen installation before selecting the launcher.
-- [ ] Recheck Router readiness/serving identity and Pages preservation without redeployment. Record metadata-only receipts, exact version/SHA/hashes, new regression results and the updated live checklist; reconcile only changed documentation-manifest entries after final bytes stabilize.
-- [ ] Prepare the exact-node recovery for the already requested retirement of 87fb7693 using fresh ownership and backend state. Execute only that previously confirmed retirement through normal recovery endpoints when implementation is authorized and installed gates pass; keep all other old listings, saved work, credential volumes and liabilities. Verify the old guest is absent and the listing disappears. If evidence no longer matches, report the specific remaining operator action instead of broad cleanup.
-- [ ] Complete the handoff for controlled restart of the intended serving provider using the new launcher. Operator acknowledges qualification; buyer testing starts only after backend-confirmed Ready. The live Pro test must pass the previous third-request failure point and sustain at least six inference requests with multiple tool continuations, then Stop and review accounting. Keep Flash/Custom compatibility checks in the checklist without claiming those live paths were tested.
+- [x] Run full client checks plus the existing setup-normalization, buyer accounting, report/save failure and privacy regressions. Rebuild provider and affected coding payloads through their generators; verify pinned provenance and review the complete diff for unrelated edits/debugging code.
+- [x] Add installed acceptance scripts for repeated native streaming and orphan-run recovery. Exercise actual task-owned provider and buyer VMs, guest reporting and host broker; use local synthetic HTTP/HTTPS upstreams with controlled EOF, pinned native OpenAI-completions and the SDK path sharing the transport. No fetch substitute satisfies this gate.
+- [x] Verify at least 12 inference turns including repeated tool results, delayed/open response endings and explicit cancellation followed by another accepted request on the same provider VM. Assert exact upstream request counts, prompt socket release, retained usage and cleanup. Reproduce an exited controller/stopped guest, then recovery and confirmed deletion; keep a newer independent synthetic run alive as a negative-control case.
+- [x] Run recovery/delete/status/failure/completion PTY cases at 40/80/132 columns and the full installed 660-second lifecycle gate, including idle, same-VM reconnect, saved-work resume and terminal restoration. The quick mode is diagnostic only.
+- [x] From a clean committed input freeze the next unused private version, expected alpha.51 if still unused. Pack once, install in an isolated local prefix, compare all installed/source/tarball bytes and verify source CI for that exact product commit. Re-run acceptance against this frozen installation before selecting the launcher.
+- [x] Recheck Router readiness/serving identity and Pages preservation without redeployment. Record metadata-only receipts, exact version/SHA/hashes, new regression results and the updated live checklist; reconcile only changed documentation-manifest entries after final bytes stabilize.
+- [x] Prepare the exact-node recovery for the already requested retirement of 87fb7693 using fresh ownership and backend state. Execute only that previously confirmed retirement through normal recovery endpoints when implementation is authorized and installed gates pass; keep all other old listings, saved work, credential volumes and liabilities. Verify the old guest is absent and the listing disappears. If evidence no longer matches, report the specific remaining operator action instead of broad cleanup.
+- [x] Complete the handoff for controlled restart of the intended serving provider using the new launcher. Operator acknowledges qualification; buyer testing starts only after backend-confirmed Ready. The live Pro test must pass the previous third-request failure point and sustain at least six inference requests with multiple tool continuations, then Stop and review accounting. Keep Flash/Custom compatibility checks in the checklist without claiming those live paths were tested.
 
 ### Relevant Files
 
@@ -1518,14 +1518,14 @@ Use `scripts/verify-private-install.mjs` with the exact tarball and isolated ins
 
 ### Acceptance Criteria
 
-- [ ] Both defects pass production-shaped regressions and actual installed VM/PTY acceptance; all required source/provenance checks and exact product CI pass.
-- [ ] The selected launcher resolves to the accepted immutable artifact; running-process versions and the required controlled restart are reported separately.
-- [ ] Previously confirmed old-listing retirement is completed only after verified run-bound cleanup, or a specific evidence/access blocker is documented. Other listings, credentials, work and liabilities are preserved.
-- [ ] The receipt says ready for a controlled live retest only after installed gates pass. Sustained real-provider readiness is claimed only after the operator's Pro test passes; historical interruptions are not retrospectively declared fixed.
+- [x] Both defects pass production-shaped regressions and actual installed VM/PTY acceptance; all required source/provenance checks and exact product CI pass.
+- [x] The selected launcher resolves to the accepted immutable artifact; running-process versions and the required controlled restart are reported separately.
+- [x] Previously confirmed old-listing retirement is completed only after verified run-bound cleanup, or a specific evidence/access blocker is documented. Other listings, credentials, work and liabilities are preserved.
+- [x] The receipt says ready for a controlled live retest only after installed gates pass. Sustained real-provider readiness is claimed only after the operator's Pro test passes; historical interruptions are not retrospectively declared fixed.
 
 ### Validation Results
 
-All implementation, generated payload, CI, private packaging, installed VM/PTY/lifecycle and live acceptance gates: not run. Documentation-only validation passed: `git diff --check`, preservation of all previous plan bytes, required section/status checks, and confirmation that PLAN.md is the sole changed file. All four new steps remain todo.
+Private implementation and installed acceptance are complete; real-provider acceptance remains operator-pending. The earlier documentation-only validation passed: `git diff --check`, preservation of all previous plan bytes, required section/status checks, and confirmation that PLAN.md is the sole changed file. All four steps are now complete for private implementation/delivery; operator live acceptance remains follow-up.
 
 ### Findings / Notes
 
@@ -1548,3 +1548,10 @@ Operator-run Pro sustained coding and the existing Flash/Custom API compatibilit
 
 ### Implementation checkpoint
 936 full local client checks pass. Preliminary actual native provider/buyer/Router streaming passes 14 main requests, seven tool continuations, cancellation held for reconciliation and a subsequent session on the same provider run; maximum one live upstream connection. Actual orphan recovery passes with zero inference. Preliminary verifier corrections used the canonical native draft/quote fields and terminal menu ordering. One initial buyer VM creation failed and was fully cleaned; the repeated actual test passed. Alpha.51 is selected as the next unused private artifact slot; nothing is packed, installed, selected or publicly published yet.
+
+### Verified private alpha.51 delivery — 6 October 2026
+Product commit `292610701b4d304f16f9b788bb9e4b3f37ba2fb6` is installed and selected as `0.1.0-alpha.51`; tarball SHA-256 `ce919ecaa2687e9ea817cbd5ba26743df84d3594b9a88afa08f2db2d953f2fbf`. All 52,039 installed files match frozen source/tarball. 938 full source checks and 24 installed regressions pass. Actual installed provider/buyer/Router tests pass for native and SDK paths with 14 main requests, seven tool continuations, cancellation held and a subsequent session on the same provider run; maximum one upstream connection. Actual verified HTTPS passes 12 requests in one guest process. Actual stopped-guest recovery/retirement, independent newer-guest preservation, 18 PTY cases at 40/80/132 columns, pinned runtime provenance, the full 660-second lifecycle and exact product macOS/Linux CI pass. CI run `37421091813`.
+
+The previously requested retirement of node `87fb7693-3462-4a5d-8c85-bccfc0f22f57` is complete: its recorded stopped guest was removed, Router confirmed teardown/deletion and stored credentials remain. The active node `2a6ceefd-7f7b-4398-abac-e2c3706d7130` retains its run, configuration, qualification and credential status. Nine unresolved requests and financial fingerprints are unchanged. Router 9a2e2e6 and 25 serving modules, Pages deployment/assets, all earlier artifacts/profiles/work and spending controls are preserved. No paid inference, reconciliation, Router/Pages redeployment or public publication occurred. The launcher changed; running processes were not restarted.
+
+Readiness is for a controlled live retest after operator stop/reopen, acknowledged qualification and backend-confirmed Ready. Sustained Pro coding and Flash/Custom compatibility remain operator-pending. The reproduced client tunnel leak matches the live sequence; the original live broker rejection reason was not recorded. Receipt/checklist: `outputs/adr-stream-recovery-2026-10-06/delivery-receipt.json` and `manual-acceptance.md`.
