@@ -17,19 +17,26 @@ export function restrictedPiFetch(node,model,signal,onResponse=()=>{},{discovery
     const body=discovery?undefined:init.body??await req.text();if(!discovery&&(typeof body!=='string'||Buffer.byteLength(body)>1024*1024))throw fail('pi_request_limit');
     const headers=new Headers(init.headers??req.headers);headers.delete('host');headers.delete('content-length');headers.set('accept-encoding','identity');
     if(node.connection?.authentication==='none')for(const key of ['authorization','x-api-key','api-key','x-goog-api-key'])headers.delete(key);
-    const agent=tunnelAgent({...node,tunnel:{...node.tunnel,path:'/upstream/'+encodeURIComponent(approved.origin)}},url,evidence);
+    const requestSignal=AbortSignal.any([signal??new AbortController().signal,init.signal??req.signal]);
+    const agent=tunnelAgent({...node,tunnel:{...node.tunnel,path:'/upstream/'+encodeURIComponent(approved.origin)}},url,evidence,requestSignal);
     return new Promise((resolve,reject)=>{
-      const upstream=(url.protocol==='http:'?httpRequest:request)(url,{method,headers:Object.fromEntries(headers),agent,signal:AbortSignal.any([signal??new AbortController().signal,init.signal??req.signal]),timeout:120000},response=>{
+      let incoming,bounded,disposed=false;
+      const dispose=()=>{if(disposed)return;disposed=true;incoming?.unpipe(bounded);incoming?.destroy();upstream.destroy();agent.destroy();};
+      const upstream=(url.protocol==='http:'?httpRequest:request)(url,{method,headers:Object.fromEntries(headers),agent,signal:requestSignal,timeout:120000},response=>{
+        incoming=response;
         evidence?.response(response.statusCode);onResponse(response.statusCode);
-        if(response.statusCode>=300&&response.statusCode<400){response.destroy();reject(fail('pi_redirect_rejected'));return;}
+        if(response.statusCode>=300&&response.statusCode<400){reject(fail('pi_redirect_rejected'));dispose();return;}
         let bytes=0;
-        const bounded=new Transform({transform(chunk,_encoding,next){evidence?.stage('streaming');bytes+=chunk.length;if(bytes>2*1024*1024)next(fail('pi_response_limit'));else next(null,chunk);}});
-        response.on('error',e=>{evidence?.error(e);bounded.destroy(e);});response.pipe(bounded);
+        bounded=new Transform({transform(chunk,_encoding,next){evidence?.stage('streaming');bytes+=chunk.length;if(bytes>2*1024*1024)next(fail('pi_response_limit'));else next(null,chunk);}});
+        // A reader can finish at the SSE sentinel before HTTP EOF. Its cancelled
+        // Web stream must close the original response and tunnel as well.
+        bounded.once('close',dispose);
+        response.on('error',e=>{if(!disposed){evidence?.error(e);bounded.destroy(e);}});response.pipe(bounded);
         const h=new Headers();for(const [key,value]of Object.entries(response.headers))if(value!==undefined)h.set(key,Array.isArray(value)?value.join(', '):value);
         resolve(new Response(Readable.toWeb(bounded),{status:response.statusCode,headers:h}));
       });
-      upstream.once('error',error=>{evidence?.error(error);reject(Object.assign(fail(signal?.aborted?'upstream_timeout':'upstream_failed_outcome_unknown'),{transportCode:error.code}));});
-      upstream.once('socket',socket=>{const dispatched=()=>evidence?.stage('dispatch');if(socket.connecting)socket.once('connect',dispatched);else dispatched();});upstream.once('timeout',()=>upstream.destroy(Object.assign(Error('upstream_timeout'),{code:'ETIMEDOUT'})));upstream.once('close',()=>agent.destroy());upstream.end(body);
+      upstream.once('error',error=>{if(disposed)return;evidence?.error(error);reject(Object.assign(fail(signal?.aborted?'upstream_timeout':'upstream_failed_outcome_unknown'),{transportCode:error.code}));bounded?.destroy(error);dispose();});
+      upstream.once('socket',socket=>{const dispatched=()=>evidence?.stage('dispatch');if(socket.connecting)socket.once('connect',dispatched);else dispatched();});upstream.once('timeout',()=>upstream.destroy(Object.assign(Error('upstream_timeout'),{code:'ETIMEDOUT'})));upstream.once('close',()=>{agent.destroy();});upstream.end(body);
     });
   };
 }

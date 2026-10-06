@@ -1255,3 +1255,296 @@ Operator-run provider cleanup/restart, qualification and Flash/Pro/Custom API ac
 Product commit 9918b65dbd91b0d9d5a2af394a39731493b6dd63 is installed and selected as private 0.1.0-alpha.50. Tarball SHA-256: 01e896600cca7beed2f55315348c555f0f5b11c4408d4ae5b5a50fea6bcdc980. All 52,039 installed files match the frozen source and tarball. Both source CI jobs pass. Verified: 914 full client tests; seven exact-installed provider regressions; seven buyer regressions; actual installed provider guest/SDK/control reporting with one malformed request and one known-usage report; nine completion and three details/export PTY cases; full 660-second native lifecycle and terminal restoration; coding/provider runtime provenance. Router 9a2e2e6 and its 25 serving modules, Pages deployment/assets, private access/resources, stored credentials/provider qualification and eight unresolved request fingerprints remain unchanged. No Router/Pages deployment, public contract/schema change, paid inference, replay, reconciliation or real-provider restart occurred.
 
 Both reviewed defects are closed against this installation. Readiness is for a controlled diagnostic live test after operator cleanup/restart, acknowledged qualification and backend-confirmed Ready. The original live interruption cause remains unresolved. Source CI run: 37403262239. Final receipt and operator checklist: outputs/adr-setup-accounting-2026-10-06/delivery-receipt.json and manual-acceptance.md. Alpha.49 and earlier artifacts remain available.
+
+---
+
+# Plan: Close native stream tunnels and recover old provider listings — 6 October 2026
+
+## Goal
+
+Sustain repeated buyer coding requests on one provider VM, and make an existing provider listing recoverable or deletable through verified cleanup of its actual previous run. Deliver a new private client with both paths verified against the exact installation before another operator-run live test.
+
+## Context
+
+- Owning checkout: `/Users/ahmadzuhri/antigravity/3days/.reliability/client-spec`; canonical repository `https://github.com/adrouter/adrouter-new.git`; branch `codex/adrv2-reliability-20261001`. Planning began at clean documentation commit `117e256cbc5c1b2ee1a2b781f3b77fcb7a3f6af6`; the selected alpha.50 product is `9918b65dbd91b0d9d5a2af394a39731493b6dd63`.
+- The 6 October live Pro session `ccd46fd0-bc19-4f2a-8d55-17a63c5c41a5` completed two requests. Request three, `ba1051fa-1d3a-427c-9d9b-e3eab741a3a3`, failed after 23 ms with `ECONNRESET` at `tunnel`, before an observed HTTP response. Guest/workspace cleanup and remote stop succeeded; the failed request remains unresolved.
+- A synthetic reproduction using unmodified installed alpha.50 native inference, its pinned adapter and real local broker sockets returned a complete SSE result before HTTP EOF. Two requests succeeded while leaving two connections open; requests three through five failed at the tunnel with `ECONNRESET`, and only two requests reached the synthetic upstream. A fully consumed ordinary HTTP response did not reproduce the leak. This matches the live sequence but does not retrospectively prove the unrecorded live broker rejection reason.
+- Old listing `87fb7693-3462-4a5d-8c85-bccfc0f22f57` still refers to alpha.45 run `2f84c8e5-d5da-4e54-9ac8-0b6a814a8109`. Its controller has exited; its guest remains in inventory as Stopped. Router has no teardown confirmation, records cleanup pending and a previously requested retirement, and rejected three alpha.50 replacement preparations with `provider_teardown_required`.
+- The current TUI can retain a failed replacement controller by node ID. Cleanup selection must compare its run with Router's run instead of treating any controller for that node as authoritative. Existing evidence-based recovery and run-scoped stop/teardown routes already provide the required safety boundary.
+- This section supersedes alpha.50 readiness for sustained coding. Earlier delivery/test results remain historical evidence; neither implementation nor acceptance in this new plan has been completed.
+
+## Research Summary
+
+- Source inspection identifies the incomplete cleanup chain in `src/pi-transport.mjs`: destroying/cancelling the exposed Transform does not explicitly dispose of its incoming HTTP response, request and tunnel agent. The host broker in `src/provider.mjs` rejects a third open tunnel. The pinned OpenAI stream reader stops at the SSE completion sentinel and closes its body reader.
+- Node 24.16.0 documents separate destruction of readable streams and agent sockets. Use one idempotent owner for those resources; preserve normal completion and the initiating error. References: [stream destruction](https://nodejs.org/download/release/v24.16.0/docs/api/stream.html#readabledestroyerror) and [agent destruction](https://nodejs.org/download/release/v24.16.0/docs/api/http.html#agentdestroy). This is cleanup within the pinned runtime, not a runtime or dependency upgrade.
+- Router's existing preparation and deletion paths require previous-run teardown. `retryProviderCleanup` already verifies persisted origin/node/run/installation/guest ownership, controller exit and runtime identity, then uses run-scoped stop and teardown. Reuse and strengthen this path; do not bypass the Router checks.
+- Context7 is unavailable in this session. Exact installed dependency source and the matching official Node documentation were inspected instead.
+
+## Constraints
+
+- Keep the first change client-only, small and reversible. No public API, diagnostic schema, Router, Pages, database schema, dependency, catalog, pricing or model-default changes.
+- Preserve the two-tunnel limit, destination restrictions, guest-only credentials, TLS verification, strict response validation, original failure evidence and no inference replay. Do not add delays, increase timeouts or switch models to mask the leak.
+- Execution cleanup remains separate from accounting. Do not clear unknown usage, outstanding liabilities, saved work, credential volumes or previous artifacts. Financial fields stay confined to existing host display/accounting paths.
+- Read-only inspection never launches a guest, runs qualification, deletes a listing or performs cleanup. Cleanup starts only from an explicit recovery/start/delete action, with existing Delete confirmation retained.
+- Before implementation that includes private delivery, run all five platform preflight checks in the actual client toolchain and carry forward the explicit private-delivery npm waiver. Recheck fresh canonical refs/protections before pushing. No preflight/build/deployment work is executed by this planning task.
+- Source work stays in the owning checkout; evidence and installations stay under verified local workspace outputs, and disposable test work uses a verified local temporary directory. Never write to iCloud. Preserve the existing plan sections.
+
+## Out of Scope
+
+Public publication/promotion, broad runtime refactoring, changing the tunnel capacity, automatic retries, bulk listing retirement, stopping unrelated provider runs, credential removal, financial reconciliation, and claims that all historical interruptions share this cause.
+
+## Reversibility
+
+Keep transport repair, recovery/UI repair and acceptance tooling reviewable as separate changes. Preserve alpha.50 and older immutable artifacts. Select the next unused private version only after acceptance; never replace previously packed bytes. Listing deletion remains the existing explicit irreversible retirement action; tests use disposable synthetic listings. A rollback of the launcher does not undo retirement or silently restart a provider.
+
+---
+
+## Step A: Establish regressions and delivery prerequisites
+
+### Status
+
+`done`
+
+### Objective
+
+Turn the observed failures into repeatable production-shaped tests before repairing them.
+
+### Tasks
+
+- [x] Reverify checkout, canonical branch, selected launcher and installed bytes; complete kickoff Fly, Pages, Supabase, GitHub and npm preflight using the carried waiver and existing private-delivery procedure.
+- [x] Add a local socket regression that uses nativeInference, the pinned native adapter, restricted transport and production broker. Emit valid SSE usage/tool results plus `[DONE]`, then delay HTTP EOF; also test a server that keeps the body open until the client closes it. No fabricated matching error or replacement fetch.
+- [x] Demonstrate the alpha.50 baseline failure after two completed calls, then make the repaired acceptance demand at least 12 consecutive calls, including tool-result continuations, on the same provider run. Count actual upstream arrivals and open connections.
+- [x] Add recovery fixtures for an exited old controller with a stopped owned guest, an absent guest with valid ownership evidence, and a failed unclaimed replacement controller that must not shadow the backend-owned run.
+
+### Relevant Files
+
+`test/pi-native.test.mjs`, `test/provider-lifecycle.test.mjs`, new `test/provider-transport.test.mjs`, `test/provider-diagnose.test.mjs`, `test/provider-repair-ui.test.mjs`, `test/provider-deletion.test.mjs`.
+
+### Expected Changes
+
+Add focused transport tests and extend the existing recovery/UI/deletion fixtures. Store metadata-only baseline results in a new workspace output directory during implementation.
+
+### Do Not Modify
+
+Live listings, profiles, credentials, budgets, Router configuration and alpha.50 artifacts.
+
+### Commands
+
+```sh
+node --test test/provider-transport.test.mjs test/provider-diagnose.test.mjs test/provider-repair-ui.test.mjs test/provider-deletion.test.mjs
+```
+
+### Acceptance Criteria
+
+- [x] The immutable alpha.50 baseline reproduces the tunnel leak without a real upstream key or paid inference.
+- [x] Fixtures distinguish cleanup of the previous backend run from cleanup of a failed new attempt.
+- [x] All platform results and any authentication blockers are collected before implementation/build/long acceptance.
+
+### Validation Results
+
+Kickoff platform preflight passed after operator Cloudflare reauthentication; npm authentication was explicitly waived again. The new immutable-alpha.50 socket baseline reproduces ECONNRESET at the third native request over HTTP and HTTPS. Recovery fixtures cover stopped/absent guests and a failed replacement controller. Source acceptance is underway; no paid inference.
+
+### Findings / Notes
+
+Tests must exercise early stream consumption through real sockets; the previous native adapter fixtures substituted fetch and completely closed their response bodies.
+
+---
+
+## Step B: Close all resources belonging to a completed inference
+
+### Status
+
+`review`
+
+### Objective
+
+Release tunnel capacity promptly and exactly once when a stream completes, is cancelled or fails.
+
+### Tasks
+
+- [x] Add request-owned, idempotent disposal for the incoming response, bounded Transform/Web stream, HTTP request, tunnel agent, pending CONNECT request, raw socket and TLS socket. Bind cancellation during connection establishment as well as after headers. Detach timers/listeners after completion.
+- [x] Connect response-consumer cancellation/early completion to underlying transport disposal. Normal complete EOF, HTTP rejection, redirect rejection, response limit, parsing failure, timeout and explicit cancellation must all release resources. Normal SSE completion must remain successful and keep its known usage.
+- [x] Associate host tunnels with the pending request object/run when opened. Close only that request's remaining tunnels after its terminal result, failure, cancellation or handler-completion acknowledgement; retain whole-run closure for provider Stop. A delayed old callback must not close a newer request's tunnel.
+- [x] Preserve the initiating diagnostic; cleanup-triggered abort/reset events must not manufacture a new failure or replace known usage. Retain one-dispatch protection and existing completion-report behavior.
+- [x] Record a safe, request/run-bound local lifecycle reason when broker capacity rejects a tunnel. Keep this outside the public FailureDiagnostic enum; do not record URLs, headers, payloads, credentials or financial values.
+
+### Relevant Files
+
+`src/pi-transport.mjs`, `src/provider-broker.mjs`, `src/provider.mjs`, `src/guest/provider-console.mjs`, and Step A transport/lifecycle tests. Change guest execution code only where needed for deterministic request disposal.
+
+### Expected Changes
+
+Internal resource ownership and cleanup hooks; no public interface changes. Rebuild the affected provider payload through its generator after source changes.
+
+### Do Not Modify
+
+Tunnel capacity, trusted destinations, TLS policy, public validators, model/adapter selection, retries, deadlines and the known/unknown usage rules.
+
+### Commands
+
+```sh
+node --test test/provider-transport.test.mjs test/pi-native.test.mjs test/sdk-native.test.mjs test/provider-lifecycle.test.mjs test/failure-diagnostics.test.mjs
+npm run provider:build
+```
+
+### Acceptance Criteria
+
+- [x] At least 12 consecutive native requests and tool continuations succeed through the broker with no added wait between calls and exactly one upstream dispatch per call.
+- [x] Each completed/cancelled request releases its sockets promptly, well before the request timeout; tests observe closure events within a bounded two-second allowance, rather than waiting out server deadlines.
+- [x] Early sentinel, delayed EOF, never-ending body after sentinel, partial/malformed stream, cancellation during CONNECT/TLS/streaming and repeated disposal are covered, including HTTP and verified local HTTPS.
+- [x] Two legitimately active fixture tunnels still enforce the existing capacity limit; stale completion cannot affect a newer request.
+- [x] Valid usage is retained and reported once; incomplete usage stays unknown. Cleanup does not produce unhandled errors, false timeouts or extra inference.
+
+### Validation Results
+
+Source transport and lifecycle coverage passes, including 12 immediate native calls, HTTP/verified HTTPS, SDK delayed EOF, open native bodies and CONNECT/TLS/body cancellation. The unchanged alpha.50 fails the third native call. Provider payload regenerated. Exact installed gates remain in Step D.
+
+### Findings / Notes
+
+Guest-side disposal fixes the leak; host request-bound cleanup is a second deterministic boundary. Neither may terminate a stream merely because response headers arrived or the request body finished writing.
+
+---
+
+## Step C: Recover the correct old run and complete confirmed deletion
+
+### Status
+
+`review`
+
+### Objective
+
+Make previous-run cleanup a usable part of restart and deletion without bypassing ownership or accounting safeguards.
+
+### Tasks
+
+- [x] Share recovery selection between TUI actions and the existing CLI recovery/delete commands. Refresh Router diagnostics, compare node/run/installation/origin, and use an attached controller only when it owns that exact run. Prune completed unclaimed replacement controllers; never let their successful no-op Stop count as cleanup of the previous run.
+- [x] For an explicit Test and start action with previous teardown pending, recover the verified previous run before preparing a replacement. Preserve configuration and saved guest credentials. Keep the existing separate Start acknowledgement before bounded qualification/publication. If retirement was already requested, offer completion of deletion instead of starting another run.
+- [x] Reuse evidence-based cleanup: require the recorded controller to have exited, adopt only the recorded guest after runtime/image/network-policy verification, remove that guest, confirm its absence, and submit the existing run-scoped teardown acknowledgement. An already absent guest is acceptable only with valid ownership evidence. Recheck backend binding and honor superseded-run responses.
+- [x] After existing Delete confirmation, finish eligible local cleanup and verify the authoritative deleted result or disappearance from the owned-listing response. Keep one idempotency key for the intent. If the reply is lost, inspect before any explicit retry. A pending retirement is displayed as pending, never as successful deletion.
+- [x] Preserve node-scoped Delete semantics as the user's confirmed listing action; recovery itself must only issue run-scoped stop/teardown. Missing ownership, a live controller elsewhere, an installation mismatch or changed backend run yields an actionable owning-terminal/operator route; it never triggers process killing, forced adoption or inference.
+- [x] Persist remote stop, guest removal and teardown-acknowledgement outcomes independently. A retry after guest removal but failed/lost acknowledgement resumes reporting safely, preserves the original cause, and never removes unrelated resources or resets balances.
+
+### Relevant Files
+
+`src/provider-diagnose.mjs`, `src/tui.mjs`, `src/cli.mjs`, provider diagnostic/lifecycle helpers, and existing recovery/deletion/UI tests. Router service stop/teardown/delete source is reference-only.
+
+### Expected Changes
+
+Shared client recovery orchestration, accurate pending/completed UI states and regression coverage. Existing CLI commands, route payloads and deletion output contracts remain compatible.
+
+### Do Not Modify
+
+Router preparation/deletion safety checks, credential volumes, newer provider runs, unknown liabilities, public API/schema and unrelated listings.
+
+### Commands
+
+```sh
+node --test test/provider-diagnose.test.mjs test/provider-deletion.test.mjs test/provider-repair-ui.test.mjs test/provider-lifecycle.test.mjs test/provider-reports.test.mjs test/buyer-outcomes.test.mjs
+```
+
+### Acceptance Criteria
+
+- [x] Restart of a non-retiring old listing completes verified teardown first and retains its configuration/credential identity; recovery dispatches zero model requests.
+- [x] The failed-new-controller/old-backend-run scenario targets the old run correctly; no newer run is stopped through stale cleanup.
+- [x] Confirmed deletion finishes for stopped or already absent owned guests and refreshes My provider listings, even when financial reconciliation remains pending.
+- [x] Missing evidence, live/unknown controller, other installation, wrong guest policy/image, superseded run, failed removal, failed acknowledgement and repeated cleanup all have tested, truthful outcomes.
+- [x] Cancelling Delete makes no deletion/cleanup request; retirement already requested never silently becomes a new serving run.
+
+### Validation Results
+
+Source recovery, diagnosis, UI and deletion regressions pass. Preliminary actual stopped-guest/controller-exit recovery and confirmed retirement pass while an independent actual provider VM remains alive. Six recovery/delete PTY cases pass at 40/80/132 columns. Exact installed and real target recovery remain in Step D.
+
+### Findings / Notes
+
+Old-run recovery is distinct from clearing accounting holds. The already requested retirement on node 87fb7693 must complete as deletion; use a separate synthetic/non-retiring listing to test restart.
+
+---
+
+## Step D: Final verification and cleanup
+
+### Status
+
+`in_progress`
+
+### Objective
+
+Deliver verified private bytes and a concrete controlled-live-test handoff for both repaired paths.
+
+### Tasks
+
+- [ ] Run full client checks plus the existing setup-normalization, buyer accounting, report/save failure and privacy regressions. Rebuild provider and affected coding payloads through their generators; verify pinned provenance and review the complete diff for unrelated edits/debugging code.
+- [ ] Add installed acceptance scripts for repeated native streaming and orphan-run recovery. Exercise actual task-owned provider and buyer VMs, guest reporting and host broker; use local synthetic HTTP/HTTPS upstreams with controlled EOF, pinned native OpenAI-completions and the SDK path sharing the transport. No fetch substitute satisfies this gate.
+- [ ] Verify at least 12 inference turns including repeated tool results, delayed/open response endings and explicit cancellation followed by another accepted request on the same provider VM. Assert exact upstream request counts, prompt socket release, retained usage and cleanup. Reproduce an exited controller/stopped guest, then recovery and confirmed deletion; keep a newer independent synthetic run alive as a negative-control case.
+- [ ] Run recovery/delete/status/failure/completion PTY cases at 40/80/132 columns and the full installed 660-second lifecycle gate, including idle, same-VM reconnect, saved-work resume and terminal restoration. The quick mode is diagnostic only.
+- [ ] From a clean committed input freeze the next unused private version, expected alpha.51 if still unused. Pack once, install in an isolated local prefix, compare all installed/source/tarball bytes and verify source CI for that exact product commit. Re-run acceptance against this frozen installation before selecting the launcher.
+- [ ] Recheck Router readiness/serving identity and Pages preservation without redeployment. Record metadata-only receipts, exact version/SHA/hashes, new regression results and the updated live checklist; reconcile only changed documentation-manifest entries after final bytes stabilize.
+- [ ] Prepare the exact-node recovery for the already requested retirement of 87fb7693 using fresh ownership and backend state. Execute only that previously confirmed retirement through normal recovery endpoints when implementation is authorized and installed gates pass; keep all other old listings, saved work, credential volumes and liabilities. Verify the old guest is absent and the listing disappears. If evidence no longer matches, report the specific remaining operator action instead of broad cleanup.
+- [ ] Complete the handoff for controlled restart of the intended serving provider using the new launcher. Operator acknowledges qualification; buyer testing starts only after backend-confirmed Ready. The live Pro test must pass the previous third-request failure point and sustain at least six inference requests with multiple tool continuations, then Stop and review accounting. Keep Flash/Custom compatibility checks in the checklist without claiming those live paths were tested.
+
+### Relevant Files
+
+Client runtime generators/provenance scripts; new installed transport/recovery verifiers; `scripts/verify-provider-lifecycle.py`; existing setup/completion/details verifiers; package version metadata; provider specification; successor receipt/manual checklist and scoped documentation manifest during implementation.
+
+### Expected Changes
+
+Generated payloads, focused acceptance scripts, a new immutable private artifact, delivery evidence and scoped documentation updates. Planning itself changes only this PLAN.md.
+
+### Do Not Modify
+
+Old artifacts/receipts, protected refs, public channels, Router/Pages inputs, authentication state, saved projects, credential vault contents and unresolved request accounting.
+
+### Commands
+
+Run in the client checkout with task-specific absolute installation/runtime/evidence paths recorded by the implementer:
+
+```sh
+npm run provider:build
+node scripts/build-coding-runtime.mjs /Users/ahmadzuhri/antigravity/3days/adrouter_release/adrouterCLI --verify
+npm run check
+npm run coding:verify
+node --input-type=module -e "import {verifyProviderRuntime} from './src/provider-runtime.mjs'; await verifyProviderRuntime();"
+```
+
+After freezing and installing exact bytes, set `ADR_ACCEPTANCE_CLIENT_ROOT`, `ADR_ACCEPTANCE_RUNTIME_PATHS` and `ADR_ACCEPTANCE_ROUTER_ROOT` to the verified installation, task-owned runtime metadata and designated Router clone. Run the new verifiers plus:
+
+```sh
+node scripts/verify-setup-failure-mac.mjs
+python3 scripts/verify-completion-pty.py
+python3 scripts/verify-failure-details-pty.py
+python3 scripts/verify-provider-lifecycle.py
+```
+
+Use `scripts/verify-private-install.mjs` with the exact tarball and isolated install-prefix arguments. Leave `ADR_PROVIDER_LIFECYCLE_QUICK` unset for final acceptance.
+
+### Acceptance Criteria
+
+- [ ] Both defects pass production-shaped regressions and actual installed VM/PTY acceptance; all required source/provenance checks and exact product CI pass.
+- [ ] The selected launcher resolves to the accepted immutable artifact; running-process versions and the required controlled restart are reported separately.
+- [ ] Previously confirmed old-listing retirement is completed only after verified run-bound cleanup, or a specific evidence/access blocker is documented. Other listings, credentials, work and liabilities are preserved.
+- [ ] The receipt says ready for a controlled live retest only after installed gates pass. Sustained real-provider readiness is claimed only after the operator's Pro test passes; historical interruptions are not retrospectively declared fixed.
+
+### Validation Results
+
+All implementation, generated payload, CI, private packaging, installed VM/PTY/lifecycle and live acceptance gates: not run. Documentation-only validation passed: `git diff --check`, preservation of all previous plan bytes, required section/status checks, and confirmation that PLAN.md is the sole changed file. All four new steps remain todo.
+
+### Findings / Notes
+
+Installed synthetic acceptance must recreate the response lifecycle that failed, not merely prove the VM stayed alive for eleven minutes. Preserve metadata-only evidence; no workload text, raw frames, secrets or financial data enter diagnostic records.
+
+## Follow-up Work
+
+Operator-run Pro sustained coding and the existing Flash/Custom API compatibility checklist after controlled provider restart and Ready. Investigate any residual failure from fresh request/run-bound evidence. Financial reconciliation remains a separate evidence-based operation. General Linux/KVM and public-release qualification remain outside this private Mac delivery.
+
+## Decision Log
+
+| Date | Decision | Rationale | Impact |
+| --- | --- | --- | --- |
+| 2026-10-06 | Fix resource disposal and retain the two-tunnel cap | Installed reproduction fails after two leaked native streams | Addresses the causal path without retries or relaxed limits |
+| 2026-10-06 | Reuse current Router cleanup/retirement contracts | Backend already fences runs and retains unresolved accounting | Client-only implementation and no redeployment by default |
+| 2026-10-06 | Select recovery by backend run, not merely node ID | A failed replacement controller is not the old run's owner | Prevents false cleanup success and stale-run interference |
+| 2026-10-06 | Treat the affected old node as pending retirement | The operator already requested Delete and Router retained that intent | Complete its verified deletion; do not silently restart it |
+| 2026-10-06 | Require repeated real-socket native streaming in frozen-install acceptance | Earlier successful fixtures missed completion-before-HTTP-EOF behavior | New regression gate before launcher selection and live retest |
+| 2026-10-06 | Preserve private delivery and the existing npm waiver | Continues the previously authorized delivery boundary | Next unused immutable private version; no public publication |
+
+### Implementation checkpoint
+936 full local client checks pass. Preliminary actual native provider/buyer/Router streaming passes 14 main requests, seven tool continuations, cancellation held for reconciliation and a subsequent session on the same provider run; maximum one live upstream connection. Actual orphan recovery passes with zero inference. Preliminary verifier corrections used the canonical native draft/quote fields and terminal menu ordering. One initial buyer VM creation failed and was fully cleaned; the repeated actual test passed. Alpha.51 is selected as the next unused private artifact slot; nothing is packed, installed, selected or publicly published yet.

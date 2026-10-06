@@ -1,4 +1,4 @@
-import { diagnoseProvider, diagnosisLines, retryProviderReports, retryProviderCleanup } from './provider-diagnose.mjs';
+import { diagnoseProvider, diagnosisLines, retryProviderReports, retryProviderCleanup, deleteProviderListing } from './provider-diagnose.mjs';
 import { MarketplaceDraft, MarketplaceListing, MarketplaceNetworkConfig, MarketplaceQuoteRequest, ProviderNodeDeletion } from './generated/validators.mjs';
 import { randomUUID } from 'node:crypto';
 import { Network, AuthStore, ClientError } from './network.mjs';
@@ -144,7 +144,7 @@ export async function run(args, dependencies = {}) {
     else if (sub === 'delete') {
       const nodeId = requireId(id);
       if (!o['confirm-delete']) throw new ClientError('node_delete_confirmation_required');
-      const result = await post(`/providers/nodes/${nodeId}/delete`, { confirm: true });
+      const result = await deleteProviderListing(network,nodeId,store.profile,{key:o['idempotency-key']??randomUUID()});
       if (!ProviderNodeDeletion(result) || result.id !== id) throw new ClientError('invalid_network_response');
       output(result);
     }

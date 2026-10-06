@@ -6,6 +6,10 @@ import { ProviderReports } from './provider-reports.mjs';
 import { modelStatusLines } from './model-status.mjs';
 import { providerDiagnosticLines, capturedDiagnostic } from './provider-diagnostics.mjs';
 import { ClientError } from './network.mjs';
+import { ProviderNodeDeletion } from './generated/validators.mjs';
+import { randomUUID } from 'node:crypto';
+
+export const controllerOwnsRun=(controller,node)=>!!controller&&!!node.providerRunId&&controller.status.providerRunId===node.providerRunId;
 
 export async function providerEvidence(node, profile, {directory,origin}={}) {
   const runs=[...new Set([node.providerRunId,...Object.values(node.nativeChecks??{}).map(c=>c.providerRunId)].filter(v=>/^[a-f0-9-]{36}$/i.test(v??'')))].slice(0,32);
@@ -25,9 +29,23 @@ export async function providerEvidence(node, profile, {directory,origin}={}) {
       const reports=new ProviderReports(lifecycle);
       const binding={nodeId:node.id,providerRunId};
       const sanitize = value => capturedDiagnostic(value,{nodeId:value?.nodeId??node.id,providerRunId:value?.providerRunId??providerRunId});
-      const events=Array.isArray(local.events)?local.events.slice(-256).map(sanitize).filter(Boolean):[];
+      const safeEvent=value=>{
+        const failure=sanitize(value);if(failure)return {...failure,at:Number.isSafeInteger(value.at)?value.at:null,status:/^[a-z0-9_]{1,80}$/.test(value.status??'')?value.status:null};
+        if(!/^[a-z0-9_]{1,80}$/.test(value?.phase??''))return null;
+        return {phase:value.phase,code:null,at:Number.isSafeInteger(value.at)?value.at:null,status:/^[a-z0-9_]{1,80}$/.test(value.status??'')?value.status:null,
+          relayGeneration:Number.isSafeInteger(value.relayGeneration)?value.relayGeneration:null,leaseUntil:Number.isSafeInteger(value.leaseUntil)?value.leaseUntil:null};
+      };
+      const events=Array.isArray(local.events)?local.events.slice(-256).map(safeEvent).filter(Boolean):[];
       const historical=events.length?events:[sanitize(local.firstFailure)].filter(Boolean);
       const failure=local.terminalFailure?sanitize(local.terminalFailure):historical.find(e=>['setup_reserve','setup_model_request','setup_response_validate','setup_report_save','setup_report_submit','configure_models','publication'].includes(e.operation))??null;
+      // Recovery appends to the previous run, retaining its original controller
+      // identity and safe history rather than replacing them with this process.
+      lifecycle.pid=Number.isSafeInteger(local.pid)&&local.pid>0?local.pid:null;
+      lifecycle.ownership=local.ownership?Object.fromEntries(['nodeId','providerRunId','installationId','guestName','origin','createdAt'].filter(k=>typeof local.ownership[k]==='string'||k==='createdAt'&&Number.isSafeInteger(local.ownership[k])).map(k=>[k,local.ownership[k]])):null;
+      if(/^0\.1\.0-alpha\.[0-9]+$/.test(local.clientVersion??''))lifecycle.clientVersion=local.clientVersion;
+      lifecycle.firstFailure=sanitize(local.firstFailure);lifecycle.terminalFailure=failure;
+      lifecycle.secondaryFailures=(local.secondaryFailures??[]).slice(-32).map(sanitize).filter(Boolean);
+      lifecycle.events=events;lifecycle.stopTrigger=/^[a-z0-9_]{1,80}$/.test(local.stopTrigger?.trigger??'')?{trigger:local.stopTrigger.trigger,at:Number.isSafeInteger(local.stopTrigger.at)?local.stopTrigger.at:null}:null;
       evidence.push({providerRunId,lifecycle,reports,pending:await reports.pending(),local:{terminalFailure:failure,firstFailure:sanitize(local.firstFailure),secondaryFailures:(Array.isArray(local.secondaryFailures)?local.secondaryFailures:[]).slice(-32).map(sanitize).filter(Boolean),stopTrigger:typeof local.stopTrigger?.trigger==='string'&&/^[a-z0-9_]{1,80}$/.test(local.stopTrigger.trigger)?{trigger:local.stopTrigger.trigger,at:Number.isSafeInteger(local.stopTrigger.at)?local.stopTrigger.at:null}:null,outcomes:(Array.isArray(local.outcomes)?local.outcomes:[]).slice(-32).map(o=>({phase:/^[a-z0-9_]{1,80}$/.test(o.phase??'')?o.phase:null,status:['succeeded','failed','superseded','not_requested'].includes(o.status)?o.status:'unknown',code:/^[a-zA-Z0-9_]{1,80}$/.test(o.code??'')?o.code:null})),ownership:local.ownership,pid:local.pid}});
     }catch(error){if(error.code==='ENOENT')continue;throw error;}
   }
@@ -97,23 +115,63 @@ export async function retryProviderReports(network,nodeId,profile,options={}) {
 
 export async function retryProviderCleanup(network,nodeId,profile,options={}) {
   const {node,evidence}=await diagnoseProvider(network,nodeId,profile,options);
+  if(options.controller&&controllerOwnsRun(options.controller,node)){
+    const c=options.controller;await (c.status.cleanupRequired&&c.retryCleanup?c.retryCleanup():c.stop());
+    const latest=await network.request(`/v2/providers/nodes/${nodeId}?view=diagnostics`);
+    if(latest.providerRunId!==node.providerRunId)throw new ClientError('provider_run_superseded');
+    if(latest.cleanupState!=='succeeded')throw new ClientError('provider_cleanup_required');
+    return {nodeId,providerRunId:node.providerRunId,guestRemoved:true,cleanupState:'succeeded',inferenceRequests:0};
+  }
+  if(node.cleanupState==='succeeded')return {nodeId,providerRunId:node.providerRunId,guestRemoved:true,cleanupState:'succeeded',inferenceRequests:0};
   const owned=evidence.find(e=>e.providerRunId===node.providerRunId&&e.local.ownership?.nodeId===node.id&&e.local.ownership?.providerRunId===node.providerRunId&&e.local.ownership?.origin===network.origin&&e.local.ownership?.installationId===node.installationId);
   if(!owned||!node.diagnosticCapabilities?.retryCleanup||!/^adrnew-[a-f0-9-]{36}$/.test(owned.local.ownership.guestName))throw new ClientError('verified_cleanup_ownership_required');
   if(!Number.isSafeInteger(owned.local.pid)||owned.local.pid<=0)throw new ClientError('provider_controller_identity_unknown');
   try{process.kill(owned.local.pid,0);throw new ClientError('provider_controller_still_running');}catch(error){if(error.code!=='ESRCH')throw error;}
   const {configuredRuntime}=await import('./provider.mjs');const runtime=options.runtime??await configuredRuntime();await runtime.verify();
   const name=owned.local.ownership.guestName;
-  await network.request(`/v2/providers/nodes/${node.id}/stop`,{method:'POST',body:{scope:'run',providerRunId:node.providerRunId,trigger:'cleanup_retry'},signal:AbortSignal.timeout(10000)});
+  const outcomes=[];
+  const outcome=async(phase,work)=>{try{const result=await work();outcomes.push({phase,status:'succeeded'});return result;}catch(error){outcomes.push({phase,status:['provider_run_superseded','not_found'].includes(error.code)?'superseded':'failed',code:/^[a-z][a-z0-9_]{0,79}$/.test(error.code??'')?error.code:'provider_cleanup_failed'});throw error;}};
+  const current=async()=>{const latest=await network.request(`/v2/providers/nodes/${node.id}?view=diagnostics`);if(latest.providerRunId!==node.providerRunId||latest.installationId!==node.installationId)throw new ClientError('provider_run_superseded');return latest;};
+  try{
+  await current();
+  await outcome('remote_stop',()=>network.request(`/v2/providers/nodes/${node.id}/stop`,{method:'POST',body:{scope:'run',providerRunId:node.providerRunId,trigger:'cleanup_retry'},signal:AbortSignal.timeout(10000)}));
   const inventory=JSON.parse(await runtime.call(['list','--format','json']));if(!Array.isArray(inventory))throw new ClientError('runtime_inventory_invalid');
   const present=inventory.some(v=>v===name||v.name===name);
-  if(present){
+  await current();
+  await outcome('guest_removal',async()=>{if(present){
     // Adoption is limited to persisted task-created ownership and the current
     // backend run, after its original controller has exited.
     runtime.owned.add(name);
     try{const info=await runtime.inspect(name);const image=JSON.parse(await (await import('node:fs/promises')).readFile(new URL('../runtime/guest-images.json',import.meta.url),'utf8'));if(info.config?.manifest_digest!==image.node['linux-'+process.arch]||info.config?.network?.policy?.default_egress!=='deny')throw new ClientError('guest_identity_or_policy_mismatch');await runtime.remove(name);}
     catch(error){runtime.owned.delete(name);throw error;}
   }
-  const result=await network.request(`/v2/providers/nodes/${node.id}/teardown`,{method:'POST',body:{providerRunId:node.providerRunId,guestTeardownVerified:true},signal:AbortSignal.timeout(10000)});
-  await owned.lifecycle.finish([{phase:'guest_removal',status:'succeeded'},{phase:'execution_release',status:'succeeded'}]);
+  const after=JSON.parse(await runtime.call(['list','--format','json']));if(!Array.isArray(after)||after.some(v=>v===name||v.name===name))throw new ClientError('guest_teardown_unconfirmed');});
+  await current();
+  const result=await outcome('execution_release',()=>network.request(`/v2/providers/nodes/${node.id}/teardown`,{method:'POST',body:{providerRunId:node.providerRunId,guestTeardownVerified:true},signal:AbortSignal.timeout(10000)}));
   return {nodeId:node.id,providerRunId:node.providerRunId,guestRemoved:true,cleanupState:result.cleanupState,inferenceRequests:0};
+  }finally{await owned.lifecycle.finish(outcomes);}
+}
+
+export async function prepareProviderRecovery(network,nodeId,profile,options={}){
+  let node=await network.request(`/v2/providers/nodes/${nodeId}?view=diagnostics`);
+  if(node.retirementRequestedAt)throw new ClientError('provider_retirement_pending');
+  if(node.providerRunId&&node.cleanupState!=='succeeded'&&!controllerOwnsRun(options.controller,node)){
+    await retryProviderCleanup(network,nodeId,profile,options);
+    node=await network.request(`/v2/providers/nodes/${nodeId}?view=diagnostics`);
+    if(node.retirementRequestedAt||node.status==='deleted')throw new ClientError('provider_retirement_pending');
+  }
+  return node;
+}
+
+export async function deleteProviderListing(network,nodeId,profile,{key=randomUUID(),...options}={}){
+  let result=await network.request(`/v2/providers/nodes/${nodeId}/delete`,{method:'POST',body:{confirm:true},key});
+  if(!ProviderNodeDeletion(result)||result.id!==nodeId)throw new ClientError('invalid_network_response');
+  if(result.status==='deleted')return result;
+  await retryProviderCleanup(network,nodeId,profile,options);
+  const nodes=await network.request('/v2/providers/nodes');
+  if(nodes.some(n=>n.id===nodeId))throw new ClientError('provider_retirement_pending');
+  // The existing idempotent action returns the authoritative terminal contract.
+  result=await network.request(`/v2/providers/nodes/${nodeId}/delete`,{method:'POST',body:{confirm:true},key});
+  if(!ProviderNodeDeletion(result)||result.id!==nodeId||result.status!=='deleted')throw new ClientError('invalid_network_response');
+  return result;
 }

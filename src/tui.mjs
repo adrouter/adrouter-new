@@ -1,7 +1,7 @@
 import { safeFailure, failureLines, failureSummary, readPrivateDiagnostic, exportFailure, failureSnapshot } from './failure-diagnostics.mjs';
 import { pollLiveMenu } from './tui-polling.mjs';
 import packageMetadata from '../package.json' with {type:'json'};
-import { diagnoseProvider, diagnosisLines, retryProviderReports, retryProviderCleanup, providerEvidence, normalizeDiagnosis } from './provider-diagnose.mjs';
+import { diagnoseProvider, diagnosisLines, retryProviderReports, retryProviderCleanup, providerEvidence, normalizeDiagnosis, controllerOwnsRun, prepareProviderRecovery, deleteProviderListing } from './provider-diagnose.mjs';
 import { modelStatusLines, providerRow, visibleModelStatus } from './model-status.mjs';
 import { connectionCapabilities } from './provider-models.mjs';
 import {providerRequiresBudget} from './generated/provider-budget.mjs';
@@ -108,6 +108,11 @@ const problems = {
   runtime_absolute_paths_required: 'Choose the pinned VM executable, library and a dedicated runtime directory in Runtime setup.',
   runtime_directory_path_too_long: 'The runtime directory is too long for Unix sockets. In Runtime setup choose a dedicated private path shorter than 54 bytes, such as /tmp/adr-vm-YOURNAME.',
   runtime_digest_mismatch: 'The selected runtime does not match the pinned release. Choose the verified Microsandbox files.',
+  provider_retirement_pending: 'Deletion is pending. Finish cleanup or use Marketplace operator → Provider sessions and cleanup.',
+  verified_cleanup_ownership_required: 'Previous-run ownership could not be verified. Use its owning provider terminal or Marketplace operator → Provider sessions and cleanup.',
+  provider_controller_still_running: 'The previous run is still controlled by another process. Stop it in its owning provider terminal.',
+  provider_controller_identity_unknown: 'The previous controller identity is unknown. Use Marketplace operator → Provider sessions and cleanup.',
+  provider_run_superseded: 'The provider run changed. Refresh status before choosing another cleanup action.',
   evaluation_required: 'This listing needs current operator qualification before purchase.',
   provider_budget_exhausted: 'The provider cumulative spending authority is exhausted or held for uncertain work.',
   qualified_tariff_required: 'An operator must qualify a current upstream tariff before dispatch.',
@@ -346,6 +351,11 @@ export async function runTui(options = {}, dependencies = {}) {
   }
   async function guidedNativeProvider(node) {
     if(node.suspended)throw new ClientError('node_suspended');
+    if(node.retirementRequestedAt)throw new ClientError('provider_retirement_pending');
+    if(node.providerRunId&&node.cleanupState&&node.cleanupState!=='succeeded'&&!controllerOwnsRun(providersRunning.get(node.id),node)){
+      node=await ui.task('Cleaning up previous provider run',()=>prepareProviderRecovery(network,node.id,store.profile,{controller:providersRunning.get(node.id)}));
+      if(providerCanLaunch(providersRunning.get(node.id)))providersRunning.delete(node.id);
+    }
     if(!providerCanLaunch(providersRunning.get(node.id))){await ui.page('Provider operation',()=>providerStatusLines(providersRunning.get(node.id).status));return;}
     const budget=await get('/providers/budget');
     if(providerRequiresBudget(node)&&BigInt(budget.remainingMicrousd)<=0n&&!await spendingBudget(true))return;
@@ -432,6 +442,7 @@ export async function runTui(options = {}, dependencies = {}) {
   async function manageNode(id, created = false) {
     for (;;) {
       const node = await get(`/providers/nodes/${id}`);
+      const attached=providersRunning.get(id);if(attached&&providerCanLaunch(attached)&&!controllerOwnsRun(attached,node))providersRunning.delete(id);
       const evidence=await providerEvidence(node,store.profile,{origin:network.origin});
       const exactReports=evidence.reduce((sum,e)=>sum+e.pending.length,0);
       const recovery=evidence.length?normalizeDiagnosis(await get(`/providers/nodes/${id}?view=diagnostics`),evidence):null;
@@ -444,7 +455,7 @@ export async function runTui(options = {}, dependencies = {}) {
       let selection;try{selection = await ui.menu(created ? 'Your listing is drafted' : node.name, [
         ...(['pi_native_v1','pi_native_v2','pi_native_v3'].includes(node.connectorProtocol)?[item('editNative','Edit provider configuration',bindingCurrent?'Pause and stop serving before changing models or limits.':'Older installation: use operator cleanup or reclaim after verified teardown.',!bindingCurrent||!['draft','paused'].includes(node.status)||busy)]:[]),
         item('failureDetails','Failure details','Inspect/export retained inference evidence; no model request.'),item('status','Provider status'),item('diagnose','Diagnose','Read owned run/check metadata; no model request.'),item('retryReport','Retry result report',exactReports?'Deliver only saved exact reports; no VM or inference.':'No exact completion report saved.',!exactReports),
-        item('setup', 'Test and start', bindingCurrent?'Authorizes a new bounded model attempt. All models must pass.':'Older installation: use operator cleanup or reclaim the paused connection.', busy||!bindingCurrent),
+        item('setup', 'Test and start', node.retirementRequestedAt?'Deletion is pending; finish cleanup.':bindingCurrent?'Authorizes a new bounded model attempt. All models must pass.':'Older installation: use operator cleanup or reclaim the paused connection.', busy||!bindingCurrent||!!node.retirementRequestedAt),
         ...(node.cleanupState==='failed'||node.cleanupState==='pending'||providersRunning.get(node.id)?.status.cleanupRequired?[item('cleanup','Retry cleanup','Verify creation evidence and current run before teardown.',!providersRunning.get(node.id)?.status.cleanupRequired&&!recovery?.recoveryActions.includes('retry_verified_cleanup'))]:[]),
         ...(!native?[item('launch', node.availability === 'cold' ? 'Start cold control' : 'Launch hot VM', 'Keep this TUI open while providing.', busy)]:[]),
         ...(providersRunning.get(node.id)?.status.activation?.length ? [item('activate', 'Activate reserved buyer session', 'Launch the VM and enter the key before the 120-second deadline.')] : []),
@@ -466,7 +477,7 @@ export async function runTui(options = {}, dependencies = {}) {
       if(selection==='failureDetails'){const result=await diagnoseProvider(network,node.id,store.profile);const d=result.diagnosis;await failureDetails(async()=>{const latest=await diagnoseProvider(network,node.id,store.profile);return failureSnapshot({failureDiagnostic:latest.diagnosis.primaryFailure?.failureDiagnostic,outcomes:latest.diagnosis.cleanupOutcomes,setupCode:latest.diagnosis.primaryFailure?.code});});continue;}
       if(selection==='diagnose'){const result=await diagnoseProvider(network,node.id,store.profile);const controller=providersRunning.get(node.id);await ui.page('Provider diagnosis',diagnosisLines(result,{controllerAttached:!!controller&&controller.status.providerRunId===result.node.providerRunId}));continue;}
       if(selection==='retryReport'){await attempt(()=>providersRunning.get(node.id)?.retryResultReports?providersRunning.get(node.id).retryResultReports():retryProviderReports(network,node.id,store.profile));continue;}
-      if(selection==='cleanup'){await attempt(()=>providersRunning.has(node.id)?stopProvider(node.id):retryProviderCleanup(network,node.id,store.profile));continue;}
+      if(selection==='cleanup'){await attempt(()=>retryProviderCleanup(network,node.id,store.profile,{controller:providersRunning.get(node.id)}));continue;}
       if(selection==='discover'){await attempt(async()=>{const {startProvider}=await import('./provider.mjs');let controller;try{controller=await ui.suspend(()=>startProvider(network,node.id,{prepareOnly:true,runtimeConfig,maxOutputTokens:node.maxOutputTokens}));trackProvider(node.id,controller);const result=await ui.task('Discovering endpoint models',()=>controller.discover());await controller.stop();if(!providerCanLaunch(controller))throw new ClientError('provider_cleanup_required');await createNativeListing({...node,discoveredModels:result.models});}catch(error){controller??=error.controller;if(controller)trackProvider(node.id,controller);throw error;}finally{await controller?.stop();}});continue;}
       if(selection==='rebind'){await attempt(()=>post(`/providers/nodes/${node.id}/rebind`,{expectedInstallationId:node.installationId}));continue;}
       if(selection==='disconnect'){if(await confirm('Disconnect API?',['This removes the saved guest credential and disables serving. It does not revoke the upstream key.'],'Disconnect'))await attempt(async()=>{if(providersRunning.has(node.id)){await stopProvider(node.id);if(!providerCanLaunch(providersRunning.get(node.id)))return;}const {disconnectProviderApi}=await import('./provider.mjs');await ui.task('Removing guest credential',()=>disconnectProviderApi(network,node.id,{runtimeConfig}));});continue;}
@@ -485,7 +496,7 @@ export async function runTui(options = {}, dependencies = {}) {
         if(providersRunning.has(node.id))await stopProvider(node.id);
         if (!deletionKeys.has(node.id)) deletionKeys.set(node.id, randomUUID());
         const deleted = await attempt(async () => {
-          const result = await post(`/providers/nodes/${node.id}/delete`, { confirm: true }, deletionKeys.get(node.id));
+          const result = await deleteProviderListing(network,node.id,store.profile,{key:deletionKeys.get(node.id),controller:providersRunning.get(node.id)});
           if (!ProviderNodeDeletion(result) || result.id !== node.id) throw new ClientError('invalid_network_response');
           return result;
         });

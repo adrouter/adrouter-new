@@ -16,7 +16,7 @@ export class ProviderLifecycle {
     if (directory && !isAbsolute(directory)) throw Error('provider_diagnostic_path_invalid');
     this.base = directory ?? join(homedir(), '.adr-v2', 'profiles', profile, 'provider');
     this.path = join(this.base, this.nodeId, this.providerRunId, 'lifecycle.json');
-    this.directory = directory; this.profile = profile; this.now = now; this.events = []; this.firstFailure = null; this.terminalFailure = null; this.secondaryFailures = []; this.stopTrigger = null;
+    this.directory = directory; this.profile = profile; this.now = now; this.pid = process.pid; this.clientVersion = version; this.events = []; this.firstFailure = null; this.terminalFailure = null; this.secondaryFailures = []; this.stopTrigger = null;
     this.pending = Promise.resolve(); this.outcomes = []; this.saveFailed = false;
   }
   event(phase, value = {}) {
@@ -55,7 +55,7 @@ export class ProviderLifecycle {
     this.prepared = true;
   }
   persist() {
-    const value = JSON.stringify({ schemaVersion: 1, nodeId: this.nodeId, providerRunId: this.providerRunId, pid: process.pid, clientVersion: version,
+    const value = JSON.stringify({ schemaVersion: 1, nodeId: this.nodeId, providerRunId: this.providerRunId, pid: this.pid, clientVersion: this.clientVersion,
       ownership:this.ownership??null, firstFailure: this.firstFailure, terminalFailure: this.terminalFailure, secondaryFailures: this.secondaryFailures.slice(), stopTrigger: this.stopTrigger, events: this.events.slice(), outcomes: this.outcomes });
     this.pending = this.pending.catch(() => {}).then(async () => {
       await this.prepare(); const temporary = this.path + '.' + randomUUID() + '.tmp';

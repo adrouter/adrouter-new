@@ -94,7 +94,7 @@ async function createProviderController(networkInput, nodeId, { prepareOnly = fa
     pending.frame = undefined;
     if (pending.binding.type === 'handshake') { pending = undefined; return; }
     control.push({ type: 'cancel', requestId: pending.id, sessionId: pending.binding.sessionId, bindingRevision: pending.binding.bindingRevision, sequence: pending.binding.sequence });
-    for (const tunnel of tunnels) tunnel.destroy();
+    closeTunnels(pending);
     lifecycle.event('request', { status: 'cancellation_requested' });
   };
   // The broker validated this evidence against the pending qualification binding.
@@ -116,7 +116,7 @@ async function createProviderController(networkInput, nodeId, { prepareOnly = fa
       let reply = { ok: true };
       if (req.method === 'POST' && req.url === '/ready' && bytes === '{"ready":true}') { guestReady = true; lastGuestPoll = now(); }
       else if (req.method === 'GET' && req.url === '/work') { lastGuestPoll = now(); reply = stopped ? { type: 'stop' } : control.shift() ?? pending?.frame ?? null; if (reply === pending?.frame) { pending.sent = true; pending.frame = undefined; } }
-      else if(req.method==='POST'&&req.url==='/discovered'){const data=JSON.parse(bytes);if(!pending?.discovery||data.requestId!==pending.id)throw Error('discovery_binding');const request=pending;pending=undefined;if(data.error)request.reject(new ClientError(['upstream_authentication_failed','model_discovery_unavailable'].includes(data.error)?data.error:'model_discovery_unavailable'));else if(Array.isArray(data.models)&&data.models.length<=256&&data.models.every(m=>typeof m==='string'&&/^[\x20-\x7e]{1,256}$/.test(m)))request.resolve({models:data.models});else request.reject(new ClientError('model_discovery_unavailable'));}
+      else if(req.method==='POST'&&req.url==='/discovered'){const data=JSON.parse(bytes);if(!pending?.discovery||data.requestId!==pending.id)throw Error('discovery_binding');const request=pending;closeTunnels(request);pending=undefined;if(data.error)request.reject(new ClientError(['upstream_authentication_failed','model_discovery_unavailable'].includes(data.error)?data.error:'model_discovery_unavailable'));else if(Array.isArray(data.models)&&data.models.length<=256&&data.models.every(m=>typeof m==='string'&&/^[\x20-\x7e]{1,256}$/.test(m)))request.resolve({models:data.models});else request.reject(new ClientError('model_discovery_unavailable'));}
       else if(req.method==='POST'&&req.url==='/configured') {
         const data=JSON.parse(bytes);if(!pending?.configuration||data.requestId!==pending.id||data.nativeRevision!==node.nativeRevision)throw Error('configuration_binding');
         const operation=pending;pending=undefined;operation.resolve({configured:true});
@@ -124,7 +124,7 @@ async function createProviderController(networkInput, nodeId, { prepareOnly = fa
       else if (req.method === 'POST' && req.url === '/handshake-result') {
         const result = JSON.parse(bytes);
         if (!pending || !HandshakeResult(result) || pending.id !== result.challengeId || Object.keys(pending.binding).some(k => k !== 'type' && pending.binding[k] !== result[k])) throw new Error('handshake_binding');
-        if (!pending.cancelled && relayReady && pending.socket === socket) socket.send(JSON.stringify(result)); pending = undefined;
+        if (!pending.cancelled && relayReady && pending.socket === socket) socket.send(JSON.stringify(result)); closeTunnels(pending); pending = undefined;
       } else if (req.method === 'POST' && req.url === '/delta') {
         const e=JSON.parse(bytes); if(!pending || e.requestId!==pending.id || e.type!=='coding_delta' || !Number.isInteger(e.sequence) || e.sequence!==Number(pending.streamSequence??0)+1 || !['text','thinking','tool'].includes(e.kind) || typeof e.text!=='string' || e.text.length>8192)throw Error('delta_rejected');
         pending.streamSequence=e.sequence;if (!pending.cancelled && relayReady && pending.socket === socket) socket.send(JSON.stringify(e));
@@ -147,6 +147,7 @@ async function createProviderController(networkInput, nodeId, { prepareOnly = fa
       } else if (req.method === 'POST' && req.url === '/execution-complete') {
         const result = JSON.parse(bytes), binding = executionBindings.get(result.requestId);
         if (!binding) throw new Error('execution_binding');
+        for(const tunnel of tunnels.values())if(tunnel.owner?.id===result.requestId)tunnel.close();
         // Guest sends this only after its handler has exited, never on socket close.
         if(relayReady&&socket?.readyState===Socket.OPEN&&binding.relayGeneration===relayGeneration)socket.send(JSON.stringify({type:'execution_complete',...binding}));
         // The authenticated status acknowledgement also covers lost relay replies.
@@ -154,22 +155,22 @@ async function createProviderController(networkInput, nodeId, { prepareOnly = fa
         // Retain completed bindings for idempotent retries after a lost reply.
       } else if (req.method === 'POST' && req.url === '/result') {
         const result = JSON.parse(bytes);
-        if(pending?.qualification){if(result.requestId!==pending.id)throw Error('qualification_binding');const check=pending;pending=undefined;check.resolve({...result,diagnosticTiming:{transportCause:check.transportCause??null,elapsedMs:check.upstreamTotalMs??null,statusCode:check.upstreamStatus??null}});res.writeHead(200,{'content-type':'application/json'}).end('{"ok":true}');return;}
+        if(pending?.qualification){if(result.requestId!==pending.id)throw Error('qualification_binding');const check=pending;closeTunnels(check);pending=undefined;check.resolve({...result,diagnosticTiming:{transportCause:check.transportCause??null,elapsedMs:check.upstreamTotalMs??null,statusCode:check.upstreamStatus??null}});res.writeHead(200,{'content-type':'application/json'}).end('{"ok":true}');return;}
         if (!pending || result.type !== 'result' || result.requestId !== pending.id || typeof result.text !== 'string' || !Number.isSafeInteger(result.inputTokens) || !Number.isSafeInteger(result.outputTokens)) throw new Error('result_binding');
-        if (!pending.cancelled && relayReady && pending.socket === socket) socket.send(JSON.stringify(result)); pending = undefined;
+        if (!pending.cancelled && relayReady && pending.socket === socket) socket.send(JSON.stringify(result)); closeTunnels(pending); pending = undefined;
         if (!continuous && calls >= maxCalls) void stop({ trigger: 'request_limit' });
       } else if (req.method === 'POST' && req.url === '/cancelled') {
         const result = JSON.parse(bytes); if (!pending?.cancelled || result.requestId !== pending.id) throw Error('cancellation_binding');
-        pending = undefined; lifecycle.event('request', { status: 'cancelled' });
+        closeTunnels(pending); pending = undefined; lifecycle.event('request', { status: 'cancelled' });
       } else if (req.method === 'POST' && req.url === '/failed') {
         const result = JSON.parse(bytes);
-        if(result.scope==='request'&&pending?.qualification&&result.requestId===pending.id){const check=pending,error=setupRequestError(check,result.code,result.statusCode);pending=undefined;check.reject(error);res.writeHead(200,{'content-type':'application/json'}).end('{"ok":true}');return;}
+        if(result.scope==='request'&&pending?.qualification&&result.requestId===pending.id){const check=pending,error=setupRequestError(check,result.code,result.statusCode);closeTunnels(check);pending=undefined;check.reject(error);res.writeHead(200,{'content-type':'application/json'}).end('{"ok":true}');return;}
         if (result.scope === 'request' && pending && result.requestId === pending.id) {
           const frame = { type: 'request_failed', requestId: pending.id, sessionId: pending.binding.sessionId, bindingRevision: pending.binding.bindingRevision, sequence: pending.binding.sequence, code: upstreamFailureCodes.includes(result.code)?result.code:'provider_outcome_unknown' };
           if(pending.failureDiagnostic){const d=pending.failureDiagnostic;if(pending.hostTransport){d.transportCode=pending.hostTransport.code;d.transportCategory=pending.hostTransport.category;if(d.responseEvidence==='not_observed')d.phase='tunnel';}d.code=frame.code;frame.failureDiagnostic=safeFailure(d);}if (!ProviderRequestFailure(frame)) throw Error('request_failure_binding');
           lastUpstreamFailure={...(native?{provider:node.provider,model:pending.binding.model,api:pending.binding.api,maxOutputTokens:pending.binding.maxOutputTokens}:{}),requestId:pending.id,statusCode:pending.upstreamStatus??null,code:frame.code,observedAt:now(),...(frame.failureDiagnostic?{failureDiagnostic:frame.failureDiagnostic}:{})};
           lifecycle.fail(providerDiagnostic('request',{code:frame.code,statusCode:pending.upstreamStatus,elapsedMs:pending.upstreamTotalMs,transportCause:frame.failureDiagnostic?.transportCategory},{nodeId,providerRunId,requestId:pending.id,sessionId:pending.binding.sessionId,provider:node.provider,model:pending.binding.model??node.model,api:pending.binding.api,requestEvidence:pending.upstreamStatus?'response_received':pending.sent?'outcome_unknown':'not_sent',failureDiagnostic:frame.failureDiagnostic},now));
-          if (!pending.cancelled && relayReady && pending.socket === socket) socket.send(JSON.stringify(diagnosticSupported?frame:{...Object.fromEntries(Object.entries(frame).filter(([key])=>key!=='failureDiagnostic')),code:upstreamFailureCodes.slice(0,13).includes(frame.code)?frame.code:'provider_outcome_unknown'})); pending = undefined;
+          if (!pending.cancelled && relayReady && pending.socket === socket) socket.send(JSON.stringify(diagnosticSupported?frame:{...Object.fromEntries(Object.entries(frame).filter(([key])=>key!=='failureDiagnostic')),code:upstreamFailureCodes.slice(0,13).includes(frame.code)?frame.code:'provider_outcome_unknown'})); closeTunnels(pending); pending = undefined;
         } else if (result.scope === 'provider' && ['control_unavailable','handshake_rejected','frame_rejected'].includes(result.code)) void stop({ trigger: 'guest_failed', error: new ClientError(result.code) });
         else throw Error('provider_failure_binding');
       }
@@ -179,11 +180,13 @@ async function createProviderController(networkInput, nodeId, { prepareOnly = fa
   });
   // Fixed-destination byte transport only. TLS starts in the guest and ends at
   // the approved upstream; this process never decrypts or constructs credentials.
-  const tunnels = new Set();
+  const tunnels = new Map();
+  function closeTunnels(owner){for(const tunnel of tunnels.values())if(owner===undefined||tunnel.owner===owner)tunnel.close();}
   broker.on('connect', (req, socket, head) => {
     const allowed=native?[...(node.nativeModels??[]).map(m=>new URL(m.endpoint).origin),...(node.nativeModels??[]).flatMap(m=>m.authentication==='google_service_account'?['https://oauth2.googleapis.com']:m.authentication==='ibm_api_key'?['https://iam.cloud.ibm.com']:m.authentication==='sap_service_key'?[new URL(node.fields.AUTH_BASE_URL).origin]:[])]:[];
     const requestedOrigin=allowed.find(origin=>req.url==='/upstream/'+encodeURIComponent(origin));
-    if(stopped || (native?!requestedOrigin:req.url !== '/upstream') || req.headers.authorization !== `Bearer ${capability}` || head.length || tunnels.size >= 2) { socket.destroy(); return; }
+    if(stopped || (native?!requestedOrigin:req.url !== '/upstream') || req.headers.authorization !== `Bearer ${capability}` || head.length) { socket.destroy(); return; }
+    if(tunnels.size>=2){lifecycle.event('tunnel',{code:'tunnel_capacity_reached',nodeId,providerRunId,requestId:pending?.id});socket.destroy();return;}
     const target=native?new URL(requestedOrigin):binding.url;
     const upstream=connect({host:target.hostname.replace(/^\[|\]$/g,''),port:Number(target.port)||(target.protocol==='http:'?80:443),lookup(host,options,callback){
       lookup(host,options,(error,addresses,family)=>{
@@ -193,10 +196,11 @@ async function createProviderController(networkInput, nodeId, { prepareOnly = fa
         callback(null,addresses,family);
       });
     }});
-    tunnels.add(upstream); const close=()=>{upstream.destroy();socket.destroy();tunnels.delete(upstream);};
+    const owner=pending;let closed=false;const close=()=>{if(closed)return;closed=true;clearTimeout(deadlineTimer);upstream.destroy();socket.destroy();tunnels.delete(upstream);};
+    tunnels.set(upstream,{owner,close});
     const deadlineMs = Math.max(1, Math.min(120000, Number(pending?.binding?.deadlineUnixMs ?? Date.now() + 120000) - Date.now()));
     const deadlineTimer = setTimeout(close,deadlineMs);
-    upstream.setTimeout(deadlineMs,close);socket.setTimeout(deadlineMs,close);upstream.once('close',()=>clearTimeout(deadlineTimer));const owner=pending;upstream.once('error',error=>{const code=transportCode(error);if(owner&&owner===pending&&code)owner.hostTransport={code,category:['ENOTFOUND','EAI_AGAIN'].includes(code)?'dns':code==='ETIMEDOUT'?'timeout':'connection'};close();});socket.once('error',close);socket.once('close',close);upstream.once('close',close);
+    upstream.setTimeout(deadlineMs,close);socket.setTimeout(deadlineMs,close);upstream.once('close',()=>clearTimeout(deadlineTimer));upstream.once('error',error=>{const code=transportCode(error);if(owner&&owner===pending&&code)owner.hostTransport={code,category:['ENOTFOUND','EAI_AGAIN'].includes(code)?'dns':code==='ETIMEDOUT'?'timeout':'connection'};close();});socket.once('error',close);socket.once('end',close);socket.once('close',close);upstream.once('end',close);upstream.once('close',close);
     upstream.once('connect',()=>{socket.write('HTTP/1.1 200 Connection Established\r\n\r\n');socket.pipe(upstream);upstream.pipe(socket);});
   });
   async function warm() {
@@ -421,7 +425,7 @@ async function createProviderController(networkInput, nodeId, { prepareOnly = fa
     if (error) lifecycle.fail(failure('failure', error, 'provider_failed'));
     lifecycle.stop(trigger, { signal });
     if(pending?.qualification||pending?.discovery||pending?.configuration){pending.reject(new ClientError(trigger==='setup_cancelled'?'cancelled':'provider_stopped'));pending=undefined;}
-    state = 'stopping'; backendConfirmedAt = null; stopped = true; guestReady = false; relayReady = false; for(const tunnel of tunnels)tunnel.destroy(); abort.abort();
+    state = 'stopping'; backendConfirmedAt = null; stopped = true; guestReady = false; relayReady = false; closeTunnels(); abort.abort();
     statusPoll?.stop(); renewal?.stop(); keepalive?.stop(); for(const timer of [deadline,touchRetry,reconnectTimer,authenticationTimer,leaseTimer])clearTimeout(timer); socket?.close();
     for (const [name,handler] of signalHandlers) process.removeListener(name,handler);
     announce({ status: 'stopping' });
