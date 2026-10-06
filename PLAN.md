@@ -1135,25 +1135,25 @@ Continue the clean canonical client reliability checkout. Keep Router source 9a2
 
 ## Step A: Regressions and focused repairs
 ### Status
-`in_progress`
-- [ ] Demonstrate setup diagnostic loss and buyer outcome loss against alpha.48.
-- [ ] Preserve validated setup phase/code/timing/binding through rejection, known usage, persistence, reopening/export; retain separate report/save/cleanup failures.
-- [ ] One sanitized buyer outcome snapshot with independently pending/completed operations, read-only accessor, shared active/persisted/reopened presentation and fresh export reads.
+`done`
+- [x] Demonstrate setup diagnostic loss and buyer outcome loss against alpha.48.
+- [x] Preserve validated setup phase/code/timing/binding through rejection, known usage, persistence, reopening/export; retain separate report/save/cleanup failures.
+- [x] One sanitized buyer outcome snapshot with independently pending/completed operations, read-only accessor, shared active/persisted/reopened presentation and fresh export reads.
 
 ## Step B: Source and installed acceptance
 ### Status
-`todo`
-- [ ] TLS/CERT_HAS_EXPIRED, DNS/connect, absent/mismatched evidence and secondary failure regressions.
-- [ ] Mixed/pending buyer cleanup, write failure, reopen/export equivalence, duplicate/privacy regressions.
-- [ ] Full client checks/provenance; freeze clean next unused private version and verify exact installed bytes and source CI.
-- [ ] Installed synthetic provider/buyer failure scenarios, 40/80/132-column details/export and applicable full lifecycle gate.
+`done`
+- [x] TLS/CERT_HAS_EXPIRED, DNS/connect, absent/mismatched evidence and secondary failure regressions.
+- [x] Mixed/pending buyer cleanup, write failure, reopen/export equivalence, duplicate/privacy regressions.
+- [x] Full client checks/provenance; freeze clean next unused private version and verify exact installed bytes and source CI.
+- [x] Installed synthetic provider/buyer failure scenarios, 40/80/132-column details/export and applicable full lifecycle gate.
 
 ## Step C: Private delivery and current restart checklist
 ### Status
-`todo`
-- [ ] Recheck Router readiness/identity and Pages without redeploying; preserve profiles, credentials, saved work and liabilities.
-- [ ] Select accepted launcher, update receipt/checklist/specifications and scoped manifest checksums after final bytes stabilize.
-- [ ] Record readiness for controlled diagnostic testing; actual paid qualification/Ready, provider restart and live tests remain operator-run.
+`done`
+- [x] Recheck Router readiness/identity and Pages without redeploying; preserve profiles, credentials, saved work and liabilities.
+- [x] Select accepted launcher, update receipt/checklist/specifications and scoped manifest checksums after final bytes stabilize.
+- [x] Record readiness for controlled diagnostic testing; actual paid qualification/Ready, provider restart and live tests remain operator-run.
 
 ## Follow-up Work
 Operator controlled cleanup/restart using retained credentials, acknowledged qualification and backend-confirmed Ready before buyer testing. The original interruption is not confirmed fixed.
@@ -1165,3 +1165,8 @@ Operator controlled cleanup/restart using retained credentials, acknowledged qua
 
 ### Source repair results
 Alpha.48 fails five detailed provider cases (TLS/DNS/connection and known-usage report/save failures) because evidence is absent; its buyer controller lacks the shared read-only accessor. The repaired six provider and four buyer/legacy/UI cases pass, including identity rejection, original-cause retention, privacy/deduplication, memory-visible write failure and fresh export after an open view. Full local check passed 908 tests; final active-view delta passed. Runtime builders/provenance pass. Freeze alpha.49; exact installed/CI/lifecycle gates follow.
+
+### Verified private delivery
+Alpha.49 product e145c59 is installed/selected: tarball SHA-256 0da0100916eda9e6d2b541128144efb0a37dc4efa2ede102d51227da342a25a1; 52,039 files match. Source CI on macOS/Ubuntu passes 909 tests. Six installed provider and four buyer/legacy/active-view regressions, 40/80/132-column fresh details/export PTY and the full 660-second native lifecycle/terminal gate pass. Existing coding/provider provenance passes. Router 9a2e2e6, its serving digest, policy/resources, Pages abfaca46/28 assets, stored credentials, provider run/qualification, saved work and eight unresolved request fingerprints are unchanged. No Router/Pages redeployment, contract/migration, paid inference, replay or reconciliation.
+
+Both defects are closed for this verified installation. Readiness is for a controlled diagnostic live test; the initiating interruption is unresolved. Provider cleanup/restart and acknowledged qualification/backend Ready remain operator gates. See outputs/adr-diagnostic-gaps-2026-10-06/delivery-receipt.json and manual-acceptance.md. npm waiver carried forward; alpha.48 and prior artifacts retained.

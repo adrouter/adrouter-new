@@ -491,3 +491,12 @@ Verified: 899 source CI client tests on macOS/Ubuntu; Router full tests/typechec
 Alpha.46 and alpha.47 remain immutable unselected failed artifacts; alpha.48 fixes their guest dependency packaging defects. Pages, profiles, saved work, credentials and eight unresolved requests are preserved. npm authentication is explicitly deferred for private delivery. No public publication/promotion, hosted migration, financial reconciliation, policy/protection changes or unrelated cleanup occurred.
 
 Evidence: `outputs/adr-interruption-repair-2026-10-05/delivery-receipt.json`; operator steps: `outputs/adr-interruption-repair-2026-10-05/manual-acceptance.md`. Reopening loads the selected launcher; running processes keep their loaded bytes.
+
+
+## Setup evidence and buyer cleanup repair — alpha.49, 6 October 2026
+
+Qualification rejection and known-usage/report paths retain the validated FailureDiagnostic before clearing pending. Thrown errors, setup status, persisted lifecycle, reopened diagnosis and private export retain identical original phase/transport code/timing and request/run/model binding. Report/save/cleanup failures remain secondary; missing legacy evidence is unavailable and missing headers do not prove not sent.
+
+The buyer controller exposes a read-only sanitized diagnostic snapshot. Cleanup phases start Pending and complete independently; diagnostic-save failures remain visible in memory/export. Active, persisted and reopened records share normalization, deduplication and metadata-only phase/status/code presentation. Export rereads the snapshot, including when cleanup completed after opening details. Details/export do not invoke cleanup, model inference, reconciliation or replay. No Router API/contract changes were needed.
+
+Alpha.49 product e145c59 passed exact installed provider/buyer failure scenarios, three PTY widths, provenance, source CI and the 660-second lifecycle. Router and Pages remain unchanged. Controlled retained-credential restart, acknowledged qualification and backend-confirmed Ready are required before operator buyer testing. The original interruption cause remains unresolved. Receipt: outputs/adr-diagnostic-gaps-2026-10-06/delivery-receipt.json.
